@@ -18,6 +18,7 @@
     "./BEGINNER_GUIDE.md",
     "./command.md",
     "docs/README.md",
+    "docs/assets/readme/**",
     "docs/FORWARD_MESSAGE_READING_DESIGN.md",
     "docs/GROUP_HISTORICAL_IMAGE_CONTEXT_DESIGN.md",
     "docs/ARCHITECTURE.md",

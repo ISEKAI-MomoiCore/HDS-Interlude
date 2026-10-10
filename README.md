@@ -1,6 +1,17 @@
 # HDS Interlude / 幕间系统
 
+![HDS Interlude 幕间系统：持续叙事、流动时间与角色生活](docs/assets/readme/cover.png)
+
 > 聊天在幕前发生，生活在幕间继续。
+
+<p>
+  <a href="https://gitee.com/MomoiCore/HDS-Interlude/releases"><img src="docs/assets/readme/version.png" alt="当前版本 1.0.1-rc50" width="176" height="30"></a>
+  <a href="https://koishi.chat/"><img src="docs/assets/readme/koishi.png" alt="适用于 Koishi 4" width="122" height="30"></a>
+  <a href="https://www.typescriptlang.org/"><img src="docs/assets/readme/typescript.png" alt="使用 TypeScript 编写" width="152" height="30"></a>
+  <a href="LICENSE"><img src="docs/assets/readme/license.png" alt="许可证 AGPL-3.0" width="170" height="30"></a>
+</p>
+
+**[快速开始](BEGINNER_GUIDE.md) · [一条龙向导](新人上手一条龙配置服务v1.0.1-rc50.html) · [下载发行版](https://gitee.com/MomoiCore/HDS-Interlude/releases) · [更新记录](docs/CHANGELOG.md)**
 
 交流群：421430402，群主24小时解答，欢迎来玩！
 

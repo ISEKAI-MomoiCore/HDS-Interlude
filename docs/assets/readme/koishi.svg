@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="122" height="30" viewBox="0 0 122 30" role="img" aria-label="适用于 Koishi 4">
+  <title>适用于 Koishi 4</title>
+  <rect width="122" height="30" fill="#f7f8fa"/>
+  <rect x="0.5" y="0.5" width="121" height="29" fill="none" stroke="#d9dfe7"/>
+  <path d="M44 1V29" stroke="#d9dfe7"/>
+  <rect width="3" height="30" fill="#111827"/>
+  <g font-family="Segoe UI, Arial, sans-serif" dominant-baseline="central">
+    <text x="23.5" y="15" text-anchor="middle" font-size="9" font-weight="600" letter-spacing="1" fill="#6b7280">FOR</text>
+    <text x="83.0" y="15" text-anchor="middle" font-size="11" font-weight="600" fill="#111827">Koishi 4</text>
+  </g>
+</svg>
