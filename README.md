@@ -10,6 +10,8 @@ rc50 相对 rc48 汇总：端点在线状态与 pending 投递恢复、统一投
 
 ## 文档导航
 
+- 一条龙网页向导（最新版）：[新人上手一条龙配置服务v1.0.1-rc50.html](新人上手一条龙配置服务v1.0.1-rc50.html)
+- 历史一条龙向导：[归档索引](docs/archive/deployment-guides/README.md)
 - 第一次安装和测试：[BEGINNER_GUIDE.md](BEGINNER_GUIDE.md)
 - 从零部署 QQ 角色：[DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md)
 - 逐项配置说明：[CONFIGURATION_GUIDE.md](CONFIGURATION_GUIDE.md)
