@@ -1,12 +1,15 @@
-import { Context, h, Logger, Service, Session, Time } from 'koishi'
+import { Context, h, Logger, Service, Session, Time, Universal } from 'koishi'
+import { AsyncLocalStorage } from 'node:async_hooks'
 import { registerTables } from './database'
 import { appendProactiveContact, countProactiveContactsInWindow } from './story-state'
 import {
+  advanceLongHorizonGenerationBaseline,
   calculateLongHorizonScore,
   isEligibleNarrativeEntry,
   LongArcGuidanceRecord,
   LongArcProgressRow,
   normalizeLongArcDecision,
+  progressUpdatePayload,
   resolveLongHorizonConfig,
   shouldTriggerLongHorizon,
 } from './long-arc'
@@ -24,6 +27,7 @@ import { contactEvidenceThreads, knowledgeClauses, knowledgeRelatedIds, legacyCo
 import { readFile, readdir, stat } from 'node:fs/promises'
 import { createHash, randomUUID } from 'node:crypto'
 import { createTurnEngine, shouldSupersedeRequest, type TurnEngine, type TurnBufferedNarrativeTurn as BufferedNarrativeTurn, type TurnBufferedUserMessage as BufferedUserMessage } from './turn-engine'
+import { describeHttpError } from './http-proxy'
 import { createScheduler, type Scheduler } from './scheduler'
 import { UrgeConfig, resolveUrgeConfig, normalizeUrgeState, urgeUserEvent, planUrge, commitUrge, acknowledgeUrge, urgeBurstActive } from './urge'
 import { extname, relative, resolve, sep } from 'node:path'
@@ -32,7 +36,7 @@ import { AudioConfig, compactPromptEntries, createCompactor, createEmbedder, cre
 import { formatModelRouting, ModelRoutingTable, resolveModelRouting } from './model-routing'
 import {
   advanceAlterSystem, alterHistoryForScope, alterScopeCoolingDown, alterScopeValue, calculateAlterThreshold,
-  completeAlterAnalysis, emotionalOffsetForPrompt, markAlterScopeAnalysisAttempt,
+  clearAlterScopeAnalysisAttempt, completeAlterAnalysis, emotionalOffsetForPrompt, markAlterScopeAnalysisAttempt,
   normalizeAlterSystemState, normalizeAlterValue, resolveAlterSystemConfig,
   AlterTurnResult,
 } from './alter'
@@ -53,6 +57,15 @@ import { calendarDayKey, formatLogTime, localClockMinutes, storyLocalTimeContext
 import { consumeWillingnessGate, evaluateWillingnessGate, GroupWillingnessConfig, GroupWillingnessState, normalizeLifeStatusDraft } from './group-willingness'
 import { normalizeQQNativeFaceSegments } from './qq-face'
 import { extractForwardIds, readForwardContent, ForwardReadResult } from './forward-message'
+
+/** Koishi/Satori uses numeric Universal.Status values; keep legacy string adapters compatible. */
+export function isBotOnlineStatus(status: unknown): boolean {
+  return status === Universal.Status.ONLINE
+    || status === 1
+    || status === 'online'
+    || status === 'active'
+    || status === 'connected'
+}
 import {
   applySchedulePreplanProposal, nextSchedulePreplanTransition, normalizeSchedulePreplanRecord,
   SCHEDULE_PREPLAN_FOLLOWUP_COOLDOWN_MS, schedulePreplanEvidenceMentionsDateChange,
@@ -63,11 +76,12 @@ import {
   decodeStoryState, encodeStoryState, inspectStoryStateMigration,
   normalizeContinuitySnapshot, normalizeScenePresenceState,
 } from './story-state'
-import { attachMessageEvent, deliveryEntryMetadata, prepareOutgoingDelivery, restoreMessageEvent, scriptEventPayload } from './delivery'
+import { attachMessageEvent, deliveryEntryMetadata, prepareOutgoingDelivery, restoreDesktopContext, restoreMessageEvent, scriptEventPayload } from './delivery'
+import { currentDesktopProcessingContext, persistedDesktopProcessingContext } from './processing-context'
 import { decisionToScriptCommit, findGroupScriptEvent, findPrivateOutgoingMessageEvent, unboundImmediateMessageEvents } from './script/commit-builder'
 import { liveNarrativeIntents, consumedLiveIntentIds } from './script/intent-lifecycle'
-import { messageEventReference, ScriptCommitDraft } from './script/contract'
-import { platformActionReference, ScriptDeliveryReference, ScriptDeliverySegmentStatus, updateScriptDeliveryActions } from './script/delivery-ledger'
+import { isOutgoingScriptEvent, messageEventReference, ScriptCommitDraft, type ScriptEventDraft } from './script/contract'
+import { platformActionReference, ScriptDeliveryAction, ScriptDeliveryReference, ScriptDeliverySegmentStatus, updateScriptDeliveryActions } from './script/delivery-ledger'
 import { validateScriptCommit } from './script/validator'
 import { scriptEntryDraftForCommit } from './turn-persistence'
 import { advanceSceneFrame, projectSceneFrame, resolveDialogueBurst } from './script/scene-frame'
@@ -301,10 +315,10 @@ interface PreparedCompactionRun {
   sceneCompactionDue: boolean
   current: InterludeStory
   participants: InterludeParticipant[]
-  visibleCompactionEntries: ScriptEntry[]
   visibleCompactionFacts: NarrativeFact[]
   compactRequest: CompactionRequest
   fingerprint: string
+  factEmbeddings?: Map<string, number[]>
 }
 
 type PreparedCompaction = PreparedCompactionSkip | PreparedCompactionRun
@@ -315,6 +329,24 @@ function isTrustedImageHost(hostname: string) {
   const host = hostname.toLowerCase().replace(/\.$/, '')
   const allowed = ['gchat.qpic.cn', 'c2cpicdw.qpic.cn', 'multimedia.nt.qq.com.cn', 'thirdqq.qlogo.cn', 'q.qlogo.cn']
   return allowed.some(domain => host === domain || host.endsWith(`.${domain}`))
+}
+
+/** Log only the acquisition channel and host. OneBot file identifiers and QQ
+ * CDN URLs can contain expiring tokens, so the original source must never be
+ * copied into an operational log line. */
+function describeImageSource(source: string) {
+  const value = String(source ?? '').trim()
+  if (value.startsWith('onebot-file:')) return 'onebot-file'
+  if (value.startsWith('onebot-url:')) {
+    const nested = value.slice('onebot-url:'.length)
+    try { return `onebot-url:${new URL(nested).hostname}` } catch { return 'onebot-url:invalid' }
+  }
+  if (/^data:image\//i.test(value)) return 'inline-data'
+  try {
+    const url = new URL(value)
+    if (url.protocol === 'http:' || url.protocol === 'https:') return `${url.protocol.slice(0, -1)}:${url.hostname}`
+  } catch { /* keep the source opaque */ }
+  return 'invalid'
 }
 
 export interface Config {
@@ -334,6 +366,15 @@ export interface Config {
   worldSeeder?: unknown
   /** QQ 空间（说说）通道：SnowLuma qzone 扩展动作的限流与审计。 */
   qzone?: unknown
+  /** 预设同步：从 typ0-site 分享站自动拉取配置。 */
+  presetSync?: {
+    enabled: boolean
+    baseUrl: string
+    shareCode: string
+    autoUpdate: boolean
+    sections: string[]
+    applyToCurrentStory: boolean
+  }
   /** 顶层主提示词（Console 最底部）：非空时覆盖 model.mainPrompt。 */
   mainPrompt?: string
   /** Optional OneBot/NapCat account gate. It only affects the onebot platform. */
@@ -435,6 +476,8 @@ export interface MemoryConfig {
   sceneHookCharacters: number
   sceneSummaryCharacters: number
   arcSummaryCharacters: number
+  /** 弧摘要进 prompt 前的独立裁剪上限(存储仍保留全量);尾部最贴近当前剧情。 */
+  arcPromptCharacters?: number
   /** How many immediately-preceding closed scene summaries join the prompt. */
   previousSceneSummaries: number
   recentEntryLimit: number
@@ -450,6 +493,8 @@ export interface MemoryConfig {
   statePatchMinEvidence: number
   /** Minimum independent narrative turns for a minor overlay change. */
   statePatchMinTurns?: number
+  /** major 提案自动应用所需的最少独立场景数;默认 2。 */
+  statePatchMajorMinScenes?: number
   /** Minimum distinct calendar days represented by minor-patch evidence. */
   statePatchMinDays?: number
   /** Cooldown between stable overlay changes on the same target/path. */
@@ -640,7 +685,7 @@ export interface ExecutableGroupChatActions {
 interface GroupDeliveryResult {
   deliveredSegments: string[]
   complete: boolean
-  segmentOutcomes: Array<{ index: number; content: string; status: 'delivered' | 'failed'; reason?: string }>
+  segmentOutcomes: Array<{ index: number; content: string; status: 'delivered' | 'failed' | 'cancelled'; reason?: string }>
 }
 
 export interface StoryDefaults {
@@ -710,6 +755,7 @@ export class InterludeService extends Service {
    * 用内存 Map 按 platform:messageId 去重——进程生命周期内有效，重启后由
    * script_entry.metadata.messageId 的磁盘记录兜底（重放场景不会跨重启）。 */
   private seenIncomingMessages = new Map<string, number>()
+  private episodeIndexes = new Map<string, { source: Map<number, HistoryVectorEntry>; size: number; byEntry: Map<number, number[]>; ordered: Array<[number, HistoryVectorEntry]> }>()
   private historyVectorsReady = new Set<string>()
   private historyVectorLoads = new Map<string, Promise<void>>()
   private historyBackfills = new Set<string>()
@@ -756,6 +802,8 @@ export class InterludeService extends Service {
   private scheduledAlterAnalyses = new Set<string>()
   /** sql.js/SQLite has one writable connection; serialize writes globally. */
   private databaseWriteQueue: Promise<unknown> = Promise.resolve()
+  private transactionScope = new AsyncLocalStorage<Context['database']>()
+  private transactionRunning = false
   /** The browser is bounded separately from narrative work so a burst of
    * deferred intents cannot spawn an uncontrolled number of Chromium pages. */
   private browserActive = 0
@@ -768,9 +816,19 @@ export class InterludeService extends Service {
    * pause, or a runtime reset. The token is in-memory and intentionally does
    * not become part of the story schema. */
   private runtimeGeneration = 0
+  private runtimePauseGeneration = 0
   private storyTaskGenerations = new Map<string, number>()
   private sweepRunning = false
   private compactionSweepRunning = false
+  /** Startup/sweep compensation for durable pending script deliveries. The
+   * backoff is process-local; the delivery ledger remains the source of truth
+   * across restarts. */
+  private pendingDeliveryRecoveryRunning = false
+  /** Same authored event has one executor through transport AND confirmation. */
+  private deliveryExecutors = new Set<string>()
+  /** Known platform successes survive a local confirmation failure in this process. */
+  private acceptedDeliveries = new Map<string, OutgoingMessageDraft>()
+  private pendingDeliveryRecoveryBackoff = new Map<string, { attempts: number, retryAt: number }>()
   private blindModeHealthIssue = false
   /** Console reload creates a new service instance, so normalized config can
    * be cached safely for the lifetime of this instance. */
@@ -798,6 +856,8 @@ export class InterludeService extends Service {
   /** typ-0 uses this optional gate only inside a dedicated worker process. */
   private desktopRuntimePhase: DesktopRuntimePhase = 'running'
   private desktopEventSink?: (event: string, payload: unknown) => void
+  /** typ0 桌面桥安装标记：离线补拉仅独立 Koishi 部署有意义（桌面有宿主收件箱兜底）。 */
+  private desktopBridgeActive = false
   /**
    * typ-0 后台投递出口：delayed/split/advance 路径没有实时 Session，普通 Koishi
    * 里由 findBotForParticipant 走 adapter；typ-0 worker 中 bot 不存在，所有后台
@@ -806,6 +866,8 @@ export class InterludeService extends Service {
   private desktopDeliveryHandler?: (delivery: {
     participantId: string, selfId: string, platform: string, channelId: string,
     kind: 'private' | 'group', content: string, quoteMessageId?: string,
+    /** Optional desktop correlation metadata; background propagation is added in a later phase. */
+    traceId?: string, processingId?: string,
     /** M3：模型显式选择的目标端点（B1-1 桥接透传；缺省按 selfId 路由）。 */
     endpointId?: string,
     /** P1-1：业务幂等键（scriptEvent.eventId + bubbleIndex），重试间稳定。
@@ -880,6 +942,7 @@ export class InterludeService extends Service {
       this.turnEngine = createTurnEngine({
         setTimeout: (fn: () => void, ms: number) => this.ctx.setTimeout(fn, ms),
         get userMessageDebounceSeconds() { return service.config.runtime.userMessageDebounceSeconds ?? 2 },
+        scheduleTurnFlush: (key, revision) => void this.flushBufferedNarrative(key, revision),
         reportOperation: (level: string, kind: string, story: InterludeStory, phase: string, message: string, ...args: unknown[]) => {
           this.reportOperation(level as 'summary' | 'standard' | 'diagnostic', kind as 'error' | 'warn' | 'info' | 'debug', story, phase as NarrativeRequest['phase'], message, ...args)
         },
@@ -909,19 +972,45 @@ export class InterludeService extends Service {
     if (this.backgroundStarted) return
     this.backgroundStarted = true
     activeServiceForEndpoints = this  // M2：sameParticipantEndpoint 集合匹配读注册表
-    // M1a：预热端点注册表——同步解析器（出站收口）在首个入站前就有缓存可用。
-    void this.ensureEndpointRegistry().catch(error => this.reportStandalone('warn', '端点注册表预热失败 错误=%s', error))
     // P2-9：连接器生命周期接入端点在线状态——连接/断开即时回写，不再只靠
     // 出入站间接刷新（管理命令显示的在线状态因此不再滞后）。
+    // Koishi/Satori 的 Status.ONLINE 是数字枚举 1，不是字符串 "active"。
     this.ctx.on('bot-status-updated', bot => {
-      try { this.noteEndpointConnection(endpointAccountKey(bot.platform, String(bot.selfId ?? '')), String(bot.status) === 'active') } catch { /* 生命周期回调不抛错 */ }
+      try {
+        const online = isBotOnlineStatus(bot.status)
+        this.noteEndpointConnection(
+          endpointAccountKey(bot.platform, String(bot.selfId ?? '')),
+          online,
+        )
+        if (online) void this.recoverPendingDeliveries(true).catch(error =>
+          this.reportStandalone('warn', '端点上线后待投递恢复失败 错误=%s', error))
+      } catch { /* 生命周期回调不抛错 */ }
     })
+    // 重启后的持久快照故意保持 offline；注册表就绪后重新读取当前 bot，
+    // 避免因错过 bot-status-updated 事件而一直等到下一条入站消息才恢复。
+    void (async () => {
+      try {
+        await this.syncCurrentBotConnections()
+        // Let adapter lifecycle callbacks and endpoint state writes settle before
+        // the first compensation pass. A later sweep remains the fallback.
+        this.ctx.setTimeout(() => void this.recoverPendingDeliveries().catch(error =>
+          this.reportStandalone('warn', '启动期待投递恢复失败 错误=%s', error)), 10 * Time.second)
+      } catch (error) {
+        this.reportStandalone('warn', '启动期端点在线状态同步失败 错误=%s', error)
+      }
+    })()
     this.ctx.on('bot-removed', bot => {
       try { this.noteEndpointConnection(endpointAccountKey(bot.platform, String(bot.selfId ?? '')), false) } catch { /* 同上 */ }
     })
+    // 离线补拉：插件加载后延迟 15 秒执行（等 bot 连接就绪），只跑一次。
+    this.ctx.setTimeout(() => void this.offlineGroupCatchup().catch(error =>
+      this.reportStandaloneOperation('diagnostic', 'warn', '群消息离线补拉异常 错误=%s', error)), 15 * Time.second)
     // Life advancement and memory compaction are both serialized per story.
     const sweepInterval = Math.max(1, this.config.runtime.sweepIntervalMinutes)
-    this.ctx.setInterval(() => void this.sweep().catch(error => this.reportStandalone('error', '后台推进失败 错误=%s', error)), sweepInterval * Time.minute)
+    this.ctx.setInterval(() => {
+      void this.sweep().catch(error => this.reportStandalone('error', '后台推进失败 错误=%s', error))
+      void this.recoverPendingDeliveries().catch(error => this.reportStandalone('warn', '周期性待投递恢复失败 错误=%s', error))
+    }, sweepInterval * Time.minute)
     if (this.memoryConfig.enabled || this.schedulePreplanConfig.enabled) this.ctx.setInterval(() => void this.compactStories().catch(error => this.reportStandalone('error', '后台整理失败 错误=%s', error)), Math.max(1, this.memoryConfig.backgroundIntervalMinutes) * Time.minute)
     if (this.worldSeederRuntime.enabled && this.worldSeeder.available) {
       this.ctx.setInterval(() => void this.worldSeederSweep().catch(error => this.reportStandalone('warn', '世界播种器运行失败 错误=%s', error)), this.worldSeederRuntime.cadenceMinutes * Time.minute)
@@ -941,6 +1030,178 @@ export class InterludeService extends Service {
     this.reportStandaloneOperation('standard', 'info', '后台调度已启动 剧本扫描=%d分钟 记忆扫描=%d分钟', sweepInterval, this.memoryConfig.backgroundIntervalMinutes)
   }
 
+  /** Recover only the durable outgoing-message ledger. The narrative intent is
+   * deliberately not consulted here: an intent may already be completed while
+   * its transport action is still pending, and replaying the intent would run a
+   * second model turn. DeliveryActions are the outbox truth. */
+  private async recoverPendingDeliveries(force = false, storyId?: string) {
+    if (this.pendingDeliveryRecoveryRunning || this.databaseResetting || this.desktopRuntimePhase === 'paused') return
+    this.pendingDeliveryRecoveryRunning = true
+    const startedAt = Date.now()
+    let attempted = 0
+    let delivered = 0
+    const limit = 32
+    try {
+      await this.ensureEndpointRegistry()
+      const stories = storyId
+        ? [await this.getStory(storyId)]
+        : await this.dbGet('interlude_story', { status: 'active' }) as InterludeStory[]
+      for (const story of stories) {
+        if (attempted >= limit || this.databaseResetting || (this.desktopRuntimePhase as string) === 'paused') break
+        if (story.status !== 'active') continue
+        const owners = new Map<string, number>()
+        const splits = await this.dbGet('interlude_intent', { storyId: story.id, type: 'split-message' }) as NarrativeIntent[]
+        for (const intent of splits) {
+          const ref = restoreMessageEvent(intent.payload, String(intent.payload?.content ?? ''))
+          if (ref?.scriptEntryId) {
+            const key = JSON.stringify([ref.scriptEntryId, ref.commitId, ref.eventId, ref.bubbleIndex ?? 0])
+            if (!owners.has(key)) owners.set(key, intent.id)
+          }
+        }
+        let cursor = 0
+        while (attempted < limit && !this.databaseResetting && (this.desktopRuntimePhase as string) !== 'paused') {
+          const entries = await this.dbGet('interlude_script_entry', { storyId: story.id, kind: 'script', id: { $gt: cursor } }, { sort: { id: 'asc' }, limit: 256 }) as ScriptEntry[]
+          if (!entries.length) break
+          cursor = entries.at(-1)!.id
+          const candidates = entries.flatMap(entry => this.pendingOutgoingDeliveryCandidates(entry))
+          for (const candidate of candidates) {
+            if (attempted >= limit) break
+            const key = this.pendingDeliveryRecoveryKey(candidate)
+            const retry = this.pendingDeliveryRecoveryBackoff.get(key)
+            if (!force && retry && retry.retryAt > Date.now()) continue
+            attempted++
+            try {
+              const outcome = await runStorySerialized(this, story.id, async () => this.recoverPendingDeliveryCandidate(story, candidate, owners))
+              if (outcome === 'delivered' || outcome === 'cancelled' || outcome === 'gone') {
+                this.pendingDeliveryRecoveryBackoff.delete(key)
+                if (outcome === 'delivered') delivered++
+                continue
+              }
+              this.deferPendingDeliveryRecovery(key)
+            } catch (error) {
+              this.deferPendingDeliveryRecovery(key)
+              this.reportStandalone('warn', '待投递恢复尝试失败 故事=%s 条目=%d 事件=%s 分段=%d 错误=%s', story.id, candidate.entryId, candidate.eventId, candidate.segmentIndex, error)
+            }
+          }
+        }
+      }
+      if (attempted || delivered) {
+        this.reportStandaloneOperation('standard', 'info', '待投递补偿扫描完成 尝试=%d 成功=%d 耗时=%dms', attempted, delivered, Date.now() - startedAt)
+      }
+    } finally {
+      this.pendingDeliveryRecoveryRunning = false
+    }
+  }
+
+  private pendingOutgoingDeliveryCandidates(entry: ScriptEntry) {
+    const actions = Array.isArray(entry.metadata?.deliveryActions) ? entry.metadata.deliveryActions : []
+    const events = Array.isArray(entry.metadata?.scriptEvents) ? entry.metadata.scriptEvents : []
+    const candidates: Array<{
+      entryId: number
+      commitId: string
+      eventId: string
+      event: ScriptEventDraft
+      participantId: string
+      endpointId?: string
+      segmentIndex: number
+      content: string
+    }> = []
+    for (const raw of actions) {
+      if (!isRecord(raw) || (raw.status !== 'pending' && raw.status !== 'partial') || !Array.isArray(raw.segments)) continue
+      const action = raw as unknown as ScriptDeliveryAction
+      const rawEvent = events.find(item => isRecord(item) && item.commitId === action.commitId && item.eventId === action.eventId)
+      if (!isRecord(rawEvent) || !isOutgoingScriptEvent(rawEvent as unknown as ScriptEventDraft)) continue
+      const event = rawEvent as unknown as ScriptEventDraft
+      for (const segment of action.segments) {
+        if (!isRecord(segment) || segment.kind !== 'message' || segment.status !== 'pending' || typeof segment.content !== 'string' || !segment.content) continue
+        const participantId = typeof event.participantId === 'string' && event.participantId.trim()
+          ? event.participantId.trim()
+          : typeof action.participantId === 'string' && action.participantId.trim()
+            ? action.participantId.trim()
+            : entry.participantId.trim()
+        if (!participantId) continue
+        candidates.push({
+          entryId: entry.id, commitId: action.commitId, eventId: action.eventId, event,
+          participantId, ...(event.endpointId || action.endpointId ? { endpointId: event.endpointId ?? action.endpointId } : {}),
+          segmentIndex: segment.index, content: segment.content,
+        })
+      }
+    }
+    return candidates
+  }
+
+  private pendingDeliveryRecoveryKey(candidate: { entryId: number, commitId: string, eventId: string, segmentIndex: number }) {
+    return `${candidate.entryId}:${candidate.commitId}:${candidate.eventId}:${candidate.segmentIndex}`
+  }
+
+  private deferPendingDeliveryRecovery(key: string) {
+    const prior = this.pendingDeliveryRecoveryBackoff.get(key)
+    const attempts = (prior?.attempts ?? 0) + 1
+    const delay = Math.min(15 * Time.minute, 30_000 * 2 ** Math.min(attempts - 1, 5))
+    this.pendingDeliveryRecoveryBackoff.set(key, { attempts, retryAt: Date.now() + delay })
+  }
+
+  private async recoverPendingDeliveryCandidate(story: InterludeStory, candidate: ReturnType<InterludeService['pendingOutgoingDeliveryCandidates']>[number], owners?: Map<string, number>): Promise<'delivered' | 'pending' | 'cancelled' | 'gone'> {
+    const generation = this.taskGeneration(story.id)
+    if (!this.taskGenerationCurrent(story.id, generation)) return 'pending'
+    const liveStory = await this.getStory(story.id)
+    if (liveStory.status !== 'active' || !this.taskGenerationCurrent(story.id, generation)) return 'pending'
+    const entry = (await this.dbGet('interlude_script_entry', { id: candidate.entryId }))[0] as ScriptEntry | undefined
+    if (!entry || entry.storyId !== story.id) return 'gone'
+    const current = this.pendingOutgoingDeliveryCandidates(entry).find(item => item.commitId === candidate.commitId && item.eventId === candidate.eventId && item.segmentIndex === candidate.segmentIndex)
+    if (!current) {
+      const action = Array.isArray(entry.metadata?.deliveryActions)
+        ? entry.metadata.deliveryActions.find(item => isRecord(item) && item.commitId === candidate.commitId && item.eventId === candidate.eventId) as Record<string, unknown> | undefined
+        : undefined
+      const status = Array.isArray(action?.segments)
+        ? action.segments.find(item => isRecord(item) && item.index === candidate.segmentIndex)?.status
+        : undefined
+      return status === 'delivered' ? 'delivered' : status === 'cancelled' ? 'cancelled' : 'gone'
+    }
+    const scriptEvent = messageEventReference(current.event, current.segmentIndex, entry.id)
+    if (!scriptEvent) return 'gone'
+    // A durable split intent owns this bubble's timing and interruption. The
+    // outbox compensator must not become a competing sender for the same key.
+    const ownerId = owners?.get(JSON.stringify([entry.id, current.commitId, current.eventId, current.segmentIndex]))
+    const splits = (owners
+      ? ownerId ? await this.dbGet('interlude_intent', { storyId: story.id, id: ownerId }) : []
+      : await this.dbGet('interlude_intent', { storyId: story.id, participantId: current.participantId, type: 'split-message' })) as NarrativeIntent[]
+    const owner = splits.find(intent => {
+      const ref = restoreMessageEvent(intent.payload, current.content)
+      return ref?.scriptEntryId === entry.id && ref.commitId === current.commitId
+        && ref.eventId === current.eventId && ref.bubbleIndex === current.segmentIndex
+    })
+    if (!this.taskGenerationCurrent(story.id, generation)) return 'pending'
+    if (owner?.status === 'pending') {
+      await this.scheduleNextSplitWake(story.id)
+      return 'pending'
+    }
+    if (owner?.status === 'completed' || owner?.status === 'cancelled') {
+      const status = owner.status === 'completed' ? 'delivered' : 'cancelled'
+      await this.updateScriptDeliveryOutcome(story.id, scriptEvent, status, new Date(), 'split-intent-terminal-reconciliation')
+      return status
+    }
+    const message: OutgoingMessageDraft = {
+      participantId: current.participantId,
+      content: current.content,
+      ...(current.endpointId ? { endpointId: current.endpointId } : {}),
+      userInitiated: false,
+      scriptEvent,
+    }
+    if (!this.taskGenerationCurrent(story.id, generation)) return 'pending'
+    await this.deliverOutgoingMessages(story, [message], undefined, undefined, undefined, true, undefined, 'pending')
+    const fresh = (await this.dbGet('interlude_script_entry', { id: entry.id }))[0] as ScriptEntry | undefined
+    const action = Array.isArray(fresh?.metadata?.deliveryActions)
+      ? fresh.metadata.deliveryActions.find(item => isRecord(item) && item.commitId === current.commitId && item.eventId === current.eventId) as Record<string, unknown> | undefined
+      : undefined
+    const segment = Array.isArray(action?.segments)
+      ? action.segments.find(item => isRecord(item) && item.index === current.segmentIndex) as Record<string, unknown> | undefined
+      : undefined
+    if (segment?.status === 'delivered') return 'delivered'
+    if (segment?.status === 'cancelled') return 'cancelled'
+    return 'pending'
+  }
+
   setNarrator(provider: NarrativeProvider) { this.narrator = provider }
   getNarrator() { return this.narrator }
   setCompactor(provider: NarrativeCompactor) { this.compactor = provider }
@@ -948,7 +1209,7 @@ export class InterludeService extends Service {
   setEmbedder(provider: NarrativeEmbedder) { this.embedder = provider }
 
   /** Optional typ-0 bridge hook. No sink is installed in normal Koishi use. */
-  setDesktopEventSink(sink?: (event: string, payload: unknown) => void) { this.desktopEventSink = sink }
+  setDesktopEventSink(sink?: (event: string, payload: unknown) => void) { this.desktopEventSink = sink; this.desktopBridgeActive = !!sink }
   /** P2-4：Puppeteer 缺失提示进程内只打一次。 */
   private puppeteerHintLogged = false
   /** typ-0 bridge 在安装时注册后台投递通道；卸载时传 undefined 复原。 */
@@ -958,7 +1219,7 @@ export class InterludeService extends Service {
   getDesktopRuntimePhase() { return this.desktopRuntimePhase }
   async setDesktopRuntimePhase(phase: DesktopRuntimePhase) {
     if (phase === 'paused' && this.desktopRuntimePhase !== 'paused') {
-      this.runtimeGeneration += 1
+      this.runtimePauseGeneration = (this.runtimePauseGeneration ?? 0) + 1
     }
     this.desktopRuntimePhase = phase
     if (phase === 'paused') {
@@ -1478,7 +1739,11 @@ export class InterludeService extends Service {
     const blockers: string[] = []
     const warnings: string[] = []
     if (!this.canHandleSession(session)) blockers.push('当前机器人账号或用户账号未通过 OneBot 白名单。')
-    const manageDenial = this.manageSessionDenial(session)
+    // 只读 preflight：用纯函数版本，不带拒绝日志副作用（warn 只属于真实命令路径）。
+    const manageDenial = manageSessionDenialReason({
+      platform: session.platform, selfId: session.selfId, userId: session.userId,
+      onebot: this.config.onebot, managers: this.sharedStoryConfig.managerAccounts,
+    })
     if (manageDenial) warnings.push(`当前会话无管理权限：${manageDenial.detail}`)
     if (!setting.character.name.trim()) blockers.push('storyDefaults.characterName 为空。')
     if (!setting.character.profile.trim()) blockers.push('storyDefaults.characterProfile 尚未填写。')
@@ -1590,8 +1855,8 @@ export class InterludeService extends Service {
     return { ...story, status, updatedAt: now }
   }
 
-  async recentEntries(storyId: string, limit = this.config.runtime.contextEntryLimit) {
-    const bounded = Math.max(1, Math.min(limit, 200))
+  async recentEntries(storyId: string, limit = resolveScriptContextBudget(this.config.runtime).count) {
+    const bounded = Math.max(1, Math.min(Math.floor(limit), 200))
     const rows = await this.dbGet('interlude_script_entry', { storyId }, {
       limit: bounded,
       sort: { occurredAt: 'desc' },
@@ -1612,7 +1877,12 @@ export class InterludeService extends Service {
         : Promise.resolve([] as ScriptEntry[]),
     ])
     const byId = new Map<number, ScriptEntry>()
-    for (const entry of [...countRows, ...timeRows]) byId.set(entry.id, entry)
+    // 墓碑不进 prompt——recentEntries 有同款过滤（批次 4 契约），此处是真正的
+    // 主入口，缺过滤会让管理员删除/清库留下的占位文本进入模型上下文。
+    for (const entry of [...countRows, ...timeRows]) {
+      if (entry.kind === 'redacted') continue
+      byId.set(entry.id, entry)
+    }
     return [...byId.values()].sort((left, right) => left.occurredAt.getTime() - right.occurredAt.getTime() || left.id - right.id)
   }
 
@@ -1628,7 +1898,7 @@ export class InterludeService extends Service {
       .slice(0, limit)
   }
 
-  /** Administrative view: includes global and participant-specific durable facts. */
+  /** Administrative view: global durable facts, including legacy rows with a participantId. */
   async adminFacts(storyId: string, limit = 20) {
     return this.dbGet('interlude_fact', { storyId, status: 'active' }, {
       limit: Math.max(1, Math.min(limit, 100)),
@@ -1666,9 +1936,10 @@ export class InterludeService extends Service {
   /** Adds a high-confidence fact for corrections that must survive compaction. */
   async addAdminFact(story: InterludeStory, scope: NarrativeFact['scope'], content: string) {
     const text = clip(content, this.memoryConfig.factContentCharacters)
-    if (!text) return false
+    if (!text || factContentLooksAmbiguous(scope, text)) return false
     const now = new Date()
     await this.dbCreate('interlude_fact', {
+      // Legacy column retained for database compatibility; facts are global.
       storyId: story.id, participantId: '', scope, content: text,
       importance: 0.8, confidence: 1, unresolved: false, embedding: await this.embedText(text),
       status: 'active', sourceEntryIds: [], lastSeenAt: now, createdAt: now, updatedAt: now,
@@ -1695,6 +1966,18 @@ export class InterludeService extends Service {
     const patch = (await this.dbGet('interlude_state_patch', { id, storyId, status: 'proposed' }))[0]
     if (!patch) return false
     await this.dbSet('interlude_state_patch', { id }, { status: 'rejected' })
+    return true
+  }
+
+  /** 手动批准一条 proposed 提案:管理员判断优先于证据阈值/autoApply 政策
+   * (否则关闭自动应用后提案没有任何出口)。批准后立即重建 overlay——
+   * 统一语义下 overlay=未压缩 applied 补丁的合并,效果即时可见。 */
+  async applyAdminStatePatch(story: InterludeStory, id: number) {
+    const patch = (await this.dbGet('interlude_state_patch', { id, storyId: story.id, status: 'proposed' }))[0]
+    if (!patch) return false
+    const now = new Date()
+    await this.dbSet('interlude_state_patch', { id }, { status: 'applied', appliedAt: now })
+    await this.rebuildLiveOverlayState(story, now)
     return true
   }
 
@@ -1814,6 +2097,16 @@ export class InterludeService extends Service {
     await this.purgeTable('interlude_web_observation', { storyId }, { status: 'deleted', url: '', title: '', excerpt: '', summary: '[管理员已删除网页观察]' })
     await this.purgeTable('interlude_schedule_preplan', { storyId }, { regimes: [], exceptions: [], materializedDays: [], validFrom: '1970-01-01', validThrough: '1970-01-01', lastReviewedLocalDate: '', reviewReason: '[管理员已删除 Schedule Preplan]' })
     await this.purgeTable('interlude_seeded_event', { storyId }, { status: 'expired', summary: '[管理员已删除世界事件]', sourcePayload: {}, subjects: [] })
+    // 长线催化器随故事清理:此前 guidance/progress 不在清单里,reset 后旧"直觉"
+    // 经启动预加载重新注入新故事,分数残留还会污染触发门槛。'completed' 由此
+    // 成为真实可达的收束终态(而非死状态)。
+    await this.purgeTable('interlude_long_arc_guidance', { storyId }, { status: 'completed', payload: {}, premise: '', direction: '', evidenceEntryIds: [], currentStage: '', intensity: 'subtle', confidence: 0, title: '[管理员已收束长线指导]' })
+    await this.purgeTable('interlude_long_arc_progress', { storyId }, { lastCountedEntryId: 0, totalScore: 0, privateCount: 0, privateScore: 0, groupCount: 0, groupScore: 0, unknownCount: 0, lastGenerationScore: 0, lastGenerationEntryId: 0, updatedAt: new Date() })
+    this.activeLongArcGuidanceCache.delete(storyId)
+    this.longHorizonLastScore.delete(storyId)
+    this.longHorizonLastScore.delete(storyId + ':gen')
+    this.longHorizonGuidanceLoaded.delete(storyId)
+    this.longHorizonGenerationCooldownUntil.delete(storyId)
     const now = new Date()
     const story = await this.getStory(storyId)
     const setting = this.initialStorySetting()
@@ -1880,7 +2173,13 @@ export class InterludeService extends Service {
       'interlude_script_entry', 'interlude_memory', 'interlude_intent',
       'interlude_scene', 'interlude_arc', 'interlude_fact', 'interlude_state_patch', 'interlude_overlay_snapshot', 'interlude_web_observation', 'interlude_schedule_preplan',
       'interlude_participant', 'interlude_seeded_event', 'interlude_story',
+      'interlude_long_arc_guidance', 'interlude_long_arc_progress',
     ] as const
+    // 长线催化器的内存态随全库清理一并失效,避免同进程内旧指导继续投影
+    this.activeLongArcGuidanceCache.clear()
+    this.longHorizonLastScore.clear()
+    this.longHorizonGuidanceLoaded.clear()
+    this.longHorizonGenerationCooldownUntil.clear()
     let removed = 0
     let logicallyCleared = 0
     for (const table of tables) {
@@ -2004,7 +2303,8 @@ export class InterludeService extends Service {
 
   /** Entry point for configured OneBot group chats. Group members do not need
    * private-message authorization; the group allowlist controls access. */
-  async receiveGroup(session: Session, receivedAt = new Date()) {
+  async receiveGroup(session: Session, receivedAt?: Date) {
+    if (!receivedAt) receivedAt = toDate((session as any).timestamp) ?? new Date()
     if (this.databaseResetting || !this.canHandleGroupSession(session)) return false
     const groupId = sessionGroupId(session)
     const rule = this.groupRule(groupId)
@@ -2012,7 +2312,7 @@ export class InterludeService extends Service {
     const mentionedBot = mentionsBot(session)
     const quotedBot = quotesBot(session)
     const audioSources = extractSessionAudioSources(session)
-    const imageSources = extractSessionImageSources(session)
+    let imageSources = extractSessionImageSources(session)
     // In mention-only mode a plain text message is ignored before story lookup,
     // but an unmentioned image is durable evidence for a later real turn. It is
     // persisted below without entering the model debounce queue.
@@ -2026,31 +2326,31 @@ export class InterludeService extends Service {
     const quote = describeQuotedMessage(session, story.setting.character.name)
     const forward = await this.readForward(session)
     const messageContent = forward ? mergeForwardContent(describeGroupAttachments(session.content), forward.content) : describeGroupAttachments(session.content)
+    // 合并转发内的图片并入本轮视觉输入与群聊历史引用
+    if (forward?.imageRefs?.length) imageSources = Array.from(new Set([...imageSources, ...forward.imageRefs]))
     // 桥接幂等（群聊侧，与私聊 receive 对齐）：桌面超时-重放会把同一群消息
     // 再投递一次；平台+频道+messageId 命中即直接确认，不重复落库与入队。
-    const groupDedupeKey = `${session.platform}:${session.channelId}:${session.messageId}`
+    const groupDedupeKey = `${session.platform}:${session.selfId ?? story.selfId}:${session.channelId}:${session.messageId}`
     if (session.messageId && this.seenIncomingMessages.has(groupDedupeKey)) {
       this.reportOperation('diagnostic', 'debug', story, 'user-message', '桥接重放去重命中（群聊），跳过重复消息 键=%s', groupDedupeKey)
       return true
     }
-    if (session.messageId) {
-      this.seenIncomingMessages.set(groupDedupeKey, Date.now())
-      if (this.seenIncomingMessages.size > 600) {
-        const oldest = this.seenIncomingMessages.keys().next().value
-        this.seenIncomingMessages.delete(oldest)
-      }
-    }
+
     // M1a 端点层：群消息同样先在队列外解析（群端点），命中才标注与刷状态。
     const groupSource = { platform: session.platform, selfId: String(session.selfId ?? story.selfId), groupId: String(groupId), channelId: String(session.channelId ?? '') }
     const groupChannelMeta = await this.channelMetadataFor(groupSource, { groupId: groupSource.groupId, channelId: groupSource.channelId })
     await this.touchEndpointStateInbound(groupSource)
     const accepted = await this.serial(story.id, async () => {
+      if (session.messageId && (this.seenIncomingMessages.has(groupDedupeKey)
+        || (await this.dbGet('interlude_script_entry', { storyId: story.id, kind: 'group-message',
+          'metadata.groupId': groupId, 'metadata.messageId': session.messageId,
+          $or: [{ 'metadata.selfId': String(session.selfId ?? story.selfId) }, { 'metadata.selfId': { $exists: false } }] }, { limit: 1 })).length)) return undefined
       const current = await this.getStory(story!.id)
       const entry = await this.appendEntry(current.id, {
         kind: 'group-message', actor: 'user', content: messageContent,
         occurredAt: now.toISOString(),
         metadata: {
-          groupId, senderId, senderName, channelId: session.channelId, messageId: session.messageId,
+          groupId, senderId, senderName, channelId: session.channelId, messageId: session.messageId, selfId: String(session.selfId ?? story.selfId),
           ...(groupChannelMeta ? { channel: groupChannelMeta } : {}),
           ...(quote ? { quote } : {}),
           ...(imageSources.length ? {
@@ -2059,9 +2359,15 @@ export class InterludeService extends Service {
           } : {}),
         },
       }, now)
-      await this.pauseAutomaticAdvanceAfterUserMessage(current.id, now)
+      try {
+        await this.pauseAutomaticAdvanceAfterUserMessage(current.id, now)
+      } catch (error) {
+        this.report('warn', current, 'user-message', '消息已落库，自动推进暂停更新失败：%s', error)
+      }
       return entry
     })
+    if (!accepted) return true
+    if (session.messageId) this.rememberIncomingMessage(groupDedupeKey)
     // An unmentioned image is evidence-only in mention-only mode. It has now
     // been written to the script, but must not itself consume willingness,
     // cooldown, or a main-model call.
@@ -2077,7 +2383,10 @@ export class InterludeService extends Service {
     return true
   }
 
-  async receive(session: Session, receivedAt = new Date()) {
+  async receive(session: Session, receivedAt?: Date) {
+    // 双时钟修复：优先平台消息时间（秒级），缺失时用本机接收时间——此前
+    // Koishi 原生路径恒用 Date.now()，与桌面路径（平台 frame.time）混排序。
+    if (!receivedAt) receivedAt = toDate((session as any).timestamp) ?? new Date()
     if (this.databaseResetting) return false
     // Check before find/create so an unauthorized QQ can neither trigger the
     // model nor create a persistent story by merely sending a private message.
@@ -2104,20 +2413,14 @@ export class InterludeService extends Service {
     if (!session.content?.trim() && !extractSessionVoiceCount(session)) return false
     // 桥接幂等：同一条消息（平台+messageId）近期已处理过则直接确认，不再入队
     // 叙事——这是桌面超时-重放双写双回的插件侧防线。
-    const dedupeKey = `${session.platform}:${session.messageId}`
+    const dedupeKey = `${session.platform}:${session.selfId ?? story.selfId}:${session.userId}:${session.messageId}`
     if (session.messageId && this.seenIncomingMessages.has(dedupeKey)) {
       this.reportOperation('diagnostic', 'debug', story, 'user-message', '桥接重放去重命中，跳过重复消息 键=%s', dedupeKey)
       return true
     }
     const observed = this.describeVisionEvent(session)
     if (!observed.content.trim() && !observed.sources.length && !extractSessionVoiceCount(session) && !extractSessionFileFacts(session).length) return false
-    if (session.messageId) {
-      this.seenIncomingMessages.set(dedupeKey, Date.now())
-      if (this.seenIncomingMessages.size > 600) {
-        const oldest = this.seenIncomingMessages.keys().next().value
-        this.seenIncomingMessages.delete(oldest)
-      }
-    }
+
     // Mark the relationship synchronously before waiting for the story queue.
     // This lets an arriving message invalidate a model request that is about
     // to persist, and lets a due split segment stop before transport begins.
@@ -2142,6 +2445,10 @@ export class InterludeService extends Service {
     }
 
     const accepted = await this.serial(story.id, async () => {
+      if (session.messageId && (this.seenIncomingMessages.has(dedupeKey)
+        || (await this.dbGet('interlude_script_entry', { storyId: story.id, participantId: participant!.id, kind: 'user-message',
+          'metadata.platform': session.platform, 'metadata.messageId': session.messageId,
+          $or: [{ 'metadata.selfId': String(session.selfId ?? story.selfId) }, { 'metadata.selfId': { $exists: false } }] }, { limit: 1 })).length)) return 'duplicate' as const
       const current = await this.getStory(story.id)
       const currentParticipant = await this.getParticipant(participant!.id)
       if (!currentParticipant || currentParticipant.status !== 'active') return undefined
@@ -2156,7 +2463,7 @@ export class InterludeService extends Service {
       await this.appendEntry(current.id, {
         kind: 'user-message', actor: 'user', content: userInput.content,
         occurredAt: now.toISOString(), metadata: {
-          platform: session.platform, messageId: session.messageId, personId: incomingParticipant.personId,
+          platform: session.platform, messageId: session.messageId, selfId: String(session.selfId ?? story.selfId), personId: incomingParticipant.personId,
           ...(channelMeta ? { channel: channelMeta } : {}),
           ...(userInput.sources.length ? { imageCount: userInput.sources.length } : {}),
           ...(userInput.audioSources.length ? { audioCount: userInput.audioSources.length } : {}),
@@ -2165,10 +2472,16 @@ export class InterludeService extends Service {
       }, now, incomingParticipant.id)
       // Messages are persisted at arrival. The model request itself is
       // debounced below, so a burst can become one coherent writing turn.
-      await this.pauseAutomaticAdvanceAfterUserMessage(current.id, now)
+      try {
+        await this.pauseAutomaticAdvanceAfterUserMessage(current.id, now)
+      } catch (error) {
+        this.report('warn', current, 'user-message', '消息已落库，自动推进暂停更新失败：%s', error)
+      }
       return { story: current, participant: incomingParticipant, now, superseded }
     })
+    if (accepted === 'duplicate') return true
     if (!accepted) return false
+    if (session.messageId) this.rememberIncomingMessage(dedupeKey)
     this.bufferUserNarrative(accepted.story, accepted.participant, session, accepted.now, accepted.superseded, userInput.content, userInput.sources, userInput.audioSources, userInput.quote, inboundEndpointId)
     this.turnEngine.recordSource(accepted.participant.id, inboundEndpointId, inboundReceivedSeq)
     if (userInput.sources.length) {
@@ -2366,7 +2679,9 @@ export class InterludeService extends Service {
       const sticker = this.resolveSticker(decision.localMedia, stickerCatalog)
       const nativeFace = sticker ? undefined : this.resolveNativeFace(decision, chatCapabilities)
       const result = await this.serial(story.id, async () => {
-        if (this.databaseResetting || this.bufferedGroupTurns.get(key) !== turn || !succeeded) return {
+        // paused 同样作废:暂停期间到达的群模型结果不再提交/对外发消息(群内容
+        // 已在 receiveGroup 落库,不 requeue 也不会丢;空 turn 由 finally 清理)
+        if (this.databaseResetting || this.desktopRuntimePhase === 'paused' || this.bufferedGroupTurns.get(key) !== turn || !succeeded) return {
           content: '', messages: [] as OutgoingMessageDraft[],
           chatActions: { reactions: [] } as ExecutableGroupChatActions,
           commit: undefined as ScriptCommitDraft | undefined,
@@ -2447,14 +2762,15 @@ export class InterludeService extends Service {
         this.groupWillingness.set(key, consumeWillingnessGate(this.groupWillingness.get(key), turn.rule.willingnessPreset, turn.rule.willingnessAuto, decodeStoryState(story.state).lifeStatus, turn.rule.willingness, Date.now()))
       }
       // Other conversations use the same delivery ledger as private turns.
-      if (result.messages.length) await this.sendOutgoingMessages(snapshot.story, result.messages)
+      if (result.messages.length) await this.deliverOutgoingMessages(snapshot.story, result.messages)
       this.scheduleCompaction(story.id)
     } catch (error) {
       this.report('error', story, 'user-message', '群聊主叙事失败，保持静默 群=%s 错误=%s', turn.groupId, error)
     }
   }
   private async groupMessages(storyId: string, groupId: string, limit: number): Promise<GroupMessagesSnapshot> {
-    const rows = await this.dbGet('interlude_script_entry', { storyId }, {
+    const rows = await this.dbGet('interlude_script_entry', { storyId, kind: { $in: ['group-message', 'character-group-message'] },
+      'metadata.groupId': { $in: groupIdStorageVariants(groupId) } }, {
       // Keep enough lookback to find the last few image-bearing entries even
       // when the visible text context is small.
       limit: Math.max(60, Math.min(300, limit * 12)), sort: { occurredAt: 'desc' },
@@ -2500,25 +2816,46 @@ export class InterludeService extends Service {
     const selected: NarrativeHistoricalImage[] = []
     const seen = new Set(currentSources)
     const max = Math.min(6, Math.max(0, Math.floor(limit)))
-    for (const ref of refs) {
-      if (selected.length >= max || seen.has(ref.source)) continue
-      seen.add(ref.source)
-      try {
-        const image = await this.fetchNativeImage(ref.source, (session as any)?.bot)
-        if (!image) continue
+    const started = Date.now()
+    let attempts = 0, cursor = 0
+    // Keep the original first-successful-images selection, not the fastest
+    // completion order. Small batches overlap failures without hiding a valid
+    // source behind an arbitrary attempt limit or whole-operation deadline.
+    while (cursor < refs.length && selected.length < max) {
+      const batch: StoredGroupImageRef[] = []
+      while (cursor < refs.length && batch.length < 3) {
+        const ref = refs[cursor++]
+        if (seen.has(ref.source)) continue
+        seen.add(ref.source)
+        batch.push(ref)
+      }
+      attempts += batch.length
+      const images = await Promise.all(batch.map(async ref => {
+        try {
+          const image = await this.fetchNativeImage(ref.source, (session as any)?.bot)
+          if (!image) this.report('warn', story, 'user-message', '历史图片回源失败 阶段=historical-image-fetch entry=%s 来源=%s 原因=empty-or-unsupported', ref.sourceEntryId, describeImageSource(ref.source))
+          return image
+        } catch (error) {
+          this.report('warn', story, 'user-message', '历史图片回源失败 阶段=historical-image-fetch entry=%s 来源=%s 错误=%s', ref.sourceEntryId, describeImageSource(ref.source), describeHttpError(error))
+          return undefined
+        }
+      }))
+      for (const [index, image] of images.entries()) {
+        if (!image || selected.length >= max) continue
+        const ref = batch[index]
         selected.push({ id: `group-history-image-${selected.length + 1}`, ...image, sourceEntryId: ref.sourceEntryId, senderId: ref.senderId, senderName: ref.senderName, occurredAt: ref.occurredAt, ...(ref.messageId ? { messageId: ref.messageId } : {}) })
-      } catch (error) {
-        this.report('warn', story, 'user-message', '历史群聊图片读取失败，已跳过图片 entry=%s 错误=%s', ref.sourceEntryId, error)
       }
     }
+    this.reportOperation('diagnostic', 'debug', story, 'user-message', '历史图片回源完成 尝试=%d 成功=%d 耗时=%dms', attempts, selected.length, Date.now() - started)
     return selected.reverse()
   }
 
   private async groupCooldownActive(storyId: string, groupId: string, cooldownSeconds: number) {
     if (cooldownSeconds <= 0) return false
-    const rows = await this.dbGet('interlude_script_entry', { storyId }, {
-      limit: 100, sort: { occurredAt: 'desc' },
-    })
+    const rows = await this.dbGet('interlude_script_entry', { storyId,
+      kind: { $in: ['character-group-message', 'character-platform-action'] },
+      'metadata.groupId': { $in: groupIdStorageVariants(groupId) },
+    }, { limit: 1, sort: { occurredAt: 'desc' } })
     const latest = rows.find(entry => ['character-group-message', 'character-platform-action'].includes(entry.kind)
       && normalizeGroupId(String(entry.metadata?.groupId ?? '')) === normalizeGroupId(groupId))
     return !!latest && Date.now() - latest.occurredAt.getTime() < cooldownSeconds * Time.second
@@ -2748,7 +3085,7 @@ export class InterludeService extends Service {
     }
   }
 
-  private async sendGroupMessage(story: InterludeStory, channelId: string, content: string, replyToMessageId?: string, session?: Session, endpointId?: string) {
+  private async sendGroupMessage(story: InterludeStory, channelId: string, content: string, replyToMessageId?: string, session?: Session, endpointId?: string, correlation?: Pick<OutgoingMessageDraft, 'traceId' | 'processingId'>, control?: { shouldCancel: () => boolean; settled: Map<number, GroupDeliveryResult['segmentOutcomes'][number]['status']>; onDelivered: (index: number, content: string) => void }) {
     const targetGroupId = normalizeGroupId(channelId)
     // Keep the adapter-facing channel spelling (for example `group:100`)
     // while using the normalized id only for endpoint/config matching.
@@ -2833,6 +3170,18 @@ export class InterludeService extends Service {
     const deliveredSegments: string[] = []
     const segmentOutcomes: GroupDeliveryResult['segmentOutcomes'] = []
     for (const [index, segment] of segments.entries()) {
+      const settled = control?.settled.get(index)
+      if (settled) {
+        segmentOutcomes.push({ index, content: segment, status: settled })
+        if (settled === 'delivered') deliveredSegments.push(segment)
+        else allDelivered = false
+        continue
+      }
+      if (control?.shouldCancel()) {
+        allDelivered = false
+        segmentOutcomes.push({ index, content: segment, status: 'failed', reason: 'delivery-generation-obsolete' })
+        continue
+      }
       const outgoing = index === 0 && replyToMessageId
         ? [h('quote', { id: replyToMessageId }), segment]
         : segment
@@ -2848,6 +3197,8 @@ export class InterludeService extends Service {
             channelId: transportGroupId,
             kind: 'group',
             content: segment,
+            ...(correlation?.traceId ? { traceId: correlation.traceId } : {}),
+            ...(correlation?.processingId ? { processingId: correlation.processingId } : {}),
             ...(index === 0 && replyToMessageId ? { quoteMessageId: replyToMessageId } : {}),
             ...(selectedEndpoint?.id ? { endpointId: selectedEndpoint.id } : {}),
           })
@@ -2856,6 +3207,7 @@ export class InterludeService extends Service {
           const receipt = await bot.sendMessage(transportGroupId, outgoing)
           if (Array.isArray(receipt) && !receipt.length) throw new Error('Group transport returned no message receipt.')
         }
+        control?.onDelivered(index, segment)
         // P2-8：状态按实际投递的 bot 归因——实时群会话优先时归因到 session.bot，
         // 否则归因到解析出的兜底账号（多角色下不再错刷 fallback）。
         const actualBot = (bot as unknown as { platform?: string, selfId?: string } | undefined)
@@ -2907,11 +3259,11 @@ export class InterludeService extends Service {
     // 早发内容与常规投递共用同一可见文本合约：长度上限与括号表情标签清理一致。
     const content = sanitizeAndClampVisibleContent(reply.interaction.reply.content, this.config.runtime.maxMessageCharacters, this.config.runtime.messageSeparator)
     if (!content || this.splitOutgoingMessage(content).length !== 1) return false
-    const delivered = await this.sendOutgoingMessages(story, [{
+    const confirmed: ScriptEntry[] = []
+    const delivered = await this.deliverOutgoingMessages(story, [{
       participantId: participant.id, content, interaction: reply.interaction, userInitiated: true,
-    }], participant, session, undefined, true, requestStartedAt)
+    }], participant, session, undefined, true, requestStartedAt, 'failed', false, confirmed)
     if (!delivered.length) return false
-    const confirmed = await this.confirmOutgoingDeliveries(story, delivered)
     if (!confirmed.length) return false
     turn.firstMessageCommittedRequestId = requestId
     this.reportOperation('standard', 'info', story, 'user-message', '实验性流式首条回复已提前投递 参与者=%s 请求=%d', participant.id, requestId)
@@ -2942,6 +3294,9 @@ export class InterludeService extends Service {
       catalogLimit: Math.max(1, Math.min(80, Math.floor(Number(configured?.catalogLimit) || 40))),
       descriptionMaxTokens: Math.max(256, Math.min(4_096, Math.floor(Number(configured?.descriptionMaxTokens) || 768))),
       descriptionResponseFormat: configured?.descriptionResponseFormat === 'prompt-only' ? 'prompt-only' : 'json-object',
+      // 修复：此前漏拷此字段——Console 配置的投递基址静默失效，Docker 部署下
+      // 永远回落 127.0.0.1:5140，OneBot 实现拉不到贴纸（retcode 1200/100）。
+      deliveryBaseUrl: String(configured?.deliveryBaseUrl ?? '').trim(),
     }
   }
 
@@ -2950,6 +3305,10 @@ export class InterludeService extends Service {
    * place-holder fact so history and the desktop timeline stay readable. */
   private describeUserEvent(story: InterludeStory, session: Session, forward?: ForwardReadResult) {
     const visual = this.describeVisionEvent(session)
+    // 合并转发内的图片并入本轮视觉输入（正文占位符已由 mergeForwardContent 保留）
+    const sources = forward?.imageRefs?.length
+      ? Array.from(new Set([...visual.sources, ...forward.imageRefs]))
+      : visual.sources
     const audioSources = extractSessionAudioSources(session)
     const files = extractSessionFileFacts(session)
     const audioFiles = files.filter(file => file.audio)
@@ -2970,7 +3329,7 @@ export class InterludeService extends Service {
     }
     return {
       content,
-      sources: visual.sources,
+      sources,
       audioSources,
       quote: describeQuotedMessage(session, story.setting.character.name),
     }
@@ -3093,7 +3452,9 @@ export class InterludeService extends Service {
   /** 表情包 HTTP 回源路由：OneBot 实现（NapCat/Lagrange）分容器时经此下载文件。
    * 仅服务素材库内、资产表登记过的文件；assetId 即查询键，无目录穿越面。 */
   private registerStickerRoute() {
-    if (!this.stickerRouteRegistered || !(this.ctx as any).router) return
+    // 已注册过或宿主没有 router 时才跳过;此前条件写反导致路由从未注册,
+    // 独立 Koishi + OneBot 分容器部署的表情包回源全部 404
+    if (this.stickerRouteRegistered || !(this.ctx as any).router) return
     this.stickerRouteRegistered = true
     ;(this.ctx as any).router.get('/hds-interlude/sticker/:assetId', async (koa: any) => {
       const asset = this.stickerById.get(koa.params.assetId)
@@ -3104,7 +3465,10 @@ export class InterludeService extends Service {
       if (!inside || inside === '..' || inside.startsWith(`..${sep}`) || inside.includes(':')) { koa.status = 404; return }
       koa.type = asset.mimeType || 'image/png'
       koa.set('cache-control', 'public, max-age=86400')
-      koa.body = createReadStream(file)
+      const stream = createReadStream(file)
+      // 素材可能在响应前被扫描任务清理:流错误回 404,而不是让请求挂起
+      stream.on('error', () => { koa.status = 404; koa.body = undefined })
+      koa.body = stream
     })
     this.reportStandaloneOperation('diagnostic', 'debug', '表情包回源路由已注册 基址=%s', this.stickerDeliveryBase())
   }
@@ -3165,17 +3529,29 @@ export class InterludeService extends Service {
   /** Compact summaries of the scenes immediately before the active one. They
    * bridge the raw context window and the arc, where last-turn details used to
    * disappear from the prompt entirely. */
-  private async previousSceneSummaries(storyId: string): Promise<PreviousSceneSummary[]> {
+  /** 弧摘要进 prompt 前的独立裁剪:存储侧保留全量(arcSummaryCharacters,默认 12k),
+   * prompt 侧默认只带尾部(arcPromptCharacters,默认 6k)——弧层与 previousScenes/
+   * 长线投影叠加时,12k 全量每回合在场会挤压 recentScript 预算,尾部最贴近当前。 */
+  private trimArcForPrompt(arc: InterludeArc | null): InterludeArc | null {
+    if (!arc) return arc
+    const limit = this.memoryConfig.arcPromptCharacters ?? 6_000
+    if (!limit || arc.summary.length <= limit) return arc
+    return { ...arc, summary: `…(前文摘要已省略)${arc.summary.slice(arc.summary.length - limit)}` }
+  }
+
+  private async previousSceneSummaries(story: InterludeStory): Promise<PreviousSceneSummary[]> {
     const limit = this.memoryConfig.previousSceneSummaries
     if (!limit || !this.memoryConfig.enabled) return []
-    const rows = await this.dbGet('interlude_scene', { storyId, status: 'closed' }, {
+    const rows = await this.dbGet('interlude_scene', { storyId: story.id, status: 'closed' }, {
       limit, sort: { endedAt: 'desc' },
     }) as InterludeScene[]
+    // 场景桥接的时间用故事本地时区渲染——体系其余处均为 occurredAtLocal,
+    // UTC ISO 会让时区敏感剧情在模型侧产生昼夜歧义
     return rows
       .filter(scene => scene.summary.trim() && scene.endedAt)
       .map(scene => ({
-        startedAt: scene.startedAt.toISOString(),
-        endedAt: (scene.endedAt ?? scene.startedAt).toISOString(),
+        startedAt: formatLogTime(scene.startedAt, story.setting.timezone),
+        endedAt: formatLogTime(scene.endedAt ?? scene.startedAt, story.setting.timezone),
         summary: scene.summary.slice(0, 2_000),
       }))
   }
@@ -3227,11 +3603,19 @@ export class InterludeService extends Service {
       // the event. Literal/source matches retain priority over writing style.
       scored.push({ id, score: source * 2 + tagged + Math.max(0, semantic ?? 0) * (item.kind === 'script' ? 0.45 : 1) + lexical })
     }
-    const visible = [...cache.entries()]
-      .filter(([id, item]) => !excludeIds.has(id)
-        && isHistoryEntryVisibleToParticipant(item, participantId, shareDetails))
-      .sort((left, right) => left[1].occurredAt.localeCompare(right[1].occurredAt) || left[0] - right[0])
-    const episodes = buildEpisodeIndex(visible)
+    // Navigation belongs to the audience, not to this turn's excluded entries.
+    const episodeKey = JSON.stringify([storyId, participantId ?? null, this.sharedStoryConfig.shareParticipantDetails])
+    let indexed = this.episodeIndexes.get(episodeKey)
+    if (indexed?.source !== cache || indexed.size !== cache.size) {
+      const ordered = [...cache.entries()]
+        .filter(([, item]) => isHistoryEntryVisibleToParticipant(item, participantId, shareDetails))
+        .sort((left, right) => left[1].occurredAt.localeCompare(right[1].occurredAt) || left[0] - right[0])
+      indexed = { source: cache, size: cache.size, ordered, byEntry: buildEpisodeIndex(ordered) }
+      if (this.episodeIndexes.size >= 64) this.episodeIndexes.delete(this.episodeIndexes.keys().next().value!)
+      this.episodeIndexes.set(episodeKey, indexed)
+    }
+    const visible = indexed.ordered.filter(([id]) => !excludeIds.has(id))
+    const episodes = indexed.byEntry
     const positions = new Map(visible.map(([id], index) => [id, index]))
     const used = new Set<number>()
     const result: RecalledMoment[] = []
@@ -3239,8 +3623,9 @@ export class InterludeService extends Service {
       const position = positions.get(anchor.id)
       if (position == null || used.has(anchor.id)) continue
       const episodeIds = episodes.get(anchor.id) ?? [anchor.id]
+      const episodeMembers = new Set(episodeIds)
       const neighborhood = episodeIds.length > 1
-        ? visible.filter(([id]) => episodeIds.includes(id))
+        ? visible.filter(([id]) => episodeMembers.has(id))
         : visible.filter(([, item]) => item.participantId === cache.get(anchor.id)!.participantId)
       const excerpt = episodeExcerpt(neighborhood, anchor.id, maxResults === 1 ? 2400 : 4000, keys)
       if (!excerpt) continue
@@ -3299,6 +3684,7 @@ export class InterludeService extends Service {
   /** Drop in-memory copies whenever their source rows are removed or redacted.
    * The next recall reloads only the surviving database rows. */
   private invalidateHistoryVectors(storyId?: string) {
+    this.episodeIndexes.clear()
     if (storyId) {
       this.historyVectors.delete(storyId)
       this.historyVectorsReady.delete(storyId)
@@ -3347,6 +3733,7 @@ export class InterludeService extends Service {
           })
           const cached = this.historyVectors.get(storyId)?.get(row.id)
           if (cached) { cached.vector = embedding; cached.embeddingIdentity = identity }
+          this.automaticRecallCache.delete(storyId)
         })
         completed.add(row.id)
         return true
@@ -3421,6 +3808,11 @@ export class InterludeService extends Service {
       const name = fragment ? decodeURIComponent(fragment.replace(/:\d+$/, '')) : ''
       const declaredSize = Number(/:(\d+)$/.exec(fragment)?.[1] ?? 0)
       if (!/^https?:\/\//i.test(url)) return undefined
+      // 只信任 QQ/OneBot CDN 域名(与图片通道同一白名单):file-url 来自适配器
+      // 数据,无白名单时会成为任意内网地址的请求代理
+      try {
+        if (!isTrustedImageHost(new URL(url).hostname)) return undefined
+      } catch { return undefined }
       if (declaredSize > config.maxFileSizeMB * 1024 * 1024) return undefined
       const bytes = Buffer.from(await withTimeout(
         Promise.resolve(this.ctx.http.get(url, { responseType: 'arraybuffer' })), 30_000,
@@ -3465,8 +3857,9 @@ export class InterludeService extends Service {
       try {
         const image = await this.fetchNativeImage(source, (session as any)?.bot)
         if (image) images.push({ id: `turn-image-${index + 1}`, ...image })
+        else this.report('warn', story, 'user-message', '当前图片回源失败 阶段=current-image-fetch 序号=%d 来源=%s 原因=empty-or-unsupported', index + 1, describeImageSource(source))
       } catch (error) {
-        this.report('warn', story, 'user-message', '图片读取失败，已继续处理文字消息 错误=%s', error)
+        this.report('warn', story, 'user-message', '当前图片回源失败 阶段=current-image-fetch 序号=%d 来源=%s 错误=%s', index + 1, describeImageSource(source), describeHttpError(error))
       }
     }
     return images
@@ -3485,11 +3878,11 @@ export class InterludeService extends Service {
       if (observations?.length) {
         this.reportOperation('diagnostic', 'debug', story, 'user-message', '侧端识图完成 图片=%d 观察=%d', images.length, observations.length)
       } else {
-        this.reportOperation('diagnostic', 'warn', story, 'user-message', '侧端识图未返回内容，已继续处理文字消息')
+        this.reportOperation('diagnostic', 'warn', story, 'user-message', '侧端视觉未返回内容 阶段=sidecar-vision 图片=%d，已继续处理文字消息', images.length)
       }
       return observations
     } catch (error) {
-      this.reportOperation('diagnostic', 'warn', story, 'user-message', '侧端识图失败，已继续处理文字消息 错误=%s', error)
+      this.reportOperation('diagnostic', 'warn', story, 'user-message', '侧端视觉请求失败 阶段=sidecar-vision 图片=%d 错误=%s，已继续处理文字消息', images.length, describeHttpError(error))
       return undefined
     }
   }
@@ -3645,12 +4038,26 @@ export class InterludeService extends Service {
   }
 
   private invalidateStoryTasks(storyId?: string) {
+    for (const key of this.acceptedDeliveries.keys()) {
+      if (!storyId || JSON.parse(key)[0] === storyId) this.acceptedDeliveries.delete(key)
+    }
     if (storyId) this.storyTaskGenerations.set(storyId, (this.storyTaskGenerations.get(storyId) ?? 0) + 1)
     else this.runtimeGeneration += 1
   }
 
-  private taskGeneration(storyId: string) {
+  private rememberIncomingMessage(key: string) {
+    this.seenIncomingMessages.set(key, Date.now())
+    if (this.seenIncomingMessages.size > 600) this.seenIncomingMessages.delete(this.seenIncomingMessages.keys().next().value!)
+  }
+
+  // Pause cancels new work, but cannot erase a known platform acceptance.
+  // Reset/purge invalidate both tasks and receipts through the content generation.
+  private deliveryGeneration(storyId: string) {
     return `${this.runtimeGeneration}:${this.storyTaskGenerations.get(storyId) ?? 0}`
+  }
+
+  private taskGeneration(storyId: string) {
+    return `${this.deliveryGeneration(storyId)}:${this.runtimePauseGeneration ?? 0}`
   }
 
   private taskGenerationCurrent(storyId: string, generation: string) {
@@ -3670,7 +4077,14 @@ export class InterludeService extends Service {
   }
 
   private async flushBufferedNarrative(key: string, revision: number) {
-    if (this.databaseResetting || this.desktopRuntimePhase === 'paused') return
+    if (this.databaseResetting) return
+    if (this.desktopRuntimePhase === 'paused') {
+      // 已触发的定时器句柄若不清掉,resume 的 rescheduleTimers 会因 turn.timer
+      // 非空而跳过补排,遗留消息重新孤儿化
+      const pausedTurn = this.turnEngine.getTurn(key)
+      if (pausedTurn) pausedTurn.timer = undefined
+      return
+    }
     // One shared story has one narrator at a time. If another relationship is
     // currently waiting on the provider, keep this batch intact and retry
     // shortly instead of taking an inconsistent cursor snapshot.
@@ -3776,6 +4190,13 @@ export class InterludeService extends Service {
           obsolete: true, requeue: false, messages: [] as OutgoingMessageDraft[],
           commit: undefined as ScriptCommitDraft | undefined, scriptEntry: undefined as ScriptEntry | undefined,
         }
+        // 暂停期间到达的模型结果同样作废:批次放回,恢复后重排处理——否则暂停
+        // 语义被穿透(照常提交剧本、推进游标并向外发消息)。放回后的定时器
+        // 由 endFlush 的遗留消息补排保证,暂停态触发会被入口 paused 检查拦下。
+        if (this.desktopRuntimePhase === 'paused') return {
+          obsolete: true, requeue: true, messages: [] as OutgoingMessageDraft[],
+          commit: undefined as ScriptCommitDraft | undefined, scriptEntry: undefined as ScriptEntry | undefined,
+        }
         if (turn.obsoleteRequestIds.has(requestId)) return {
           // User interruptions keep the batch for the next combined turn;
           // administrative invalidation marks the request as discarded so a
@@ -3859,8 +4280,7 @@ export class InterludeService extends Service {
         return
       }
       if (this.canHandleParticipant(snapshot.participant)) {
-        const delivered = await this.sendOutgoingMessages(snapshot.story, result.messages, snapshot.participant, turn.latestSession, undefined, true, requestStartedAt)
-        await this.confirmOutgoingDeliveries(snapshot.story, delivered)
+        const delivered = await this.deliverOutgoingMessages(snapshot.story, result.messages, snapshot.participant, turn.latestSession, undefined, true, requestStartedAt)
         // P2 Fix: 主动联系按实际投递结果计数——成功/失败在平台确认后。
         if (this.pendingProactiveCount > 0) {
           const sent = delivered.length > 0
@@ -3915,9 +4335,7 @@ export class InterludeService extends Service {
   /** Used by commands/tests to deliver a mixed set of account-targeted actions safely. */
   async deliverMessages(story: InterludeStory, messages: OutgoingMessageDraft[], session?: Session) {
     const participant = session ? await this.findParticipant(session, story) : undefined
-    const delivered = await this.sendOutgoingMessages(story, messages, participant, session)
-    await this.confirmOutgoingDeliveries(story, delivered)
-    return delivered
+    return this.deliverOutgoingMessages(story, messages, participant, session)
   }
 
   async compactStory(story: InterludeStory, force = true) {
@@ -3949,6 +4367,60 @@ export class InterludeService extends Service {
       cleared: patches.filter(patch => patch.status === 'cleared'),
       snapshots,
       participantOverlays: participants.filter(participant => !!normalizeParticipantState(participant.state).relationshipOverlay),
+    }
+  }
+
+  /**
+   * 群消息离线补拉：插件停用期间到达的已启用群消息经 get_group_msg_history
+   * 补回，写为一条汇总事件（不注入逐条事件打扰上下文——YesImBot World
+   * offlineHistory 同款语义）。仅在 Koishi 原生部署有意义：typ0 桌面模式
+   * 的收件箱已由宿主兜底，此处跳过。
+   */
+  async offlineGroupCatchup() {
+    if (this.desktopBridgeActive || this.databaseResetting) return
+    const rules = (this.config.onebot?.groupChats ?? []).filter(rule => rule.enabled !== false)
+    if (!rules.length) return
+    for (const rule of rules) {
+      const groupId = normalizeGroupId(rule.groupId)
+      if (!groupId) continue
+      try {
+        const story = await this.getCanonicalStory()
+        if (!story || !this.canHandleStory(story) || story.status !== 'active') continue
+        const entries = await this.dbGet('interlude_script_entry', {
+          storyId: story.id, kind: 'group-message', metadata: { groupId },
+        }, { limit: 1, sort: { occurredAt: 'desc' } }) as unknown as Array<{ occurredAt?: unknown, content?: string }>
+        const watermark = entries[0]?.occurredAt ? toDate(entries[0].occurredAt) : undefined
+        if (!watermark) continue
+        const bot = this.ctx.bots.find(item => isOneBotPlatform(item.platform)
+          && normalizeGroupId(String((item as any).guildId ?? '')) === groupId)
+        const internal = (bot as any)?.internal
+        if (typeof internal?._request !== 'function') continue
+        const response = await internal._request('get_group_msg_history', { group_id: Number(groupId), count: 50 })
+        const messages = Array.isArray(response?.data?.messages) ? response.data.messages : []
+        const missed = messages.filter((msg: any) => {
+          const time = typeof msg?.time === 'number' && msg.time > 0 ? new Date(msg.time * 1000) : undefined
+          return time && time.getTime() > watermark.getTime() + 1000
+            && String(msg.sender?.user_id ?? '') !== String(bot?.selfId ?? 'unknown')
+        })
+        if (!missed.length) continue
+        // 汇总事件：来源群 + 条数 + 时间跨度 + 关键内容摘录，不逐条注入
+        const latest = new Date(Number(missed[missed.length - 1].time) * 1000)
+        const earliest = new Date(Number(missed[0].time) * 1000)
+        const excerpts = missed.slice(0, 5).map((msg: any) => {
+          const sender = String(msg.sender?.card || msg.sender?.nickname || msg.sender?.user_id || '未知')
+          const text = String(Array.isArray(msg.message) ? msg.message.filter((seg: any) => seg?.type === 'text').map((seg: any) => seg.data?.text ?? '').join('') : msg.raw_message ?? '').trim().slice(0, 60)
+          return text ? `${sender}：${text}` : `${sender}：[非文本]`
+        })
+        await this.appendEntry(story.id, {
+          kind: 'group-message', actor: 'user',
+          content: `[群聊离线摘要] 插件离线期间 ${groupId} 群有 ${missed.length} 条新消息（${earliest.toISOString()} ~ ${latest.toISOString()}）。摘要：${excerpts.join('；')}。完整记录可通过聊天记录查询获取。`,
+          occurredAt: latest.toISOString(),
+          metadata: { groupId, offlineCatchup: true, messageCount: missed.length },
+        }, latest)
+        this.reportStandaloneOperation('standard', 'info', '群消息离线补拉完成 群=%s 补回=%d条 水位=%s', groupId, missed.length, watermark.toISOString())
+      } catch (error) {
+        this.reportStandaloneOperation('diagnostic', 'warn', '群消息离线补拉失败 群=%s 错误=%s', groupId, error)
+      }
     }
   }
 
@@ -4012,8 +4484,9 @@ export class InterludeService extends Service {
       const participant = intent.participantId ? await this.getParticipant(intent.participantId) : undefined
       if (intent.participantId && this.interruptedTypingParticipants.has(intent.participantId)) continue
       splitHandled = true
+      if (await this.reconcileTerminalSplitIntent(story.id, intent, now)) continue
       if (!content || !participant || participant.status !== 'active') {
-        await this.dbSet('interlude_intent', { id: intent.id }, { status: 'cancelled', updatedAt: now })
+        await this.dbSet('interlude_intent', { id: intent.id, status: 'pending' }, { status: 'cancelled', updatedAt: now })
         const reference = restoreMessageEvent(intent.payload, content || '')
         if (reference) await this.updateScriptDeliveryOutcome(story.id, reference, 'cancelled', now, 'delivery-target-unavailable')
         continue
@@ -4023,35 +4496,35 @@ export class InterludeService extends Service {
         participantId: participant.id,
         content,
         automaticDelivery,
+        ...restoreDesktopContext(intent.payload),
         ...(scriptEvent?.endpointId ? { endpointId: scriptEvent.endpointId } : {}),
         scriptEvent,
       }
-      const delivered = await this.sendOutgoingMessages(
+      const delivered = await this.deliverOutgoingMessages(
         story,
         [message],
         undefined,
         undefined,
         target => this.interruptedTypingParticipants.has(target.id),
-        false,
+        false, undefined, 'failed', true,
       )
+      if (!taskCurrent()) return messages
       if (!delivered.length) {
         if (this.interruptedTypingParticipants.has(participant.id)) continue
         if (message.scriptEvent) await this.updateScriptDeliveryOutcome(story.id, message.scriptEvent, 'pending', now, 'delivery-unconfirmed-retry-scheduled')
         const retryAt = new Date(now.getTime() + 30 * Time.second)
-        await this.dbSet('interlude_intent', { id: intent.id }, { notBefore: retryAt, updatedAt: now })
+        await this.dbSet('interlude_intent', { id: intent.id, status: 'pending' }, { notBefore: retryAt, updatedAt: now })
         this.scheduleDueIntentWake(story.id, retryAt)
         continue
       }
-      await this.appendEntry(story.id, {
-        kind: 'character-message', actor: 'character', content,
-        occurredAt: now.toISOString(), metadata: deliveryEntryMetadata(message, { splitSegment: true }),
-      }, now, participant.id)
-      if (message.scriptEvent) await this.updateScriptDeliveryOutcome(story.id, message.scriptEvent, 'delivered', now)
-      if (message.automaticDelivery) await this.recordAutomaticDelivery(story.id, participant.id, message.automaticDelivery, now)
-      await this.recordCharacterMessage(participant, now)
-      await this.dbSet('interlude_intent', { id: intent.id }, { status: 'completed', updatedAt: now })
+      await this.dbSet('interlude_intent', { id: intent.id, status: 'pending' }, { status: 'completed', updatedAt: now })
     }
-    if (splitHandled) await this.scheduleNextSplitWake(story.id)
+    if (splitHandled) {
+      await this.scheduleNextSplitWake(story.id)
+      // Full delivery can settle a follow-up. Do not narrate the stale due
+      // snapshot captured before that delivery (even after the chain is empty).
+      due = await this.dueIntents(story.id, now)
+    }
     due = due.filter(intent => intent.type !== 'split-message')
     // Browser research is an external, already-happened observation once it
     // completes. It must never be handed to the narrator as an ordinary
@@ -4075,6 +4548,13 @@ export class InterludeService extends Service {
       await this.executeQzoneIntent(story, qzoneIntent, now)
       due = due.filter(intent => intent.id !== qzoneIntent.id)
     }
+    // A committed typing chain is not a new incoming event. Never let another
+    // background turn for its recipient recreate the not-yet-delivered text.
+    // Include FUTURE split intents: looking only at `due` misses this race.
+    const pendingSplits = await this.pendingSplitSegments(story.id)
+    const dueBeforeSplitBarrier = due.length
+    due = await this.deferDueIntentsBehindPendingSplits(story, due, pendingSplits, now)
+    const splitBlockedDue = dueBeforeSplitBarrier > due.length
     // Director retry gates only the optional director, never the life scheduler.
     // Its persisted cooldown survives cursor changes and is handled at call time.
     // Turning off automatic advancement must suppress *every* background
@@ -4110,13 +4590,23 @@ export class InterludeService extends Service {
     // A due plan is itself a complete writing turn: it fills the old cursor→now
     // gap and then decides the plan. Avoid a preceding ordinary advance, which
     // would make the next request write the same now→now moment again.
-    const hasNarrativeDue = due.length > 0
+    const hasNarrativeDue = due.length > 0 || splitBlockedDue
     if (elapsed > 0 && !hasNarrativeDue && (force || (automaticDue && !pausedForConversation))) {
       const followUpParticipantId = dueFollowUps.length ? story.state.automation?.conversationFollowUpParticipantId : ''
       const followUpParticipant = followUpParticipantId ? await this.getParticipant(followUpParticipantId) : undefined
       const phase: NarrativeRequest['phase'] = followUpParticipant?.status === 'active'
         ? 'conversation-follow-up'
         : 'advance'
+      // Global life advancement chooses its recipients only after generation,
+      // so any pending chain gates it (manual advance included). A targeted
+      // conversation follow-up only waits for its own recipient's chain.
+      const blockedSplits = pendingSplits.filter(intent => phase === 'advance' || intent.participantId === followUpParticipant?.id)
+      if (blockedSplits.length) {
+        await this.scheduleNextSplitWake(story.id)
+        this.reportOperation('diagnostic', 'debug', story, phase,
+          '后台写作等待已提交分段投递 参与者=%s 待发分段=%d', followUpParticipant?.id || '全局', blockedSplits.length)
+        return messages
+      }
       this.reportOperation('standard', 'info', story, phase,
         '即将执行自动写作 类型=%s 时间段=%s→%s', phaseLabel(phase), formatLogTime(from, story.setting.timezone), formatLogTime(now, story.setting.timezone))
       const { decision, succeeded, timelinePlan } = taskCurrent()
@@ -4239,8 +4729,8 @@ export class InterludeService extends Service {
       memoryEnabled ? this.memories(story.id, this.config.runtime.memoryLimit, participant?.id) : Promise.resolve([]),
       this.activeScene(story.id),
       this.activeArc(story.id),
-      this.previousSceneSummaries(story.id),
-      memoryEnabled ? this.facts(story.id, this.config.runtime.memoryLimit, factQuery, participant?.id, liveFactEmbedding) : Promise.resolve([]),
+      this.previousSceneSummaries(story),
+      memoryEnabled ? this.facts(story.id, this.config.runtime.memoryLimit, factQuery, undefined, liveFactEmbedding) : Promise.resolve([]),
       this.participants(story.id),
       this.webObservations(story.id, participant?.id),
       this.activeConsequencesAndExpire(
@@ -4250,7 +4740,7 @@ export class InterludeService extends Service {
       ),
       memoryEnabled ? this.overlaySnapshotsForPrompt(story.id, participant?.id, phase === 'advance') : Promise.resolve([]),
       participant && (phase === 'user-message' || phase === 'intent-due')
-        ? this.pendingFollowUpCommitments(story.id, participant.id)
+        ? this.pendingFollowUpCommitments(story.id, participant.id, now)
         : Promise.resolve([] as NarrativeIntent[]),
       this.upcomingNarrativeIntents(story.id, now),
     ])
@@ -4357,7 +4847,7 @@ export class InterludeService extends Service {
       ...(this.longHorizonConfig.enabled ? { longHorizonGuidance: this.longHorizonPromptProjection(story.id) } : {}),
       dueIntents: visibleDueIntents, upcomingIntents: visibleUpcomingIntents, activeConsequences: visibleConsequences, supersededIntents,
       shareParticipantDetails: this.sharedStoryConfig.shareParticipantDetails,
-      recentEntries: promptEntries, memories, sceneContext: { scene, arc, ...(previousScenes.length ? { previousScenes } : {}) }, facts, groupContext, chatCapabilities,
+      recentEntries: promptEntries, memories, sceneContext: { scene, arc: this.trimArcForPrompt(arc), ...(previousScenes.length ? { previousScenes } : {}) }, facts, groupContext, chatCapabilities,
       contactThreads: memoryEnabled ? await this.contactThreads(story.id, facts, participant?.id) : [],
       sceneFrame, dialogueBurst,
       // M4 §十：通道标注数据。只把宿主已确认的路由/来源事实交给作者；
@@ -4520,7 +5010,7 @@ export class InterludeService extends Service {
     const [scene, recentEntries, facts] = await Promise.all([
       this.activeScene(story.id),
       this.recentEntriesForPrompt(story.id, now),
-      this.memoryConfig.enabled ? this.facts(story.id, Math.min(16, this.config.runtime.memoryLimit), '', participant?.id) : Promise.resolve([] as NarrativeFact[]),
+      this.memoryConfig.enabled ? this.facts(story.id, Math.min(16, this.config.runtime.memoryLimit), '') : Promise.resolve([] as NarrativeFact[]),
     ])
     const visibleEntries = this.sharedStoryConfig.shareParticipantDetails
       ? recentEntries
@@ -4740,7 +5230,9 @@ export class InterludeService extends Service {
       return result
     } catch (error) {
       // P2-4：主叙事失败是最高优先级故障（角色无响应）——升 error 供运维告警。
-      this.report('error', story, phase, '模型调用失败 任务=主叙事 耗时=%dms 错误=%s', Date.now() - startedAt, error)
+      this.report('error', story, phase,
+        '模型调用失败 任务=主叙事 阶段=narrative-provider 当前图片=%d 历史图片=%d 音频=%d 耗时=%dms 错误=%s',
+        images.length, historicalGroupImages.length, audio.length, Date.now() - startedAt, describeHttpError(error))
       this.health?.recordNarrativeFailed(story.id)
       return { decision: {}, succeeded: false, effectiveNow, immediateObservations, timelinePlan }
     }
@@ -4913,6 +5405,8 @@ export class InterludeService extends Service {
     const isAgencyCheck = contextIntents.length > 0 && contextIntents.every(intent => intent.type === 'proactive-check')
     let agencyCandidate: ProactiveContactDraft | undefined
     let agencyAllowsSend = false
+    // 门控拒绝的具体原因(端点/容量/意愿/上限),供拦截补偿账本使用
+    let agencyBlockReason: string | undefined
     let agencyRecheck: { candidate: ProactiveContactDraft; window: AgencyWindowState; reason: string; at: Date } | undefined
 
     if (decision.script) {
@@ -5034,8 +5528,18 @@ export class InterludeService extends Service {
           const agencyPolicyAllows = !agencyEndpointReason
           agencyAllowsSend = agencyCandidate.outcome === 'send-now'
             && capacity.allowed && willingnessPasses && capPasses && agencyPolicyAllows
-          if (agencyAllowsSend) {
-            // M3 §八：渠道选择审计——记录实际投递端点 + 通道级原因
+          if (!agencyAllowsSend) {
+            agencyBlockReason = agencyEndpointReason
+              ? `blocked-by-agency-endpoint:${agencyEndpointReason}`
+              : agencyCandidate.outcome !== 'send-now'
+                ? `model-outcome:${agencyCandidate.outcome}`
+                : !capacity.allowed
+                  ? `blocked-by-agency-capacity:${capacity.reason}`
+                  : !willingnessPasses ? 'willingness-below-threshold' : 'proactive-daily-cap'
+          }
+          if (agencyAllowsSend && permitMessages) {
+            // M3 §八：渠道选择审计——只有消息确实获准进入投递管线时，
+            // 才记录主动联系；全局开关关闭时不能把策略放行误记成已联系。
             nextState.proactiveContactLog = appendProactiveContact(state.proactiveContactLog, agencyCandidate.participantId, now, chosenEndpointId)
           }
           if (!agencyAllowsSend && agencyCandidate.outcome !== 'let-go' && willingnessPasses && capPasses) {
@@ -5140,6 +5644,44 @@ export class InterludeService extends Service {
     if (phase === 'advance' && decision.crossConversationActions.length && !crossActions.length) {
       this.reportOperation('diagnostic', 'debug', story, phase,
         'Agency 拒绝未通过容量或来源验证的 crossConversationAction 数量=%d', decision.crossConversationActions.length)
+    }
+    // 门控拦截补偿:被拦下的即时私聊行动从未进入投递管线,投递失败路径
+    // (recordOutgoingDeliveryFailure)不会覆盖它们;若不在此记账,剧本账本将
+    // 永久停留 pending,后续轮次模型只看到"剧本已说"而认为消息已发出。
+    if (phase === 'advance') {
+      const withdrawn = decision.crossConversationActions.filter(action => action.mode === 'immediate'
+        && !action.participantId.startsWith('group:')
+        && !crossActions.includes(action))
+      if (withdrawn.length) {
+        const reason = !this.agencyConfig.enabled
+          ? 'proactive-messages-not-allowed'
+          : agencyBlockReason ?? (agencyCandidate ? 'not-selected-by-agency' : 'no-agency-candidate')
+        await this.recordWithdrawnOutgoingEvents(story, withdrawn, commit, scriptEntry, reason, now, phase)
+      }
+    }
+    // proactive-check uses interaction.reply rather than crossConversationActions.
+    // It is still a script-bound outgoing event, so an Agency rejection (or a
+    // disabled proactive-message policy) must close its pending ledger instead
+    // of leaving a false impression that the message was sent.
+    if (isAgencyCheck && participant && !immediateReplyAlreadyDelivered && commit && scriptEntry) {
+      const withdrawn = commit.events
+        .filter(event => event.kind === 'outgoing-message'
+          && event.participantId === participant.id
+          && (event.deliveryMode === 'delayed' || !agencyAllowsSend || !permitMessages))
+        .map(event => ({
+          participantId: participant.id,
+          content: event.content ?? event.bubbles?.join(this.config.runtime.messageSeparator) ?? '',
+          event,
+        }))
+        .filter(action => !!action.content)
+      if (withdrawn.length) {
+        const reason = !permitMessages
+          ? 'proactive-messages-not-allowed'
+          : !agencyAllowsSend
+            ? agencyBlockReason ?? (agencyCandidate ? 'not-selected-by-agency' : 'no-agency-candidate')
+            : 'proactive-delayed-reply-not-scheduled'
+        await this.recordWithdrawnOutgoingEvents(story, withdrawn, commit, scriptEntry, reason, now, phase)
+      }
     }
     const approvedAutomaticOutgoingActions = phase === 'advance'
       ? crossActions
@@ -5290,7 +5832,8 @@ export class InterludeService extends Service {
     if (this.scheduledAlterAnalyses.has(taskKey)) return
     this.scheduledAlterAnalyses.add(taskKey)
     this.ctx.setTimeout(() => {
-      void this.serial(storyId, () => this.analyzeAlterSystem(storyId, phase, participantId))
+      // 模型调用不再占用故事串行队列:analyzeAlterSystem 自管三阶段(锁内快照→锁外请求→锁内复查提交)
+      void this.analyzeAlterSystem(storyId, phase, participantId)
         .catch(error => this.reportStandalone('warn', 'Alter 后台分析任务失败 故事=%s 错误=%s', storyId, error))
         .finally(() => this.scheduledAlterAnalyses.delete(taskKey))
     }, 0)
@@ -5299,32 +5842,40 @@ export class InterludeService extends Service {
   private async analyzeAlterSystem(storyId: string, phase: NarrativeRequest['phase'], participantId = '') {
     const config = this.alterSystemConfig
     if (!config.enabled) return
-    const story = await this.getStory(storyId)
-    const state = normalizeAlterSystemState(story.state.alterSystem)
-    if (!state) return
-    const now = new Date()
-    const history = alterHistoryForScope(state.history, participantId)
-    const triggerValue = alterScopeValue(state, participantId)
-    const threshold = calculateAlterThreshold(history, config, now)
-    if (Math.abs(triggerValue) < threshold || alterScopeCoolingDown(state, participantId, now)) return
-    const marked = markAlterScopeAnalysisAttempt(state, participantId, now)
-    await this.dbSet('interlude_story', { id: story.id }, {
-      state: encodeStoryState({ ...decodeStoryState(story.state), alterSystem: marked }), updatedAt: now,
-    })
-    if (!this.narrator.analyzeAlter) {
-      this.report('warn', story, phase, 'Alter 已达到阈值，但当前叙事服务不支持侧端分析；保留累计值等待重试')
-      return
-    }
-
-    const triggerDirection = Math.sign(triggerValue) as -1 | 1
-    try {
+    // 阶段一(串行):校验阈值/冷却,标记分析尝试(5 分钟防抽),取剧本快照与任务代次
+    const prepared = await this.serial(storyId, async () => {
+      if (this.desktopRuntimePhase === 'paused' || this.databaseResetting) return undefined
+      const story = await this.getStory(storyId)
+      if (!story || story.status !== 'active') return undefined
+      const state = normalizeAlterSystemState(story.state.alterSystem)
+      if (!state) return undefined
+      const now = new Date()
+      const history = alterHistoryForScope(state.history, participantId)
+      const triggerValue = alterScopeValue(state, participantId)
+      const threshold = calculateAlterThreshold(history, config, now)
+      if (Math.abs(triggerValue) < threshold || alterScopeCoolingDown(state, participantId, now)) return undefined
+      const marked = markAlterScopeAnalysisAttempt(state, participantId, now)
+      await this.dbSet('interlude_story', { id: story.id }, {
+        state: encodeStoryState({ ...decodeStoryState(story.state), alterSystem: marked }), updatedAt: now,
+      })
+      if (!this.narrator.analyzeAlter) {
+        this.report('warn', story, phase, 'Alter 已达到阈值，但当前叙事服务不支持侧端分析；保留累计值等待重试')
+        return undefined
+      }
       const scripts = (await this.recentEntries(story.id, 50))
         .filter(entry => entry.kind === 'script' && entry.content.trim()
           && (participantId ? !entry.participantId || entry.participantId === participantId : !entry.participantId))
         .slice(-10)
         .map(entry => ({ content: entry.content.slice(0, 4_000), occurredAt: entry.occurredAt.toISOString() }))
+      return { story, scripts, history, triggerValue, threshold, state, generation: this.taskGeneration(storyId) }
+    })
+    if (!prepared) return
+    const { story, scripts, history, triggerValue, threshold, state, generation } = prepared
+    const triggerDirection = Math.sign(triggerValue) as -1 | 1
+    try {
       this.reportOperation('standard', 'info', story, phase,
         'Alter 累积触发 数值=%s 阈值=%s 方向=%s', signedNumber(triggerValue), threshold.toFixed(2), triggerDirection > 0 ? '严肃' : '放松')
+      // 阶段二(串行外):模型调用不占用故事队列,消息处理/提交不再被后台分析拖住
       const result = await this.narrator.analyzeAlter({
         characterName: story.setting.character.name,
         triggerValue,
@@ -5337,13 +5888,36 @@ export class InterludeService extends Service {
       }, config)
       const description = result.description.trim().slice(0, 800)
       if (!description) throw new Error('Alter analysis returned an empty description.')
-      const completed = completeAlterAnalysis(marked, description, threshold, now, config, participantId)
-      await this.dbSet('interlude_story', { id: story.id }, {
-        state: encodeStoryState({ ...decodeStoryState(story.state), alterSystem: completed }), updatedAt: now,
+      // 阶段三(串行):运行代次/暂停复查 + 基于最新状态合并落库(不覆盖期间写入)
+      await this.serial(storyId, async () => {
+        if (this.desktopRuntimePhase === 'paused' || this.databaseResetting) {
+          this.reportOperation('diagnostic', 'debug', story, phase, 'Alter 分析结果丢弃：运行已暂停或数据库重置')
+          return
+        }
+        if (!this.taskGenerationCurrent(storyId, generation)) {
+          this.reportOperation('diagnostic', 'debug', story, phase, 'Alter 分析结果丢弃：任务代次已失效')
+          return
+        }
+        const fresh = await this.getStory(storyId)
+        if (!fresh || fresh.status !== 'active') return
+        const freshAlter = normalizeAlterSystemState(fresh.state.alterSystem)
+        if (!freshAlter) return
+        const pendingValue = alterScopeValue(freshAlter, participantId)
+        if (Math.sign(pendingValue) !== triggerDirection || Math.abs(pendingValue) < threshold) {
+          await this.dbSet('interlude_story', { id: fresh.id }, {
+            state: encodeStoryState({ ...decodeStoryState(fresh.state), alterSystem: clearAlterScopeAnalysisAttempt(freshAlter, participantId) }), updatedAt: new Date(),
+          })
+          this.reportOperation('diagnostic', 'debug', story, phase, 'Alter 分析结果丢弃：当前累计已反向或不足触发阈值；保留全部未消费分数')
+          return
+        }
+        const completed = completeAlterAnalysis(freshAlter, description, threshold, new Date(), config, participantId, triggerValue)
+        await this.dbSet('interlude_story', { id: fresh.id }, {
+          state: encodeStoryState({ ...decodeStoryState(fresh.state), alterSystem: completed }), updatedAt: new Date(),
+        })
+        this.reportOperation('standard', 'info', story, phase,
+          '情绪偏移生成完成 方向=%s 强度=%s 描述=%s', completed.emotionalOffset.direction, completed.emotionalOffset.intensity.toFixed(2), description)
+        this.reportOperation('standard', 'info', story, phase, '情绪偏移已注入后续主提示词 权重=1.00')
       })
-      this.reportOperation('standard', 'info', story, phase,
-        '情绪偏移生成完成 方向=%s 强度=%s 描述=%s', completed.emotionalOffset.direction, completed.emotionalOffset.intensity.toFixed(2), description)
-      this.reportOperation('standard', 'info', story, phase, '情绪偏移已注入后续主提示词 权重=1.00')
     } catch (error) {
       this.report('warn', story, phase, 'Alter 分析失败，已保留累计值等待重试：%s', error)
     }
@@ -5391,22 +5965,23 @@ export class InterludeService extends Service {
     const rows = await this.dbGet('interlude_fact', { storyId, status: 'active' }, {
       limit: 1_000, sort: { updatedAt: 'desc' },
     }) as NarrativeFact[]
-    // No private branch is exposed to an independent-life or group director.
-    const visible = rows.filter(fact => !fact.participantId || fact.participantId === participantId)
+    // Durable facts are global narrative evidence. The participant argument
+    // below is only used when limiting access to the original source entries.
+    const visible = rows
     const contact = (fact: NarrativeFact) => fact.scope === 'promise'
       || ['proposal', 'conditional', 'confirmed'].includes(fact.knowledge?.mode ?? '')
-    const seeds = [...selected.filter(fact => contact(fact) && (!fact.participantId || fact.participantId === participantId)),
+    const seeds = [...selected.filter(fact => contact(fact)),
       ...visible.filter(fact => contact(fact) && fact.unresolved)].filter((fact, i, all) => all.findIndex(f => f.id === fact.id) === i).slice(0, 4)
     const linkedIds = [...new Set(seeds.flatMap(fact => knowledgeRelatedIds(fact.knowledge)))].filter(id => !visible.some(fact => fact.id === id))
     if (linkedIds.length) {
       const archived = await this.dbGet('interlude_fact', { storyId, id: { $in: linkedIds } }) as NarrativeFact[]
-      visible.push(...archived.filter(fact => !fact.participantId || fact.participantId === participantId))
+      visible.push(...archived)
     }
     const chain = new Map<number, NarrativeFact>()
     for (const seed of seeds) {
       chain.set(seed.id, seed)
       const seedRelated = knowledgeRelatedIds(seed.knowledge)
-      const candidates = visible.filter(fact => fact.participantId === seed.participantId && fact.id !== seed.id
+      const candidates = visible.filter(fact => fact.id !== seed.id
         && (seedRelated.includes(fact.id) || knowledgeRelatedIds(fact.knowledge).includes(seed.id)
           || seed.knowledge?.topic && fact.knowledge?.topic === seed.knowledge.topic
           || !seed.knowledge && historyLexicalScore(seed.content, fact.content) >= 0.2))
@@ -5427,10 +6002,19 @@ export class InterludeService extends Service {
     const bounded = entries.filter(entry => !entry.participantId || entry.participantId === participantId)
       .sort((a, b) => (sourceOrder.get(a.id) ?? Infinity) - (sourceOrder.get(b.id) ?? Infinity) || a.id - b.id)
       .filter(entry => { if (entry.content.length > budget) return false; budget -= entry.content.length; return true })
+    // A fact without any source text visible in this branch must not become a
+    // fact-only contact thread. The fact itself remains available through the
+    // global durableFacts lane; this lane is specifically for restoring the
+    // original proposal/condition/reply evidence. In particular, background
+    // calls without a participant must not accidentally expose private source
+    // entries just because the fact row is global.
+    if (!bounded.length) return []
     return contactEvidenceThreads(facts, bounded)
   }
 
-  async facts(storyId: string, limit = this.memoryConfig.factLimit, query = '', participantId?: string, turnQueryEmbedding?: number[]) {
+  /** Durable facts are global narrative evidence. The legacy participantId argument
+   * is retained for call-site compatibility but intentionally ignored. */
+  async facts(storyId: string, limit = this.memoryConfig.factLimit, query = '', _participantId?: string, turnQueryEmbedding?: number[]) {
     // The previous floor of 50 caused every live turn to scan a large slice of
     // the facts table, even when the narrator only needed a handful of facts.
     // Keep enough candidates for semantic re-ranking without making the
@@ -5460,9 +6044,7 @@ export class InterludeService extends Service {
       : query.trim() && this.config.model.embedding?.liveQuery
         ? await this.embedText(query)
         : []
-    const visible = (fact: NarrativeFact) => participantId === undefined || !fact.participantId || fact.participantId === participantId
     const ranked = rows
-      .filter(visible)
       .map(fact => ({ fact, score: factScore(fact, this.memoryConfig, queryEmbedding, query) }))
       .sort((a, b) => b.score - a.score
         || b.fact.updatedAt.getTime() - a.fact.updatedAt.getTime()
@@ -5471,8 +6053,8 @@ export class InterludeService extends Service {
     const selected: NarrativeFact[] = []
     const seen = new Set<number>()
     for (const fact of [
-      ...recentResolvedEvents.filter(visible).slice(0, laneLimit),
-      ...openPromises.filter(visible).slice(0, laneLimit),
+      ...recentResolvedEvents.slice(0, laneLimit),
+      ...openPromises.slice(0, laneLimit),
       ...ranked,
     ]) {
       if (seen.has(fact.id)) continue
@@ -5524,6 +6106,18 @@ export class InterludeService extends Service {
   private async appendIntent(storyId: string, intent: IntentDraft, now: Date, participantId = '') {
     const notBefore = toDate(intent.notBefore)
     const payload = isRecord(intent.payload) ? intent.payload : {}
+    const context = currentDesktopProcessingContext()
+    // Persist the bridge correlation at the intent boundary as a last line of
+    // defence. Most visible messages already carry it through attachMessageEvent,
+    // but delayed/background intents can be created without a script commit.
+    // Keeping this fallback here prevents those paths from silently losing the
+    // processing identity while preserving an explicit valid payload value.
+    const persistedContext = persistedDesktopProcessingContext(payload)
+    const correlationPayload = {
+      ...payload,
+      ...(context && !persistedContext.traceId ? { traceId: context.traceId } : {}),
+      ...(context && !persistedContext.processingId ? { processingId: context.processingId } : {}),
+    }
     const activeConsequence = isActiveConsequenceDraft(intent)
     if (activeConsequence && !this.memoryConfig.activeConsequencesEnabled) return
     const requestedExpiresAt = activeConsequence ? consequenceExpiresAt(payload) : undefined
@@ -5536,10 +6130,10 @@ export class InterludeService extends Service {
     // the script, so it begins at now and only needs a bounded expiry.
     if (!notBefore || (!activeConsequence && notBefore <= now) || (activeConsequence && !expiresAt)) return
     const normalizedPayload = activeConsequence ? {
-      ...payload,
-      strength: consequenceStrength(payload, this.memoryConfig.activeConsequenceDefaultStrength),
+      ...correlationPayload,
+      strength: consequenceStrength(correlationPayload, this.memoryConfig.activeConsequenceDefaultStrength),
       expiresAt: expiresAt!.toISOString(),
-    } : payload
+    } : correlationPayload
     await this.dbCreate('interlude_intent', {
       storyId, participantId, type: clip(intent.type, 32) || 'follow-up', summary: clip(intent.summary, 4_000), notBefore,
       status: 'pending', payload: normalizedPayload, createdAt: now, updatedAt: now,
@@ -5751,12 +6345,13 @@ export class InterludeService extends Service {
   private async withBrowserSlot<T>(task: () => Promise<T>) {
     const max = Math.max(1, this.browserConfig.maxConcurrentPages)
     if (this.browserActive >= max) await new Promise<void>(resolve => this.browserWaiters.push(resolve))
-    this.browserActive++
+    else this.browserActive++
     try {
       return await task()
     } finally {
-      this.browserActive--
-      this.browserWaiters.shift()?.()
+      const next = this.browserWaiters.shift()
+      if (next) next() // Transfer the occupied slot, including the microtask handoff.
+      else this.browserActive--
     }
   }
 
@@ -5802,7 +6397,11 @@ export class InterludeService extends Service {
     if (expiredAgency.length) {
       await this.dbSet('interlude_intent', { id: { $in: expiredAgency.map(intent => intent.id) } }, { status: 'cancelled', updatedAt: now })
     }
-    const expiredIds = new Set(expiredAgency.map(intent => intent.id))
+    // Also sweep future-dated commitments: a repeatedly postponed promise can
+    // otherwise remain a zombie and occupy the relationship's two-task budget.
+    const followUps = await this.dbGet('interlude_intent', { storyId, status: 'pending', type: 'follow-up-commitment' }) as NarrativeIntent[]
+    const retiredIds = await this.retireExpiredFollowUps(storyId, followUps, now)
+    const expiredIds = new Set([...expiredAgency.map(intent => intent.id), ...retiredIds])
     return intents.filter(intent => !expiredIds.has(intent.id) && !isActiveConsequence(intent))
   }
 
@@ -5836,6 +6435,56 @@ export class InterludeService extends Service {
     await this.sweep()
   }
 
+  private async reconcileTerminalSplitIntent(storyId: string, intent: NarrativeIntent, now: Date) {
+    const ref = restoreMessageEvent(intent.payload, String(intent.payload?.content ?? ''))
+    if (!ref || !Number.isSafeInteger(ref.scriptEntryId)) return false
+    const entry = (await this.dbGet('interlude_script_entry', { id: ref.scriptEntryId }))[0] as ScriptEntry | undefined
+    if (!entry || entry.storyId !== storyId || entry.metadata?.commitId !== ref.commitId) return false
+    const actions = Array.isArray(entry.metadata?.deliveryActions) ? entry.metadata.deliveryActions : []
+    const action = actions.find(action => isRecord(action) && action.commitId === ref.commitId && action.eventId === ref.eventId)
+    const segment = Array.isArray(action?.segments)
+      ? action.segments.find(segment => isRecord(segment) && segment.index === ref.bubbleIndex)
+      : undefined
+    if (segment?.status !== 'delivered' && segment?.status !== 'cancelled') return false
+    await this.dbSet('interlude_intent', { id: intent.id, status: 'pending' }, {
+      status: segment.status === 'delivered' ? 'completed' : 'cancelled', updatedAt: now,
+    })
+    return true
+  }
+
+  private async pendingSplitSegments(storyId: string) {
+    return this.dbGet('interlude_intent', { storyId, status: 'pending', type: 'split-message' }, {
+      sort: { notBefore: 'asc' },
+    }) as Promise<NarrativeIntent[]>
+  }
+
+  /** Called in the story queue, after transport work and before any narration. */
+  private async deferDueIntentsBehindPendingSplits(story: InterludeStory, due: NarrativeIntent[], splits: NarrativeIntent[], now: Date) {
+    if (!splits.length) return due
+    const ready: NarrativeIntent[] = []
+    for (const intent of due) {
+      // Global tasks may choose any recipient. Relationship tasks only wait for
+      // that recipient; another participant's chain must not block them.
+      const blocking = splits.filter(split => !intent.participantId || split.participantId === intent.participantId)
+      if (!blocking.length) { ready.push(intent); continue }
+      const afterSplits = Math.max(now.getTime() + 30 * Time.second,
+        ...blocking.map(split => split.notBefore.getTime() + Time.second))
+      const retryAt = new Date(intent.type === 'follow-up-commitment'
+        ? Math.min(afterSplits, followUpDeadline(intent).getTime()) : afterSplits)
+      await this.dbSet('interlude_intent', { id: intent.id, status: 'pending' }, {
+        notBefore: retryAt, updatedAt: now,
+      })
+      // A scheduling wait is NOT a failed promise evaluation; don't increment
+      // deferredChecks or extend expiresAt. Every wake rechecks the real chain.
+      this.scheduleDueIntentWake(story.id, retryAt)
+      this.reportOperation('diagnostic', 'debug', story, 'intent-due',
+        '到期计划等待已提交分段投递 意图=%d 类型=%s 参与者=%s 待发分段=%d 重查=%s',
+        intent.id, intent.type, intent.participantId || '全局', blocking.length, retryAt.toISOString())
+    }
+    await this.scheduleNextSplitWake(story.id)
+    return ready
+  }
+
   private async scheduleNextSplitWake(storyId: string) {
     const pending = await this.dbGet('interlude_intent', { storyId, status: 'pending', type: 'split-message' }, {
       sort: { notBefore: 'asc' }, limit: 1,
@@ -5846,7 +6495,9 @@ export class InterludeService extends Service {
 
   /** Deliver already-decided <sep/> segments without invoking the narrator. */
   private async deliverDueSplitSegments(storyId: string) {
+    const generation = this.taskGeneration(storyId)
     await this.serial(storyId, async () => {
+      if (!this.taskGenerationCurrent(storyId, generation)) return
       const story = await this.getStory(storyId)
       const now = new Date()
       const due = await this.dbGet('interlude_intent', {
@@ -5855,8 +6506,8 @@ export class InterludeService extends Service {
       const next = due[0]
       if (next) {
         const intent = next
-          const content = clip(intent.payload?.content, this.config.runtime.maxMessageCharacters)
-          const automaticDelivery = automaticDeliveryFromPayload(intent.payload)
+        const content = clip(intent.payload?.content, this.config.runtime.maxMessageCharacters)
+        const automaticDelivery = automaticDeliveryFromPayload(intent.payload)
         const participant = intent.participantId ? await this.getParticipant(intent.participantId) : undefined
         if (intent.participantId && this.interruptedTypingParticipants.has(intent.participantId)) {
           // The incoming-message transaction is queued behind this one. Leave
@@ -5864,8 +6515,11 @@ export class InterludeService extends Service {
           // exact draft contents into the replacement writing request.
           return
         }
-        if (!content || !participant || participant.status !== 'active') {
-          await this.dbSet('interlude_intent', { id: intent.id }, { status: 'cancelled', updatedAt: now })
+        if (await this.reconcileTerminalSplitIntent(storyId, intent, now)) {
+          // The ledger already confirms or cancels this key. Retire the stale
+          // intent without another platform call or character-message row.
+        } else if (!content || !participant || participant.status !== 'active') {
+          await this.dbSet('interlude_intent', { id: intent.id, status: 'pending' }, { status: 'cancelled', updatedAt: now })
           const reference = restoreMessageEvent(intent.payload, content || '')
           if (reference) await this.updateScriptDeliveryOutcome(storyId, reference, 'cancelled', now, 'delivery-target-unavailable')
         } else {
@@ -5878,33 +6532,28 @@ export class InterludeService extends Service {
             participantId: participant.id,
             content,
             automaticDelivery,
+            ...restoreDesktopContext(intent.payload),
             ...(scriptEvent?.endpointId ? { endpointId: scriptEvent.endpointId } : {}),
             scriptEvent,
           }
-          const delivered = await this.sendOutgoingMessages(
+          const delivered = await this.deliverOutgoingMessages(
             story,
             [message],
             undefined,
             undefined,
             target => this.interruptedTypingParticipants.has(target.id),
-            false,
+            false, undefined, 'failed', true,
           )
+          if (!this.taskGenerationCurrent(storyId, generation)) return
           if (!delivered.length) {
             if (this.interruptedTypingParticipants.has(participant.id)) return
             if (message.scriptEvent) await this.updateScriptDeliveryOutcome(storyId, message.scriptEvent, 'pending', now, 'delivery-unconfirmed-retry-scheduled')
             const retryAt = new Date(now.getTime() + 30 * Time.second)
-            await this.dbSet('interlude_intent', { id: intent.id }, { notBefore: retryAt, updatedAt: now })
+            await this.dbSet('interlude_intent', { id: intent.id, status: 'pending' }, { notBefore: retryAt, updatedAt: now })
             this.scheduleDueIntentWake(storyId, retryAt)
             return
           }
-          await this.appendEntry(storyId, {
-            kind: 'character-message', actor: 'character', content,
-            occurredAt: now.toISOString(), metadata: deliveryEntryMetadata(message, { splitSegment: true }),
-          }, now, participant.id)
-          if (message.scriptEvent) await this.updateScriptDeliveryOutcome(storyId, message.scriptEvent, 'delivered', now)
-          if (message.automaticDelivery) await this.recordAutomaticDelivery(storyId, participant.id, message.automaticDelivery, now)
-          await this.recordCharacterMessage(participant, now)
-          await this.dbSet('interlude_intent', { id: intent.id }, { status: 'completed', updatedAt: now })
+          await this.dbSet('interlude_intent', { id: intent.id, status: 'pending' }, { status: 'completed', updatedAt: now })
         }
       }
       // When several segments became overdue together, restore a fresh
@@ -5915,7 +6564,7 @@ export class InterludeService extends Service {
         if (following.notBefore <= now) {
           const followingContent = clip(following.payload?.content, this.config.runtime.maxMessageCharacters)
           if (followingContent) {
-            await this.dbSet('interlude_intent', { id: following.id }, {
+            await this.dbSet('interlude_intent', { id: following.id, status: 'pending' }, {
               notBefore: new Date(now.getTime() + this.typingDelayMilliseconds(followingContent)), updatedAt: now,
             })
           }
@@ -5926,10 +6575,37 @@ export class InterludeService extends Service {
   }
 
   /** Pending spoken promises are intentionally tiny and relationship-local. */
-  private async pendingFollowUpCommitments(storyId: string, participantId: string) {
-    return this.dbGet('interlude_intent', {
+  private async pendingFollowUpCommitments(storyId: string, participantId: string, now = new Date()) {
+    const rows = await this.dbGet('interlude_intent', {
       storyId, participantId, type: 'follow-up-commitment', status: 'pending',
-    }, { limit: 2, sort: { notBefore: 'asc' } }) as Promise<NarrativeIntent[]>
+    }, { sort: { notBefore: 'asc' } }) as NarrativeIntent[]
+    const retiredIds = await this.retireExpiredFollowUps(storyId, rows, now)
+    return rows.filter(intent => !retiredIds.has(intent.id)).slice(0, 2)
+  }
+
+  /** Expiration retires a scheduler task, not a fictional fulfilled promise. */
+  private async retireExpiredFollowUps(storyId: string, intents: NarrativeIntent[], now: Date) {
+    const retiredIds = new Set<number>()
+    for (const intent of intents) {
+      const expiresAt = followUpDeadline(intent)
+      const reason = expiresAt <= now ? 'follow-up-commitment-expired'
+        : followUpDeferredChecks(intent) >= MAX_FOLLOW_UP_DEFERRED_CHECKS ? 'follow-up-deferred-limit' : undefined
+      if (reason) {
+        await this.dbSet('interlude_intent', { id: intent.id, storyId, status: 'pending' }, {
+          status: 'cancelled', updatedAt: now,
+          payload: { ...intent.payload, expiresAt: expiresAt.toISOString(), expired: true, expiredAt: now.toISOString(), cancelReason: reason },
+        })
+        retiredIds.add(intent.id)
+        this.reportOperation('diagnostic', 'debug', await this.getStory(storyId), 'intent-due',
+          '承诺回访已停止 意图=%d 参与者=%s 原因=%s', intent.id, intent.participantId, reason)
+      } else if (!toDate(intent.payload?.expiresAt)) {
+        // Legacy rows use creation+24h, never `now+24h` on each read.
+        await this.dbSet('interlude_intent', { id: intent.id, storyId, status: 'pending' }, {
+          payload: { ...intent.payload, expiresAt: expiresAt.toISOString() }, updatedAt: now,
+        })
+      }
+    }
+    return retiredIds
   }
 
   private async appendFollowUpCommitment(
@@ -5946,9 +6622,7 @@ export class InterludeService extends Service {
       }) as NarrativeIntent[]
       if (previous.some(intent => intent.payload?.originDeliveryEventId === originDeliveryEventId)) return
     }
-    const pending = await this.dbGet('interlude_intent', {
-      storyId: story.id, participantId, type: 'follow-up-commitment', status: 'pending',
-    }, { limit: 3, sort: { notBefore: 'asc' } }) as NarrativeIntent[]
+    const pending = await this.pendingFollowUpCommitments(story.id, participantId, now)
     const key = normalizeFollowUpSummary(draft.summary)
     const duplicate = pending.find(intent => normalizeFollowUpSummary(intent.summary) === key)
     if (duplicate || pending.length >= 2) {
@@ -5996,7 +6670,7 @@ export class InterludeService extends Service {
       }
       if (resolution.outcome === 'rescheduled') {
         const nextAt = toDate(resolution.notBefore)
-        if (!nextAt || nextAt <= now || nextAt.getTime() - now.getTime() > 12 * Time.hour) continue
+        if (!nextAt || nextAt <= now || nextAt >= followUpDeadline(intent) || nextAt.getTime() - now.getTime() > 12 * Time.hour) continue
         await this.dbSet('interlude_intent', { id: intent.id }, {
           notBefore: nextAt, payload: { ...intent.payload, reschedules: Number(intent.payload.reschedules ?? 0) + 1, resolutionEventId: deliveryEventId }, updatedAt: now,
         })
@@ -6021,12 +6695,16 @@ export class InterludeService extends Service {
   ) {
     const due = contextIntents.filter(intent => intent.type === 'follow-up-commitment' && intent.participantId === participantId)
     if (!due.length) return
-    for (const intent of due) {
-      if (resolvedIds.has(intent.id)) continue
-      const retryAt = new Date(now.getTime() + 20 * Time.minute)
-      await this.dbSet('interlude_intent', { id: intent.id }, {
+    const unresolved = due.filter(intent => !resolvedIds.has(intent.id))
+    const retiredIds = await this.retireExpiredFollowUps(storyId, unresolved, now)
+    for (const intent of unresolved) {
+      if (retiredIds.has(intent.id)) continue
+      const expiresAt = followUpDeadline(intent)
+      // Wake at the deadline rather than scheduling another model check past it.
+      const retryAt = new Date(Math.min(now.getTime() + 20 * Time.minute, expiresAt.getTime()))
+      await this.dbSet('interlude_intent', { id: intent.id, status: 'pending' }, {
         notBefore: retryAt,
-        payload: { ...intent.payload, deferredChecks: Number(intent.payload.deferredChecks ?? 0) + 1 },
+        payload: { ...intent.payload, expiresAt: expiresAt.toISOString(), deferredChecks: followUpDeferredChecks(intent) + 1 },
         updatedAt: now,
       })
       this.scheduleDueIntentWake(storyId, retryAt)
@@ -6132,9 +6810,7 @@ export class InterludeService extends Service {
   }
 
   private async sendScheduledMessages(story: InterludeStory, messages: OutgoingMessageDraft[]) {
-    const delivered = await this.sendOutgoingMessages(story, messages)
-    await this.confirmOutgoingDeliveries(story, delivered)
-    return delivered
+    return this.deliverOutgoingMessages(story, messages)
   }
 
   /**
@@ -6159,29 +6835,159 @@ export class InterludeService extends Service {
     return { participantId, mode: 'immediate' as const, content }
   }
 
-  private async sendCrossGroupMessage(story: InterludeStory, message: OutgoingMessageDraft, session?: Session) {
+  private async sendCrossGroupMessage(
+    story: InterludeStory,
+    message: OutgoingMessageDraft,
+    session?: Session,
+    failureStatus: 'failed' | 'pending' = 'failed',
+    shouldCancel: () => boolean = () => false,
+  ) {
+    const generation = this.deliveryGeneration(story.id)
     const groupId = normalizeGroupId(message.participantId.slice('group:'.length))
     const allowed = this.config.onebot?.groupChats?.some(group => group.enabled !== false && normalizeGroupId(group.groupId) === groupId)
-    const outcome: GroupDeliveryResult = allowed
-      ? await this.sendGroupMessage(story, groupId, message.content, undefined, session, message.endpointId)
-      : { deliveredSegments: [], complete: false, segmentOutcomes: this.splitOutgoingMessage(message.content).map((content, index) => ({ index, content, status: 'failed', reason: 'group-not-allowed' })) }
-    const now = new Date()
-    await this.serial(story.id, async () => {
-      if (message.scriptEvent) {
-        for (const segment of outcome.segmentOutcomes) {
-          await this.updateScriptDeliveryOutcome(story.id, { ...message.scriptEvent, segmentIndex: segment.index }, segment.status, now, segment.reason)
+    const segments = this.splitOutgoingMessage(message.content)
+    const baseIndex = message.scriptEvent?.bubbleIndex ?? 0
+    const settled = new Map<number, GroupDeliveryResult['segmentOutcomes'][number]['status']>()
+    const drafts = segments.map((content, index) => ({ ...message, content,
+      ...(message.scriptEvent ? { scriptEvent: { ...message.scriptEvent, bubbleIndex: baseIndex + index } } : {}) }))
+    if (message.scriptEvent?.scriptEntryId) {
+      const source = (await this.dbGet('interlude_script_entry', { storyId: story.id, id: message.scriptEvent.scriptEntryId }))[0] as ScriptEntry | undefined
+      if (!source || source.storyId !== story.id) return { deliveredSegments: [], complete: false,
+        segmentOutcomes: segments.map((content, index) => ({ index, content, status: 'cancelled' as const, reason: 'delivery-source-unavailable' })) }
+      const action = (source?.metadata?.deliveryActions as ScriptDeliveryAction[] | undefined)?.find(item => item.commitId === message.scriptEvent!.commitId && item.eventId === message.scriptEvent!.eventId)
+      for (const [index, draft] of drafts.entries()) {
+        const key = this.deliveryExecutionKey(story.id, draft, true)!
+        if (this.acceptedDeliveries.has(key) || await this.successfulDeliveryEntry(story.id, draft)) settled.set(index, 'delivered')
+        else {
+          const status = action?.segments.find(item => item.index === baseIndex + index)?.status
+          if (status === 'delivered' || status === 'cancelled' || status === 'failed') settled.set(index, status)
         }
       }
-      if (outcome.deliveredSegments.length) {
-        await this.appendEntry(story.id, {
-          kind: 'character-group-message', actor: 'character', content: outcome.deliveredSegments.join('<sep/>'), occurredAt: now.toISOString(),
-          metadata: { groupId, channelId: groupId, ...(message.scriptEvent ?? {}),
-            deliverySegmentIndexes: outcome.segmentOutcomes.filter(segment => segment.status === 'delivered').map(segment => segment.index),
-            partialDelivery: !outcome.complete },
-        }, now)
+    }
+    const allSettled = settled.size === segments.length
+    const outcome: GroupDeliveryResult = allSettled
+      ? { deliveredSegments: segments.filter((_, index) => settled.get(index) === 'delivered'),
+        complete: [...settled.values()].every(status => status === 'delivered'),
+        segmentOutcomes: segments.map((content, index) => ({ index, content, status: settled.get(index)! })) }
+      : allowed ? await this.sendGroupMessage(story, groupId, message.content, undefined, session, message.endpointId, {
+        traceId: message.traceId, processingId: message.processingId,
+      }, { shouldCancel, settled, onDelivered: index => {
+        const key = this.deliveryExecutionKey(story.id, drafts[index], true)
+        if (key && !this.databaseResetting && this.deliveryGeneration(story.id) === generation) this.acceptedDeliveries.set(key, drafts[index])
+      } })
+      : { deliveredSegments: [], complete: false, segmentOutcomes: segments.map((content, index) => ({ index, content, status: settled.get(index) ?? 'failed', reason: 'group-not-allowed' })) }
+    if (this.databaseResetting || this.deliveryGeneration(story.id) !== generation) return outcome
+    const now = new Date()
+    await runStorySerialized(this, story.id, async () => {
+      if (this.databaseResetting || this.deliveryGeneration(story.id) !== generation) return
+      const unrecorded = [] as GroupDeliveryResult['segmentOutcomes']
+      for (const segment of outcome.segmentOutcomes) {
+        if (segment.status === 'delivered' && !await this.successfulDeliveryEntry(story.id, drafts[segment.index])) unrecorded.push(segment)
+      }
+      if (this.databaseResetting || this.deliveryGeneration(story.id) !== generation) return
+      // A durable success receipt precedes ledger reconciliation. A later
+      // ledger failure cannot turn an accepted bubble back into transport work.
+      if (unrecorded.length) await this.appendEntry(story.id, {
+        kind: 'character-group-message', actor: 'character', content: unrecorded.map(segment => segment.content).join('<sep/>'), occurredAt: now.toISOString(),
+        metadata: { groupId, channelId: groupId, ...(message.scriptEvent ?? {}),
+          deliverySegmentIndexes: unrecorded.map(segment => baseIndex + segment.index), partialDelivery: !outcome.complete },
+      }, now)
+      if (message.scriptEvent) {
+        for (const segment of outcome.segmentOutcomes) {
+          const ledgerStatus = segment.status === 'failed' && (failureStatus === 'pending' || segment.reason === 'delivery-generation-obsolete') ? 'pending' : segment.status
+          await this.updateScriptDeliveryOutcome(story.id, { ...message.scriptEvent, segmentIndex: baseIndex + segment.index }, ledgerStatus, now, segment.reason)
+          const draft = drafts[segment.index]
+          const key = this.deliveryExecutionKey(story.id, draft, true)!
+          if (segment.status === 'delivered' && (await this.deliveryLedgerConfirmed(story.id, draft) || await this.successfulDeliveryEntry(story.id, draft))) this.acceptedDeliveries.delete(key)
+        }
       }
     })
-    if (!outcome.complete) this.report('warn', story, 'intent-due', '跨群消息投递未完成（不自动重发）群频道=%s', groupId)
+    if (!outcome.complete) this.report('warn', story, 'intent-due', '跨群消息投递未完成 群频道=%s', groupId)
+    return outcome
+  }
+
+  private deliveryExecutionKey(storyId: string, message: OutgoingMessageDraft, segment = false) {
+    const ref = message.scriptEvent
+    if (!ref?.scriptEntryId) return undefined
+    return JSON.stringify([storyId, ref.scriptEntryId, ref.commitId, ref.eventId, ...(segment ? [ref.bubbleIndex ?? 0] : [])])
+  }
+
+  private async successfulDeliveryEntry(storyId: string, message: OutgoingMessageDraft) {
+    const ref = message.scriptEvent
+    if (!ref?.scriptEntryId) return undefined
+    const entries = await this.dbGet('interlude_script_entry', {
+      storyId, kind: { $in: ['character-message', 'character-group-message'] },
+      'metadata.scriptEntryId': ref.scriptEntryId, 'metadata.commitId': ref.commitId, 'metadata.eventId': ref.eventId,
+    }) as ScriptEntry[]
+    return entries.find(entry => entry.kind === 'character-group-message'
+      ? Array.isArray(entry.metadata?.deliverySegmentIndexes) && entry.metadata.deliverySegmentIndexes.includes(ref.bubbleIndex ?? 0)
+      : (entry.metadata?.bubbleIndex ?? 0) === (ref.bubbleIndex ?? 0))
+  }
+
+  /** No waiting for another executor inside story serial: its confirmation may
+   * need that same serial. A competing recovery/split simply tries later. */
+  private async deliverOutgoingMessages(
+    story: InterludeStory, messages: OutgoingMessageDraft[], current?: InterludeParticipant,
+    session?: Session, shouldCancel?: (target: InterludeParticipant) => boolean, recordFailures = true,
+    requestStartedAt?: Date, failureStatus: 'failed' | 'pending' = 'failed', splitSegment = false, confirmedEntries?: ScriptEntry[],
+  ) {
+    const delivered: OutgoingMessageDraft[] = []
+    const generation = this.taskGeneration(story.id)
+    const receiptGeneration = this.deliveryGeneration(story.id)
+    for (const message of messages) {
+      if (!this.taskGenerationCurrent(story.id, generation)) break
+      const key = this.deliveryExecutionKey(story.id, message)
+      if (key && this.deliveryExecutors.has(key)) continue
+      if (key) this.deliveryExecutors.add(key)
+      try {
+        if (message.participantId.startsWith('group:')) {
+          const outcome = await this.sendCrossGroupMessage(story, message, session, failureStatus, () => !this.taskGenerationCurrent(story.id, generation))
+          if (outcome.complete) delivered.push(message)
+          continue
+        }
+        const ref = message.scriptEvent
+        const receiptKey = this.deliveryExecutionKey(story.id, message, true)
+        const accepted = receiptKey && this.acceptedDeliveries.get(receiptKey)
+        const receipt = ref?.scriptEntryId ? await this.successfulDeliveryEntry(story.id, message) : undefined
+        if (receipt) {
+          const confirmed = await this.confirmOutgoingDeliveries(story, [message], splitSegment)
+          confirmedEntries?.push(...confirmed)
+          if (receiptKey) this.acceptedDeliveries.delete(receiptKey)
+          delivered.push(message)
+          continue
+        }
+        if (ref?.scriptEntryId && !accepted) {
+          const entry = (await this.dbGet('interlude_script_entry', { id: ref.scriptEntryId }))[0] as ScriptEntry | undefined
+          const action = (entry?.metadata?.deliveryActions as ScriptDeliveryAction[] | undefined)?.find((item: ScriptDeliveryAction) => item.commitId === ref.commitId && item.eventId === ref.eventId)
+          const segment = action?.segments?.find((item: { index: number }) => item.index === (ref.bubbleIndex ?? 0))
+          if (!entry || entry.storyId !== story.id || segment && segment.status !== 'pending') {
+            if (segment?.status === 'delivered') delivered.push(message)
+            continue
+          }
+        }
+        if (!this.taskGenerationCurrent(story.id, generation)) break
+        // A confirmation exception must not turn platform success into an
+        // ordinary transport failure or trigger another platform request.
+        const sent = accepted ? [accepted] : await this.sendOutgoingMessages(story, [message], current, session,
+          target => !this.taskGenerationCurrent(story.id, generation) || !!shouldCancel?.(target), recordFailures, requestStartedAt, failureStatus)
+        for (const item of sent) {
+          if (this.databaseResetting || this.deliveryGeneration(story.id) !== receiptGeneration) break
+          if (receiptKey) this.acceptedDeliveries.set(receiptKey, item)
+          const confirmed = await this.confirmOutgoingDeliveries(story, [item], splitSegment)
+          confirmedEntries?.push(...confirmed)
+          delivered.push(item)
+          if (receiptKey && (!item.scriptEvent || await this.deliveryLedgerConfirmed(story.id, item) || await this.successfulDeliveryEntry(story.id, item))) this.acceptedDeliveries.delete(receiptKey)
+        }
+      } finally { if (key) this.deliveryExecutors.delete(key) }
+    }
+    return delivered
+  }
+
+  private async deliveryLedgerConfirmed(storyId: string, message: OutgoingMessageDraft) {
+    const ref = message.scriptEvent!
+    const entry = (await this.dbGet('interlude_script_entry', { storyId, id: ref.scriptEntryId }))[0] as ScriptEntry | undefined
+    const action = (entry?.metadata?.deliveryActions as ScriptDeliveryAction[] | undefined)?.find((item: ScriptDeliveryAction) => item.commitId === ref.commitId && item.eventId === ref.eventId)
+    return action?.segments?.find((item: { index: number }) => item.index === (ref.bubbleIndex ?? 0))?.status === 'delivered'
   }
 
   private async sendOutgoingMessages(
@@ -6192,6 +6998,7 @@ export class InterludeService extends Service {
     shouldCancel?: (target: InterludeParticipant) => boolean,
     recordFailures = true,
     requestStartedAt?: Date,
+    failureStatus: 'failed' | 'pending' = 'failed',
   ) {
     const delivered: OutgoingMessageDraft[] = []
     if (!messages.length) return delivered
@@ -6210,7 +7017,7 @@ export class InterludeService extends Service {
       this.reportStandalone('warn', '出站端点注册表不可用，已阻止本批消息投递 错误=%s', error)
       if (recordFailures) {
         for (const message of messages) {
-          await this.recordOutgoingDeliveryFailure(story, message.participantId, message, 'endpoint-registry-unavailable')
+          await this.recordOutgoingDeliveryFailure(story, message.participantId, message, 'endpoint-registry-unavailable', failureStatus)
         }
       }
       return delivered
@@ -6220,19 +7027,19 @@ export class InterludeService extends Service {
       if (message.participantId.startsWith('group:')) {
         // A group target must never enter private participant lookup or use
         // session.send() from the private turn that authored this action.
-        try { await this.sendCrossGroupMessage(story, message, session) }
+        try { await this.sendCrossGroupMessage(story, message, session, failureStatus) }
         catch (error) { this.report('warn', story, 'intent-due', '跨群投递或回执记录失败（不自动重发）目标=%s 错误=%s', message.participantId, error) }
         continue
       }
       const target = byId.get(message.participantId)
       if (!target) {
         this.report('warn', story, 'intent-due', '无法投递消息：参与者不存在 %s', message.participantId)
-        if (recordFailures) await this.recordOutgoingDeliveryFailure(story, message.participantId, message, 'participant-not-found')
+        if (recordFailures) await this.recordOutgoingDeliveryFailure(story, message.participantId, message, 'participant-not-found', failureStatus)
         continue
       }
       if (!this.canHandleParticipant(target)) {
         this.report('warn', story, 'intent-due', '消息被当前账号白名单拦截 参与者=%s', target.id)
-        if (recordFailures) await this.recordOutgoingDeliveryFailure(story, target.id, message, 'participant-not-allowed')
+        if (recordFailures) await this.recordOutgoingDeliveryFailure(story, target.id, message, 'participant-not-allowed', failureStatus)
         continue
       }
       // 首条发言的打字时间下限：模型返回快于按字数估算的打字时长时补足等待，
@@ -6278,7 +7085,7 @@ export class InterludeService extends Service {
         const resolved = this.endpointForDelivery(selectedEndpointId, { kind: 'participant-user', id: target.id })
         if (resolved.reason) {
           this.report('warn', story, 'intent-due', '消息被端点门控阻止 参与者=%s 端点=%s 原因=%s', target.id, selectedEndpointId, resolved.reason)
-          if (recordFailures) await this.recordOutgoingDeliveryFailure(story, target.id, message, resolved.reason)
+          if (recordFailures) await this.recordOutgoingDeliveryFailure(story, target.id, message, resolved.reason, failureStatus)
           continue
         }
         const endpoint = resolved.row
@@ -6297,7 +7104,7 @@ export class InterludeService extends Service {
         const gateReason = endpoint ? this.endpointGateReason(endpoint.id) : undefined
         if (gateReason) {
           this.report('warn', story, 'intent-due', '消息被端点状态门控阻止 参与者=%s 端点=%s 原因=%s', target.id, endpoint.id, gateReason)
-          if (recordFailures) await this.recordOutgoingDeliveryFailure(story, target.id, message, gateReason)
+          if (recordFailures) await this.recordOutgoingDeliveryFailure(story, target.id, message, gateReason, failureStatus)
           continue
         }
         // User-triggered replies are not proactive contact.  Background,
@@ -6310,14 +7117,14 @@ export class InterludeService extends Service {
           : this.endpointInitiateGateReason(endpoint.id)
         if (initiateReason) {
           this.report('warn', story, 'intent-due', '消息被主动联系端点门控阻止 参与者=%s 端点=%s 原因=%s', target.id, endpoint?.id, initiateReason)
-          if (recordFailures) await this.recordOutgoingDeliveryFailure(story, target.id, message, initiateReason)
+          if (recordFailures) await this.recordOutgoingDeliveryFailure(story, target.id, message, initiateReason, failureStatus)
           continue
         }
         const literalQuoteMessageId = await this.resolveLiteralQuoteMessageId(story.id, target.id, message.content)
         const literalQuoteOnly = isLiteralQuoteOnly(message.content)
         if (literalQuoteOnly && !literalQuoteMessageId) {
           this.report('warn', story, 'intent-due', '已阻止无法映射的伪引用文本 参与者=%s', target.id)
-          if (recordFailures) await this.recordOutgoingDeliveryFailure(story, target.id, message, 'literal-quote-target-not-found')
+          if (recordFailures) await this.recordOutgoingDeliveryFailure(story, target.id, message, 'literal-quote-target-not-found', failureStatus)
           continue
         }
         if (literalQuoteMessageId) message.quoteMessageId = literalQuoteMessageId
@@ -6348,9 +7155,17 @@ export class InterludeService extends Service {
           // typ-0 worker：没有 adapter bot，后台投递统一走宿主渠道。结果语义与
           // bot.sendMessage 一致——成功 resolve 进 delivered 由账本确认，失败
           // reject 进 catch 由 recordOutgoingDeliveryFailure 记录。
+          if (!message.scriptEvent) {
+            // 幂等键缺失 = 宿主无法跨 deliveryId 去重（迟到回执 + 30s 重试场景
+            // 可能重复投递）。成因链在 commit-builder/delivery 层全部静默，
+            // 这里必须留痕供排障。
+            this.reportOperation('diagnostic', 'debug', story, 'intent-due', '后台投递缺少 scriptEvent，幂等键缺失 参与者=%s', target.id)
+          }
           const outcome = await this.desktopDeliveryHandler({
             participantId: target.id, selfId: address.selfId, platform: address.platform,
             channelId: privateChannelId, kind: 'private', content: message.content,
+            ...(message.traceId ? { traceId: message.traceId } : {}),
+            ...(message.processingId ? { processingId: message.processingId } : {}),
             ...(message.quoteMessageId ? { quoteMessageId: message.quoteMessageId } : {}),
             ...(selectedEndpointId ? { endpointId: selectedEndpointId } : {}),
             ...(message.scriptEvent ? { intentKey: `${message.scriptEvent.eventId}:${message.scriptEvent.bubbleIndex}` } : {}),
@@ -6372,7 +7187,7 @@ export class InterludeService extends Service {
           : this.findBotForParticipant(target)
         if (!bot) {
           this.report('warn', story, 'intent-due', '没有可用机器人账号投递消息 参与者=%s', target.id)
-          if (recordFailures) await this.recordOutgoingDeliveryFailure(story, target.id, message, 'bot-not-found')
+          if (recordFailures) await this.recordOutgoingDeliveryFailure(story, target.id, message, 'bot-not-found', failureStatus)
           continue
         }
         const receipt = await bot.sendMessage(privateChannelId, outgoingContent)
@@ -6386,7 +7201,7 @@ export class InterludeService extends Service {
         const address = attemptedAddress ?? this.endpointAddressSync({ platform: target.platform, selfId: target.selfId }, { kind: 'participant-user', id: target.id })
         this.noteEndpointOutbound({ kind: 'participant-user', id: target.id }, false, String(error), address)
         this.report('error', story, 'intent-due', '消息投递失败 参与者=%s 错误=%s', target.id, error)
-        if (recordFailures) await this.recordOutgoingDeliveryFailure(story, target.id, message, `transport-failed: ${String(error)}`)
+        if (recordFailures) await this.recordOutgoingDeliveryFailure(story, target.id, message, `transport-failed: ${String(error)}`, failureStatus)
       }
     }
     return delivered
@@ -6396,28 +7211,39 @@ export class InterludeService extends Service {
    * Failed attempts become explicit system evidence rather than fictional
    * character speech, and deliberately do not auto-retry to avoid duplicates
    * when an adapter fails after it has already accepted a request. */
-  private async confirmOutgoingDeliveries(story: InterludeStory, delivered: OutgoingMessageDraft[]) {
+  private async confirmOutgoingDeliveries(story: InterludeStory, delivered: OutgoingMessageDraft[], splitSegment = false) {
+    const generation = this.deliveryGeneration(story.id)
     const confirmed: ScriptEntry[] = []
     for (const message of delivered) {
-      const entry = await this.serial(story.id, async () => {
+      const entry = await runStorySerialized(this, story.id, async () => {
+        if (this.databaseResetting || this.deliveryGeneration(story.id) !== generation) return undefined
         const participant = await this.getParticipant(message.participantId)
         if (!participant) return undefined
         const now = new Date()
         const content = message.quoteMessageId ? '[主角引用了此前的一条消息]' : message.content
-        const persistedEntry = await this.appendEntry(story.id, {
+        const existing = message.scriptEvent?.scriptEntryId ? await this.successfulDeliveryEntry(story.id, message) : undefined
+        if (this.databaseResetting || this.deliveryGeneration(story.id) !== generation) return undefined
+        const persistedEntry = existing ?? await this.appendEntry(story.id, {
           kind: 'character-message', actor: 'character', content,
           occurredAt: now.toISOString(),
           metadata: deliveryEntryMetadata(message, message.quoteMessageId
             ? { quoteMessageId: message.quoteMessageId, quoteTransport: true }
-            : {}),
+            : splitSegment ? { splitSegment: true } : {}),
         }, now, participant.id)
         if (message.scriptEvent) await this.updateScriptDeliveryOutcome(story.id, message.scriptEvent, 'delivered', now)
-        await this.recordCharacterMessage(participant, now)
-        if (message.automaticDelivery) await this.recordAutomaticDelivery(story.id, participant.id, message.automaticDelivery, now)
+        if (!existing) await this.recordCharacterMessage(participant, now)
+        if (!existing && message.automaticDelivery) await this.recordAutomaticDelivery(story.id, participant.id, message.automaticDelivery, now)
+        const splitIntents = message.laterSegments?.length && message.scriptEvent
+          ? await this.dbGet('interlude_intent', { storyId: story.id, participantId: participant.id, type: 'split-message' }) as NarrativeIntent[] : []
         let delay = 0
         for (const [index, segment] of (message.laterSegments ?? []).entries()) {
           delay += this.typingDelayMilliseconds(segment)
           const sendAt = new Date(now.getTime() + delay)
+          if (splitIntents.some(intent => {
+            const ref = restoreMessageEvent(intent.payload, segment)
+            return ref && ref.scriptEntryId === message.scriptEvent?.scriptEntryId && ref.commitId === message.scriptEvent?.commitId
+              && ref.eventId === message.scriptEvent?.eventId && ref.bubbleIndex === index + 1
+          })) continue
           await this.appendIntent(story.id, {
             type: 'split-message', summary: 'The character is still typing the next message segment.',
             notBefore: sendAt.toISOString(),
@@ -6436,10 +7262,21 @@ export class InterludeService extends Service {
     return confirmed
   }
 
-  private async recordOutgoingDeliveryFailure(story: InterludeStory, participantId: string, message: OutgoingMessageDraft, reason: string) {
-    await this.serial(story.id, async () => {
+  private async recordOutgoingDeliveryFailure(
+    story: InterludeStory,
+    participantId: string,
+    message: OutgoingMessageDraft,
+    reason: string,
+    status: 'failed' | 'pending' = 'failed',
+  ) {
+    await runStorySerialized(this, story.id, async () => {
       const now = new Date()
-      if (message.scriptEvent) await this.updateScriptDeliveryOutcome(story.id, message.scriptEvent, 'failed', now, clip(reason, 500))
+      if (message.scriptEvent) await this.updateScriptDeliveryOutcome(story.id, message.scriptEvent, status, now, clip(reason, 500))
+      // A recovery attempt must not turn a transient endpoint outage into a
+      // terminal failure or add a second fictional transcript entry. The
+      // durable ledger stays pending and the process-local backoff decides when
+      // the next compensation pass retries it.
+      if (status === 'pending') return
       await this.appendEntry(story.id, {
         kind: 'outgoing-delivery-failed', actor: 'system',
         content: `未投递的主角消息（仍未发送，不能视为用户已收到）：${clip(message.content, this.config.runtime.maxMessageCharacters)}`,
@@ -6450,6 +7287,59 @@ export class InterludeService extends Service {
           ...(message.automaticDelivery ? { automaticDelivery: message.automaticDelivery } : {}),
         },
       }, now, participantId)
+    })
+  }
+
+  /** Agency/策略拦截补偿：未进入投递管线的私聊行动统一记为 cancelled，
+   * 并追加明确的"从未发送"历史条目。deliveryReality 会把 cancelled 标注为
+   * withdrawn，后续轮次的模型才能区分"想发"与"已发出"。 */
+  private async recordWithdrawnOutgoingEvents(
+    story: InterludeStory,
+    actions: Array<{ participantId: string; content: string; event?: ScriptCommitDraft['events'][number] }>,
+    commit: ScriptCommitDraft | undefined,
+    scriptEntry: ScriptEntry | undefined,
+    reason: string,
+    at: Date,
+    phase: NarrativeRequest['phase'] = 'advance',
+  ) {
+    if (!actions.length) return
+    await this.serial(story.id, async () => {
+      for (const action of actions) {
+        // Cross-account actions are matched by participant/content for legacy
+        // drafts. Interaction replies pass the exact event from the commit so
+        // delayed replies and synthesized proactive-check replies are covered
+        // as well.
+        const event = action.event?.kind === 'outgoing-message'
+          ? action.event
+          : commit ? findPrivateOutgoingMessageEvent(commit, action.participantId, 'immediate', action.content, this.config.runtime.messageSeparator) : undefined
+        if (scriptEntry && event) {
+          // 撤销该行动的全部账本分段(updateScriptDeliveryOutcome 每次只落一段)
+          const entry = (await this.dbGet('interlude_script_entry', { id: scriptEntry.id }))[0] as ScriptEntry | undefined
+          const ledger = entry?.metadata?.deliveryActions
+          const target = Array.isArray(ledger)
+            ? ledger.find((item: unknown) => isRecord(item) && item.commitId === event.commitId && item.eventId === event.eventId)
+            : undefined
+          const indexes = isRecord(target) && Array.isArray(target.segments)
+            ? target.segments.map((segment: unknown) => Number(isRecord(segment) ? segment.index : NaN)).filter(Number.isInteger)
+            : []
+          for (const segmentIndex of indexes.length ? indexes : [0]) {
+            await this.updateScriptDeliveryOutcome(story.id,
+              { commitId: event.commitId, eventId: event.eventId, scriptEntryId: scriptEntry.id, segmentIndex },
+              'cancelled', at, reason)
+          }
+        }
+        await this.appendEntry(story.id, {
+          kind: 'outgoing-delivery-failed', actor: 'system',
+          content: `未进入投递管线的主动消息（从未发送，对方不可能收到）：${clip(action.content, this.config.runtime.maxMessageCharacters)}`,
+          occurredAt: at.toISOString(),
+          metadata: {
+            status: 'cancelled', participantId: action.participantId, reason: clip(reason, 500),
+            ...(event ? messageEventReference(event, 0, scriptEntry?.id) ?? {} : {}),
+          },
+        }, at, action.participantId)
+      }
+      this.reportOperation('standard', 'info', story, phase,
+        '主动消息拦截补偿:行动已标记为未发出(cancelled) 数量=%d 原因=%s', actions.length, clip(reason, 120))
     })
   }
 
@@ -6535,40 +7425,48 @@ export class InterludeService extends Service {
     now: Date,
   ) {
     try {
-      if (this.urgeConfig?.enabled && delivery.sourceEntryId) {
-        const current = await this.getStory(storyId)
-        const state = decodeStoryState(current.state)
-        const prior = normalizeUrgeState(state.extensions?.urge, now.getTime())
-        const urge = acknowledgeUrge(prior, participantId, delivery.sourceEntryId, now.getTime())
-        if (urge !== prior) {
-          await this.dbSet('interlude_story', { id: storyId }, { state: encodeStoryState({ ...state, extensions: { ...state.extensions, urge } }), updatedAt: now })
-          await this.scheduleUrgeAdvance(await this.getStory(storyId), now)
+      // urge 确认与摘要合并都是对 story.state 的读-改-写,必须与 receive/advance
+      // 的串行回合互斥——旧快照覆盖会丢 armed/burst、打乱 nextAdvanceAt 或回退
+      // 摘要列表。serial 外的调用点(分段投递/投递确认)整段入队;serial 内的
+      // 调用点(advanceUnlocked)直接执行——serial 不可重入,再排队会死锁。
+      const run = async () => {
+        if (this.urgeConfig?.enabled && delivery.sourceEntryId) {
+          const current = await this.getStory(storyId)
+          const state = decodeStoryState(current.state)
+          const prior = normalizeUrgeState(state.extensions?.urge, now.getTime())
+          const urge = acknowledgeUrge(prior, participantId, delivery.sourceEntryId, now.getTime())
+          if (urge !== prior) {
+            await this.dbSet('interlude_story', { id: storyId }, { state: encodeStoryState({ ...state, extensions: { ...state.extensions, urge } }), updatedAt: now })
+            await this.scheduleUrgeAdvance(await this.getStory(storyId), now)
+          }
         }
-      }
-      if (delivery.sourceEntryId) {
-        const entry = (await this.dbGet('interlude_script_entry', { storyId, id: delivery.sourceEntryId }))[0] as ScriptEntry | undefined
-        const actions = entry?.metadata?.deliveryActions
-        if (Array.isArray(actions)) {
-          const speech = actions.filter(action => isRecord(action) && action.participantId === participantId && action.eventKind === 'outgoing-message')
-          if (speech.length && speech.some(action => action.status !== 'delivered')) return
+        if (delivery.sourceEntryId) {
+          const entry = (await this.dbGet('interlude_script_entry', { storyId, id: delivery.sourceEntryId }))[0] as ScriptEntry | undefined
+          const actions = entry?.metadata?.deliveryActions
+          if (Array.isArray(actions)) {
+            const speech = actions.filter(action => isRecord(action) && action.participantId === participantId && action.eventKind === 'outgoing-message')
+            if (speech.length && speech.some(action => action.status !== 'delivered')) return
+          }
         }
+        const story = await this.getStory(storyId)
+        const state = decodeStoryState(story.state)
+        const summary = clip(delivery.summary, 240).trim()
+        if (!summary) return
+        const prior = state.automaticDeliverySummaries ?? []
+        const same = prior.find(item => item.participantId === participantId && item.sourceEntryId === delivery.sourceEntryId)
+        const next: AutomaticDeliverySummary = {
+          participantId, summary: same ? mergeDeliverySummary(same.summary, summary) : summary,
+          ...(delivery.sourceEntryId ? { sourceEntryId: delivery.sourceEntryId } : {}),
+          deliveredAt: now.toISOString(),
+        }
+        const retained = prior.filter(item => item !== same)
+        retained.push(next)
+        await this.dbSet('interlude_story', { id: story.id }, {
+          state: encodeStoryState({ ...state, automaticDeliverySummaries: retained.slice(-6) }), updatedAt: now,
+        })
       }
-      const story = await this.getStory(storyId)
-      const state = decodeStoryState(story.state)
-      const summary = clip(delivery.summary, 240).trim()
-      if (!summary) return
-      const prior = state.automaticDeliverySummaries ?? []
-      const same = prior.find(item => item.participantId === participantId && item.sourceEntryId === delivery.sourceEntryId)
-      const next: AutomaticDeliverySummary = {
-        participantId, summary: same ? mergeDeliverySummary(same.summary, summary) : summary,
-        ...(delivery.sourceEntryId ? { sourceEntryId: delivery.sourceEntryId } : {}),
-        deliveredAt: now.toISOString(),
-      }
-      const retained = prior.filter(item => item !== same)
-      retained.push(next)
-      await this.dbSet('interlude_story', { id: story.id }, {
-        state: encodeStoryState({ ...state, automaticDeliverySummaries: retained.slice(-6) }), updatedAt: now,
-      })
+      if (this.inSerial(storyId)) await run()
+      else await this.serial(storyId, run)
     } catch (error) {
       // A summary is a projection, never a prerequisite for remaining bubbles.
       this.reportStandalone('warn', '自动通信摘要记录失败，保留原文与投递主链 错误=%s', error)
@@ -6998,6 +7896,7 @@ export class InterludeService extends Service {
       sceneHookCharacters: 2_000,
       sceneSummaryCharacters: 8_000,
       arcSummaryCharacters: 12_000,
+      arcPromptCharacters: 6_000,
       previousSceneSummaries: 2,
       recentEntryLimit: this.config.runtime.contextEntryLimit,
       factLimit: this.config.runtime.memoryLimit,
@@ -7164,6 +8063,10 @@ export class InterludeService extends Service {
           if (!this.taskGenerationCurrent(storyId, generation)) return
           try {
             decision = await this.compactor.compact(context.compactRequest)
+            if (!this.taskGenerationCurrent(storyId, generation)) return
+            if (context.sceneCompactionDue) {
+              context.factEmbeddings = await this.prepareCompactionEmbeddings(storyId, decision, context.sceneEntries)
+            }
           } catch (error) {
             compactionError = error
             this.noteCompactionFailure(storyId, context.fingerprint, error)
@@ -7468,10 +8371,8 @@ export class InterludeService extends Service {
     const reactionBudget = 3
     let accounted = 0
     let accountedNew = 0
-    let processed = 0
     for (const delta of deltas) {
       if (accounted >= reactionBudget) break
-      processed += 1
       const baseline = baselines.find(item => item.tid === delta.tid)
       const row = tracked.find(post => String(post.tid ?? '') === delta.tid)
       if (!baseline || row?.id === undefined) continue
@@ -8017,6 +8918,20 @@ export class InterludeService extends Service {
     }
   }
 
+  /** 将当前 Koishi bot 快照同步到已加载的端点注册表。
+   * 这是重启后的实时连接证据，不会恢复历史快照中的 online 真值。
+   */
+  private async syncCurrentBotConnections() {
+    await this.ensureEndpointRegistry()
+    for (const bot of this.ctx.bots ?? []) {
+      if (!bot.platform || !bot.selfId) continue
+      this.noteEndpointConnection(
+        endpointAccountKey(bot.platform, String(bot.selfId)),
+        isBotOnlineStatus(bot.status)
+      )
+    }
+  }
+
   /** 连接器在线状态回写（连接/断开事件；v3 §四 connection 维）。 */
   noteEndpointConnection(accountKey: string, online: boolean) {
     const now = Date.now()
@@ -8292,6 +9207,9 @@ export class InterludeService extends Service {
   private longHorizonSweepRunning = new Set<string>()
   private longHorizonLastScore = new Map<string, number>()
   private longHorizonGenerationRunning = new Set<string>()
+  /** 生成失败/归一化拒绝后的冷却：无 active 指导时 first-trigger 恒为真，
+   *  不加冷却会每个 sweep 重打一次模型（错误刷屏与 token 浪费的放大器）。 */
+  private longHorizonGenerationCooldownUntil = new Map<string, number>()
   /** Story ids whose active guidance row has already been loaded for this process. */
   private longHorizonGuidanceLoaded = new Set<string>()
 
@@ -8332,12 +9250,15 @@ export class InterludeService extends Service {
         active, lastGen, this.longHorizonConfig,
       )
       if (!trigger.trigger) return
+      if ((this.longHorizonGenerationCooldownUntil.get(story.id) ?? 0) > Date.now()) return
       this.reportOperation('diagnostic', 'debug', story, 'advance',
         '长线指导触发 原因=%s 总分=%.1f 私聊=%.1f 群聊=%.1f', trigger.reason, total, cumulative.privateScore, cumulative.groupScore)
       this.longHorizonGenerationRunning.add(story.id)
-      void this.longHorizonGenerate(story, entries, total, cumulative).catch(error =>
-        this.reportStandalone('warn', '长线指导生成失败 错误=%s', error)).finally(() =>
-          this.longHorizonGenerationRunning.delete(story.id))
+      void this.longHorizonGenerate(story, entries, total, cumulative).catch(error => {
+        this.longHorizonGenerationCooldownUntil.set(story.id, Date.now() + 10 * Time.minute)
+        this.reportStandalone('warn', '长线指导生成失败（10 分钟冷却后重试） 错误=%s', error)
+      }).finally(() =>
+        this.longHorizonGenerationRunning.delete(story.id))
     } finally {
       this.longHorizonSweepRunning.delete(story.id)
     }
@@ -8351,7 +9272,9 @@ export class InterludeService extends Service {
   private async saveLongHorizonProgress(progress: LongArcProgressRow) {
     const existing = await this.dbGet('interlude_long_arc_progress', { storyId: progress.storyId }, { limit: 1 })
     if (existing.length) {
-      await this.dbSet('interlude_long_arc_progress', { storyId: progress.storyId }, progress)
+      // 修复"cannot modify primary key"：set 载荷不得含主键 storyId（首行 dbCreate
+      // 成功后，此前每次 sweep 更新都因载荷带主键而必抛）。
+      await this.dbSet('interlude_long_arc_progress', { storyId: progress.storyId }, progressUpdatePayload(progress))
     } else {
       await this.dbCreate('interlude_long_arc_progress', progress)
     }
@@ -8393,7 +9316,22 @@ export class InterludeService extends Service {
       || !entry.participantId
       || entry.participantId === primaryParticipantId
     const eligible = evidence.filter(entry => isEligibleNarrativeEntry(entry) && isVisibleToLongHorizon(entry))
-    if (!eligible.length) return
+    if (!eligible.length) {
+      // The score is intentionally story-level, while the model input is
+      // privacy-filtered. Consume this review window once when all evidence is
+      // hidden; otherwise every later hidden entry would retrigger the same
+      // generation attempt forever without ever producing a model call.
+      const lastEvidenceEntryId = Math.max(
+        progress.lastCountedEntryId,
+        ...evidence.map(entry => Number(entry.id) || 0),
+      )
+      const advanced = advanceLongHorizonGenerationBaseline(progress, currentScore, lastEvidenceEntryId)
+      await this.saveLongHorizonProgress(advanced)
+      this.longHorizonLastScore.set(story.id + ':gen', currentScore)
+      this.reportOperation('diagnostic', 'debug', story, 'advance',
+        '长线指导跳过：本轮有效证据均受 participant 隐私边界过滤，已消费复核窗口')
+      return
+    }
     // 构造模型输入（分层：设定 + 关系 + 近期剧本 + 新增证据 + 有界历史代表证据）
     const input = await this.longHorizonInput(story, eligible)
     // The model may cite either this review window or the bounded historical
@@ -8407,44 +9345,64 @@ export class InterludeService extends Service {
     if (!output) return
     const result = normalizeLongArcDecision(output, validIds, config)
     if (!result) {
-      this.reportStandaloneOperation('diagnostic', 'warn', '长线指导输出被归一化拒绝（决策/证据引用/催化结构不合法）')
+      this.longHorizonGenerationCooldownUntil.set(story.id, Date.now() + 10 * Time.minute)
+      this.reportStandaloneOperation('diagnostic', 'warn', '长线指导输出被归一化拒绝（决策/证据引用/催化结构不合法，10 分钟冷却后重试）')
       return
     }
     const triggerEntryId = eligible[eligible.length - 1].id
-    // A dormant review is a valid no-write decision. It advances the review
-    // baseline, but must not supersede an already useful active catalyst.
-    if (result.decision === 'dormant' || !result.payload) {
+    // 持久段进故事串行队列:模型调用留在队列外(避免阻塞叙事回合),写库毫秒级
+    // 互斥即可;与 purge/压缩交错时由段内重查+触发条目存活校验兜底。
+    await this.serial(story.id, async () => {
+      // 清理交错防护:生成基于清理前的证据,若触发条目已被 purge/redacted,
+      // 本次结果作废(否则会向已重置的故事写入旧直觉)
+      const triggerRow = triggerEntryId
+        ? (await this.dbGet('interlude_script_entry', { id: triggerEntryId }))[0] as ScriptEntry | undefined
+        : undefined
+      if (!triggerRow || triggerRow.kind === 'redacted') {
+        this.reportOperation('diagnostic', 'debug', story, 'advance', '长线指导生成结果丢弃：触发条目已被清理')
+        return
+      }
+      // A dormant review is a valid no-write decision. It advances the review
+      // baseline, but must not supersede an already useful active catalyst.
+      if (result.decision === 'dormant' || !result.payload) {
+        await this.saveLongHorizonProgress({ ...progress, totalScore: currentScore, lastGenerationScore: currentScore, lastGenerationEntryId: triggerEntryId, updatedAt: new Date() })
+        this.longHorizonLastScore.set(story.id + ':gen', currentScore)
+        this.reportOperation('diagnostic', 'debug', story, 'advance',
+          '长线指导本轮保持休眠：%s', result.reason ?? '当前没有适合播种的长期发展可能性')
+        return
+      }
+      const payload = result.payload
+      // 版本链：只有新的催化方向通过校验后才 supersede 旧 active。
+      // 段内重查(队列外读到的 active 可能已被并发 supersede/purge);
+      // 同时自愈历史遗留的双 active(仅保留最高版本,其余标 superseded)。
+      const activeRows = (await this.dbGet('interlude_long_arc_guidance', { storyId: story.id, status: 'active' }, { sort: { version: 'desc' } })) as Array<{ id?: number, version?: unknown }>
+      const active = activeRows[0]
+      for (const stale of activeRows.slice(1)) {
+        if (stale.id !== undefined) await this.dbSet('interlude_long_arc_guidance', { id: stale.id }, { status: 'superseded', updatedAt: new Date() })
+      }
+      if (active?.id !== undefined) {
+        await this.dbSet('interlude_long_arc_guidance', { id: active.id }, { status: 'superseded', updatedAt: new Date() })
+      }
+      const latestRows = await this.dbGet('interlude_long_arc_guidance', { storyId: story.id }, { sort: { version: 'desc' }, limit: 1 }) as Array<{ version?: unknown }>
+      const nextVersion = Number(latestRows[0]?.version ?? active?.version ?? 0) + 1
+      const now = new Date()
+      await this.dbCreate('interlude_long_arc_guidance', {
+        storyId: story.id, version: nextVersion, status: 'active',
+        title: payload.title, premise: payload.premise, direction: payload.direction,
+        payload, currentStage: payload.currentStage.id, intensity: payload.intensity,
+        confidence: payload.confidence,
+        triggerEntryId,
+        evidenceEntryIds: payload.evidenceEntryIds,
+        ...(active?.id !== undefined ? { supersedesId: active.id } : {}),
+        createdAt: now, updatedAt: now,
+      })
       await this.saveLongHorizonProgress({ ...progress, totalScore: currentScore, lastGenerationScore: currentScore, lastGenerationEntryId: triggerEntryId, updatedAt: new Date() })
       this.longHorizonLastScore.set(story.id + ':gen', currentScore)
-      this.reportOperation('diagnostic', 'debug', story, 'advance',
-        '长线指导本轮保持休眠：%s', result.reason ?? '当前没有适合播种的长期发展可能性')
-      return
-    }
-    const payload = result.payload
-    // 版本链：只有新的催化方向通过校验后才 supersede 旧 active。
-    const active = await this.getActiveLongArcGuidance(story.id)
-    if (active?.id !== undefined) {
-      await this.dbSet('interlude_long_arc_guidance', { id: active.id }, { status: 'superseded', updatedAt: new Date() })
-    }
-    const latestRows = await this.dbGet('interlude_long_arc_guidance', { storyId: story.id }, { sort: { version: 'desc' }, limit: 1 }) as Array<{ version?: unknown }>
-    const nextVersion = Number(latestRows[0]?.version ?? active?.version ?? 0) + 1
-    const now = new Date()
-    await this.dbCreate('interlude_long_arc_guidance', {
-      storyId: story.id, version: nextVersion, status: 'active',
-      title: payload.title, premise: payload.premise, direction: payload.direction,
-      payload, currentStage: payload.currentStage.id, intensity: payload.intensity,
-      confidence: payload.confidence,
-      triggerEntryId,
-      evidenceEntryIds: payload.evidenceEntryIds,
-      ...(active?.id !== undefined ? { supersedesId: active.id } : {}),
-      createdAt: now, updatedAt: now,
+      const created = await this.getActiveLongArcGuidance(story.id)
+      if (created) this.activeLongArcGuidanceCache.set(story.id, created)
+      this.reportOperation('standard', 'info', story, 'advance',
+        '长线指导已生成 版本=%d 决策=%s 阶段=%s 标题=%s 置信度=%.2f', nextVersion, result.decision, payload.currentStage.name, payload.title, payload.confidence)
     })
-    await this.saveLongHorizonProgress({ ...progress, totalScore: currentScore, lastGenerationScore: currentScore, lastGenerationEntryId: triggerEntryId, updatedAt: new Date() })
-    this.longHorizonLastScore.set(story.id + ':gen', currentScore)
-    const created = await this.getActiveLongArcGuidance(story.id)
-    if (created) this.activeLongArcGuidanceCache.set(story.id, created)
-    this.reportOperation('standard', 'info', story, 'advance',
-      '长线指导已生成 版本=%d 决策=%s 阶段=%s 标题=%s 置信度=%.2f', nextVersion, result.decision, payload.currentStage.name, payload.title, payload.confidence)
   }
 
   private async longHorizonInput(story: InterludeStory, eligible: ScriptEntry[]): Promise<Record<string, unknown>> {
@@ -8467,7 +9425,11 @@ export class InterludeService extends Service {
     const visibleHistoricalEntries = (historicalEntries as unknown as ScriptEntry[])
       .filter(entry => isVisibleToLongHorizon(entry) && isEligibleNarrativeEntry(entry))
       .sort((left, right) => Number(left.id) - Number(right.id))
-    const visibleFacts = (facts as any[]).filter(isVisibleToLongHorizon)
+    // Durable facts are story-global narrative material. Unlike raw script entries,
+    // they must not be hidden merely because the legacy row carries another
+    // participantId. The fact content itself is the only subject reference
+    // exposed to the long-horizon model.
+    const visibleFacts = facts as any[]
     const recentScript = visibleRecentEntries.slice(-30).map(entry => ({
       kind: entry.kind, actor: entry.actor,
       content: String(entry.content ?? '').slice(0, 300),
@@ -8491,7 +9453,10 @@ export class InterludeService extends Service {
       participants: this.sharedStoryConfig.shareParticipantDetails
         ? (participants as any[]).map((participant: any) => ({ id: participant.id, displayName: participant.displayName, relationship: String(participant.relationship ?? '').slice(0, 500), state: participant.state }))
         : [],
-      durableFacts: visibleFacts.map((fact: any) => ({ scope: fact.scope, participantId: fact.participantId, content: String(fact.content ?? '').slice(0, 500), importance: fact.importance, confidence: fact.confidence })),
+      durableFacts: visibleFacts.map((fact: any) => ({
+        scope: fact.scope, content: String(fact.content ?? '').slice(0, 500),
+        importance: fact.importance, confidence: fact.confidence,
+      })),
       activeGuidance: active ? {
         version: active.version,
         title: active.title,
@@ -8584,15 +9549,20 @@ export class InterludeService extends Service {
   private activeLongArcGuidanceCache = new Map<string, LongArcGuidanceRecord>()
 
   private async schedulePreplanEvidence(storyId: string, afterEntryId: number) {
-    const filter: any = { storyId, kind: 'script' }
-    if (afterEntryId > 0) filter.id = { $gt: afterEntryId }
-    const entries = await this.dbGet('interlude_script_entry', filter, { sort: { occurredAt: 'asc' }, limit: 60 }) as ScriptEntry[]
-    if (this.sharedStoryConfig.shareParticipantDetails) return entries
+    // 分页续扫:关闭参与者详情共享时,最早的 60 条可能全部被隐私过滤——
+    // 若只读一页就返回空,证据游标永远停在原地,后续新安排永远读不到。
+    // 每轮最多扫描 1200 条;被过滤的前缀持久化为检查点,下轮继续而非从头重扫。
+    if (this.sharedStoryConfig.shareParticipantDetails) {
+      const filter: any = { storyId, kind: 'script' }
+      if (afterEntryId > 0) filter.id = { $gt: afterEntryId }
+      const entries = await this.dbGet('interlude_script_entry', filter, { sort: { id: 'asc' }, limit: 60 }) as ScriptEntry[]
+      return { entries, filteredThroughEntryId: afterEntryId, scanComplete: entries.length < 60 }
+    }
     // A recurring schedule belongs to the protagonist, but raw private prose
     // must not be sent to the background schedule model. Automatic scripts
     // already carry a host-validated timelinePlan: project that safe ledger
     // instead of dropping every participant-owned life event.
-    return entries.flatMap(entry => {
+    const project = (entries: ScriptEntry[]) => entries.flatMap(entry => {
       if (!entry.participantId) return [entry]
       if (entry.metadata?.narrativeAuthority === 'original-v2') {
         const handoff = entryLifeHandoff(entry)
@@ -8607,6 +9577,27 @@ export class InterludeService extends Service {
       const projected = timelineEntryPromptProjection(entry)
       return projected === entry ? [] : [{ ...projected, participantId: '' }]
     })
+    const collected: ScriptEntry[] = []
+    let cursor = afterEntryId
+    let filteredThroughEntryId = afterEntryId
+    let scanComplete = false
+    for (let page = 0; page < 20; page++) {
+      const filter: any = { storyId, kind: 'script' }
+      if (cursor > 0) filter.id = { $gt: cursor }
+      // The pagination key and ordering must agree, including backdated entries.
+      const entries = await this.dbGet('interlude_script_entry', filter, { sort: { id: 'asc' }, limit: 60 }) as ScriptEntry[]
+      for (const entry of entries) {
+        const visible = project([entry])
+        if (!collected.length && !visible.length) filteredThroughEntryId = entry.id
+        collected.push(...visible)
+      }
+      cursor = Math.max(...entries.map(entry => Number(entry.id) || 0), cursor)
+      if (entries.length < 60) { scanComplete = true; break }
+      if (collected.length >= 60) break
+    }
+    // Only checkpoint a fully filtered prefix. Never skip an unreviewed visible
+    // entry just because later entries in the batch were private.
+    return { entries: collected, filteredThroughEntryId, scanComplete }
   }
 
   private async saveSchedulePreplan(record: SchedulePreplanRecord) {
@@ -8627,23 +9618,17 @@ export class InterludeService extends Service {
     if (!config.enabled) return undefined
     const backoffUntil = this.schedulePreplanBackoff.get(story.id)
     if (backoffUntil && now.getTime() < backoffUntil) return undefined
-    const current = await this.getSchedulePreplan(story.id)
+    let current = await this.getSchedulePreplan(story.id)
     const dailyDue = schedulePreplanReviewDue(current, now, story.setting.timezone, config)
-    let evidenceEntries: ScriptEntry[]
-    if (dailyDue) {
-      evidenceEntries = await this.schedulePreplanEvidence(story.id, current?.lastEvidenceEntryId ?? 0)
-    } else {
-      // 当天例外的及时收束（backlog 2026-09-07）：日审查完成后改约仍会发生，
-      // 原先要等次日审查才登记——而那个例外属于"今天"。冷却（≥2h）已过且
-      // 未读证据含确定性改约/取消/新确认信号时放行一次带外审查；无信号零成本。
-      if (!current || now.getTime() - current.updatedAt.getTime() < SCHEDULE_PREPLAN_FOLLOWUP_COOLDOWN_MS) return undefined
-      const unseen = await this.schedulePreplanEvidence(story.id, current.lastEvidenceEntryId)
-      const triggers = schedulePreplanEvidenceMentionsDateChange(unseen)
-      if (!triggers.length) return undefined
-      evidenceEntries = unseen
-      this.reportOperation('diagnostic', 'debug', story, 'advance', 'Schedule Preplan 当天跟进审查：未读证据含改约/取消/新安排信号 条目=%s', triggers.slice(0, 5).join(','))
-    }
+    if (!dailyDue && (!current || now.getTime() - current.updatedAt.getTime() < SCHEDULE_PREPLAN_FOLLOWUP_COOLDOWN_MS)) return undefined
+    const batch = await this.schedulePreplanEvidence(story.id, current?.lastEvidenceEntryId ?? 0)
+    const evidenceEntries = batch.entries
     const localDate = calendarDayKey(now, story.setting.timezone)
+    if (current && batch.filteredThroughEntryId > current.lastEvidenceEntryId) {
+      // Scanning is not a model review: preserve its date and cooldown time.
+      current = { ...current, lastEvidenceEntryId: batch.filteredThroughEntryId }
+      await this.saveSchedulePreplan(current)
+    }
     if (!current && !evidenceEntries.length) {
       const empty = applySchedulePreplanProposal(
         undefined,
@@ -8652,10 +9637,21 @@ export class InterludeService extends Service {
       )
       if (empty) {
         empty.storyId = story.id
+        empty.lastEvidenceEntryId = batch.filteredThroughEntryId
+        // A scan budget is not proof that there is no evidence beyond it.
+        if (!batch.scanComplete) empty.lastReviewedLocalDate = ''
         await this.saveSchedulePreplan(empty)
         this.reportOperation('diagnostic', 'debug', story, 'advance', 'Schedule Preplan 已建立空记录：等待可验证的生活日程证据')
         return { current: empty, evidenceEntries, localDate, needsModel: false, request: undefined }
       }
+    }
+    if (!evidenceEntries.length && !batch.scanComplete) {
+      return { current, evidenceEntries, localDate, needsModel: false, request: undefined }
+    }
+    if (!dailyDue) {
+      const triggers = schedulePreplanEvidenceMentionsDateChange(evidenceEntries)
+      if (!triggers.length) return undefined
+      this.reportOperation('diagnostic', 'debug', story, 'advance', 'Schedule Preplan 当天跟进审查：未读证据含改约/取消/新安排信号 条目=%s', triggers.slice(0, 5).join(','))
     }
     const needsModel = schedulePreplanNeedsModel(current, evidenceEntries, localDate, story.setting.timezone, config)
     if (!needsModel && current) {
@@ -8698,7 +9694,7 @@ export class InterludeService extends Service {
       if (!review.current) {
         const empty = applySchedulePreplanProposal(
           undefined,
-          { outcome: 'replace', reason: 'Schedule review returned no valid structure; waiting for new concrete evidence.', regimes: [], exceptions: [] },
+          { outcome: 'unchanged', reason: 'Schedule review returned no valid structure; waiting for new concrete evidence.', regimes: [], exceptions: [] },
           review.evidenceEntries, review.localDate, story.setting.timezone, this.schedulePreplanConfig, now, this.schedulePreplanConfig.variationLevel,
         )
         if (empty) {
@@ -8776,6 +9772,10 @@ export class InterludeService extends Service {
       return false
     }
     try {
+      if (context.sceneCompactionDue) {
+        context.factEmbeddings = await this.prepareCompactionEmbeddings(story.id, decision, context.sceneEntries)
+        if (!taskCurrent()) return false
+      }
       const result = await this.applyCompaction(story, context, decision, now, startedAt)
       if (!await this.compactionCheckpointAdvanced(context)) {
         throw new Error(`Compaction checkpoint did not advance (scene=${context.scene.id}, expected=${context.sceneEntries.at(-1)?.id ?? 0})`)
@@ -8802,10 +9802,12 @@ export class InterludeService extends Service {
       entryFilter.id = { $gt: scene.lastEntryId }
       delete entryFilter.occurredAt
     }
-    const entries = await this.dbGet('interlude_script_entry', entryFilter, {
+    // 管理员软删的墓碑(kind='redacted')不进压缩:占阈值、污染摘要、还会把
+    // 场景关闭边界推到墓碑时间戳——recentEntries 等读取路径均有同款过滤
+    const entries = ((await this.dbGet('interlude_script_entry', entryFilter, {
       limit: Math.max(this.memoryConfig.compactionEntryLimit * 2, this.memoryConfig.compactionEntryLimit),
       sort: { id: 'asc' },
-    })
+    })) as ScriptEntry[]).filter(entry => entry.kind !== 'redacted')
     const sceneEntries = compactionPrefix(entries, this.memoryConfig.compactionCharacterLimit)
     const chars = sceneEntries.reduce((sum, entry) => sum + entry.content.length, 0)
     const sceneCompactionDue = this.memoryConfig.enabled && sceneEntries.length > 0
@@ -8819,20 +9821,15 @@ export class InterludeService extends Service {
     if (!force && this.compactionIsBackedOff(story.id, fingerprint)) return { phase: 'skip', overlayCompacted }
     const current = await this.getStory(story.id)
     const participants = await this.participants(story.id)
-    const preceding = scene.lastEntryId == null ? [] : await this.dbGet('interlude_script_entry', {
+    const preceding = scene.lastEntryId == null ? [] : ((await this.dbGet('interlude_script_entry', {
       storyId: story.id, id: { $lte: scene.lastEntryId },
-    }, { limit: 12, sort: { id: 'desc' } }) as ScriptEntry[]
-    const precedingEntries = limitEntriesByCharacters(preceding.reverse().filter(entry =>
-      this.sharedStoryConfig.shareParticipantDetails || !entry.participantId), 8_000)
-    const visibleCompactionEntries = (this.sharedStoryConfig.shareParticipantDetails
-      ? sceneEntries
-      : sceneEntries.map(entry => entry.participantId
-        ? { ...entry, participantId: '', content: '[participant-specific conversation omitted by privacy setting]', metadata: {} }
-        : entry))
-      .filter(entry => !!entry.content.trim())
-    const visibleCompactionFacts = this.memoryConfig.enabled && this.sharedStoryConfig.shareParticipantDetails
+    }, { limit: 12, sort: { id: 'desc' } })) as ScriptEntry[]).filter(entry => entry.kind !== 'redacted')
+    // The backstage editor reviews this story's originals, not another user's
+    // history view. Audience-specific history filtering stays on live turns.
+    const precedingEntries = limitEntriesByCharacters(preceding.reverse(), 8_000)
+    const visibleCompactionFacts = this.memoryConfig.enabled
       ? await this.facts(story.id, this.memoryConfig.maxFactsPerStory)
-      : this.memoryConfig.enabled ? (await this.facts(story.id, this.memoryConfig.maxFactsPerStory)).filter(fact => !fact.participantId) : []
+      : []
     const rawDevelopmentCandidates = (await this.dbGet('interlude_state_patch', { storyId: story.id, status: { $in: ['proposed', 'applied'] } },
       { limit: 50, sort: { createdAt: 'desc' } }) as StatePatchProposal[])
       .filter(item => item.path.startsWith('development.') && (this.sharedStoryConfig.shareParticipantDetails || !item.participantId))
@@ -8843,10 +9840,10 @@ export class InterludeService extends Service {
     const developmentCandidates = rawDevelopmentCandidates.filter(item => promptReadyDevelopment(item, candidateSources))
     return {
       phase: 'run', overlayCompacted, scene, sceneEntries, chars, sceneCompactionDue, current, participants,
-      visibleCompactionEntries, visibleCompactionFacts,
+      visibleCompactionFacts,
       fingerprint,
       compactRequest: {
-        story: current, from: scene.startedAt, now, entries: visibleCompactionEntries,
+        story: current, from: scene.startedAt, now, entries: sceneEntries.filter(entry => !!entry.content.trim()),
         scene, arc: await this.activeArc(story.id), participants, precedingEntries, developmentCandidates,
         facts: visibleCompactionFacts,
       },
@@ -8857,9 +9854,10 @@ export class InterludeService extends Service {
    * serial queue in the caller so writes stay ordered with narrative turns. */
   private async applyCompaction(story: InterludeStory, context: PreparedCompactionRun, decision: CompactionDecision, now: Date, startedAt: number) {
     if (context.sceneCompactionDue) {
-      await this.persistCompaction(context.current, context.scene, decision, context.sceneEntries, now, new Set(context.visibleCompactionFacts.map(fact => fact.id)))
+      await this.persistCompaction(context.current, context.scene, decision, context.sceneEntries, now,
+        new Set(context.visibleCompactionFacts.map(fact => fact.id)), context.compactRequest.precedingEntries, context.factEmbeddings)
     }
-    this.reportOperation('standard', 'info', story, 'advance', '后台整理完成 耗时=%dms 剧本条目=%d 长期事实=%d 状态变更=%d', Date.now() - startedAt, context.sceneCompactionDue ? context.sceneEntries.length : 0, context.sceneCompactionDue ? decision.facts?.length ?? 0 : 0, context.sceneCompactionDue ? decision.statePatches?.length ?? 0 : 0)
+    this.reportOperation('standard', 'info', story, 'advance', '后台整理完成 耗时=%dms 剧本条目=%d 模型提取事实=%d 模型提取发展提案=%d', Date.now() - startedAt, context.sceneCompactionDue ? context.sceneEntries.length : 0, context.sceneCompactionDue ? decision.facts?.length ?? 0 : 0, context.sceneCompactionDue ? decision.statePatches?.length ?? 0 : 0)
     return true
   }
 
@@ -8946,34 +9944,36 @@ export class InterludeService extends Service {
         .then(rows => rows.filter(item => !item.path.startsWith('development.'))),
       this.dbGet('interlude_overlay_snapshot', { storyId: story.id, status: 'active' }) as Promise<OverlaySnapshot[]>,
     ])
+    // 统一语义:overlay 字段恒等于"全部未压缩(仍为 applied)补丁"的合并。
+    // 此前仅当该 target 已存在压缩快照时才重建——无快照的新故事、以及关闭
+    // 压缩的实例,applied 补丁永远进不了 overlay,演化要等首个压缩周期才可见。
     const overlay = { ...(story.state.settingOverlay ?? {}) }
-    const hasGlobalHistory = (target: StatePatchProposal['target']) => snapshots.some(snapshot => snapshot.target === target && !snapshot.participantId)
-    if (hasGlobalHistory('character')) {
-      overlay.characterProfile = undefined
-      overlay.characterTraits = []
-      for (const patch of applied.filter(item => !item.participantId && item.target === 'character')) {
-        if (patch.path.includes('trait')) overlay.characterTraits.push(clip(patch.proposedValue, 500))
-        else overlay.characterProfile = mergeNote(overlay.characterProfile, patch.proposedValue)
-      }
-      overlay.characterTraits = Array.from(new Set(overlay.characterTraits)).slice(-30)
-    }
-    if (hasGlobalHistory('perspective')) {
-      overlay.perspective = undefined
-      for (const patch of applied.filter(item => !item.participantId && item.target === 'perspective')) {
-        overlay.perspective = mergeNote(overlay.perspective, patch.proposedValue)
+    const mergeGlobal = (target: StatePatchProposal['target']) => {
+      for (const patch of applied.filter(item => !item.participantId && item.target === target)) {
+        if (target === 'character' && patch.path.includes('trait')) {
+          overlay.characterTraits = [...(overlay.characterTraits ?? []), clip(patch.proposedValue, 500)]
+        } else {
+          overlay[target as 'characterProfile' | 'perspective' | 'world' | 'relationship'] =
+            mergeNote(overlay[target as 'characterProfile' | 'perspective' | 'world' | 'relationship'], patch.proposedValue)
+        }
       }
     }
-    if (hasGlobalHistory('world')) {
-      overlay.world = undefined
-      for (const patch of applied.filter(item => !item.participantId && item.target === 'world')) overlay.world = mergeNote(overlay.world, patch.proposedValue)
-    }
-    if (hasGlobalHistory('relationship')) {
-      overlay.relationship = undefined
-      for (const patch of applied.filter(item => !item.participantId && item.target === 'relationship')) overlay.relationship = mergeNote(overlay.relationship, patch.proposedValue)
-    }
+    overlay.characterProfile = undefined
+    overlay.characterTraits = []
+    overlay.perspective = undefined
+    overlay.world = undefined
+    overlay.relationship = undefined
+    mergeGlobal('character')
+    mergeGlobal('perspective')
+    mergeGlobal('world')
+    mergeGlobal('relationship')
+    overlay.characterTraits = Array.from(new Set(overlay.characterTraits ?? [])).slice(-30)
     await this.dbSet('interlude_story', { id: story.id }, { state: encodeStoryState({ ...decodeStoryState(story.state), settingOverlay: overlay }), updatedAt: now })
 
-    const participantIds = Array.from(new Set(snapshots.filter(snapshot => snapshot.target === 'relationship' && !!snapshot.participantId).map(snapshot => snapshot.participantId)))
+    const participantIds = Array.from(new Set([
+      ...snapshots.filter(snapshot => snapshot.target === 'relationship' && !!snapshot.participantId).map(snapshot => snapshot.participantId),
+      ...applied.filter(patch => patch.target === 'relationship' && !!patch.participantId).map(patch => patch.participantId),
+    ]))
     for (const participantId of participantIds) {
       const participant = await this.getParticipant(participantId)
       if (!participant) continue
@@ -8986,7 +9986,47 @@ export class InterludeService extends Service {
     }
   }
 
-  private async persistCompaction(story: InterludeStory, scene: InterludeScene, decision: CompactionDecision, entries: ScriptEntry[], now: Date, visibleFactIds = new Set<number>()) {
+  private async prepareCompactionEmbeddings(storyId: string, decision: CompactionDecision, entries: ScriptEntry[]) {
+    const vectors = new Map<string, number[]>()
+    if (!decision.facts?.length) return vectors
+    const generation = this.taskGeneration(storyId)
+    const existing = await this.dbGet('interlude_fact', { storyId, status: 'active' })
+    for (const draft of decision.facts) {
+      const content = clip(draft.content, this.memoryConfig.factContentCharacters)
+      if (!content || !hasCompactionEvidence(draft.sourceEntryIds, entries)
+        || factContentLooksAmbiguous(draft.scope, content)) continue
+      const key = normalizeFact(content)
+      if (vectors.has(key)) continue
+      if (!this.taskGenerationCurrent(storyId, generation)) return vectors
+      const same = existing.find(fact => normalizeFact(fact.content) === key && fact.embedding?.length)
+      const vector = same?.embedding ?? await this.embedText(content)
+      if (!this.taskGenerationCurrent(storyId, generation)) return vectors
+      vectors.set(key, vector)
+    }
+    return vectors
+  }
+
+  private async persistCompaction(story: InterludeStory, scene: InterludeScene, decision: CompactionDecision, entries: ScriptEntry[], now: Date, visibleFactIds = new Set<number>(), precedingEntries: ScriptEntry[] = [], factEmbeddings?: Map<string, number[]>) {
+    const generation = this.taskGeneration(story.id)
+    const prepared = factEmbeddings ?? await this.prepareCompactionEmbeddings(story.id, decision, entries)
+    const commit = async () => {
+      if (this.databaseResetting || this.taskGeneration(story.id) !== generation) throw new Error('Compaction generation is obsolete')
+      const fresh = (await this.dbGet('interlude_scene', { storyId: story.id, id: scene.id }))[0] as InterludeScene | undefined
+      if (!fresh || fresh.status === 'closed' || (fresh.lastEntryId ?? null) !== (scene.lastEntryId ?? null)) {
+        throw new Error('Compaction scene checkpoint changed; prepare a fresh review')
+      }
+      await this.persistCompactionOutputs(story, scene, decision, entries, now, visibleFactIds, precedingEntries, prepared)
+    }
+    await this.dbWrite(async () => {
+      this.transactionRunning = true
+      try {
+        await this.ctx.database.withTransaction(database => this.transactionScope.run(database, commit))
+      } finally { this.transactionRunning = false }
+    })
+    this.scheduleFactEmbeddingBackfill(story.id)
+  }
+
+  private async persistCompactionOutputs(story: InterludeStory, scene: InterludeScene, decision: CompactionDecision, entries: ScriptEntry[], now: Date, visibleFactIds = new Set<number>(), precedingEntries: ScriptEntry[] = [], factEmbeddings = new Map<string, number[]>()) {
     assertContinuityReview(decision)
     if (!entries.length) return
     for (const draft of decision.episodeTags ?? []) {
@@ -9007,50 +10047,7 @@ export class InterludeService extends Service {
       title: clip(decision.arc!.title?.trim() || arc.title, 255),
       summary: clip(decision.arc!.summary!, this.memoryConfig.arcSummaryCharacters), updatedAt: now,
     })
-    // 摘要更新成功后才移动 lastEntryId，确保失败时原始条目仍会在下次被重新处理。
     const scenePatch = decision.scene ?? {}
-    const explicitBoundary = scenePatch.close === true
-      && !!scenePatch.boundary?.reason.trim()
-      && hasCompactionEvidence(scenePatch.boundary.sourceEntryIds, entries)
-    await this.dbSet('interlude_scene', { id: scene.id }, {
-      hook: clip(scenePatch.hook ?? scene.hook, this.memoryConfig.sceneHookCharacters),
-      summary: clip(scenePatch.summary ?? scene.summary, this.memoryConfig.sceneSummaryCharacters),
-      entryCount: Math.max(0, scene.entryCount) + entries.length,
-      lastEntryId: entries.at(-1)?.id ?? scene.lastEntryId,
-      updatedAt: now,
-    })
-    if (explicitBoundary) {
-      // Preserve boundary provenance beside its original evidence. This
-      // checkpoint is navigation only, with no generated summary or prose.
-      const sourceIds = scenePatch.boundary!.sourceEntryIds.filter(id => entries.some(entry => entry.id === id))
-      const boundaryEntry = entries.find(entry => entry.id === Math.max(...sourceIds))
-      if (boundaryEntry) {
-        const source = (await this.dbGet('interlude_script_entry', { id: boundaryEntry.id }))[0] as ScriptEntry | undefined
-        if (source?.storyId === story.id) {
-          const first = (await this.dbGet('interlude_script_entry', {
-            storyId: story.id, occurredAt: { $gte: scene.startedAt }, id: { $lte: boundaryEntry.id },
-          }, { sort: { id: 'asc' }, limit: 1 }))[0] as ScriptEntry | undefined
-          await this.dbSet('interlude_script_entry', { id: source.id }, {
-            metadata: { ...source.metadata, sceneCheckpoint: {
-              sceneId: scene.id, startedAt: scene.startedAt.toISOString(),
-              endedAt: entries.at(-1)!.occurredAt.toISOString(),
-              boundarySourceEntryIds: sourceIds,
-              reason: scenePatch.boundary!.reason,
-              firstEntryId: first?.id ?? boundaryEntry.id,
-              lastEntryId: entries.at(-1)?.id ?? scene.lastEntryId,
-            } },
-          })
-          this.invalidateHistoryVectors(story.id)
-        }
-      }
-      // Close at the processed frontier, not at model completion. Entries
-      // arriving during the background request belong to the next review.
-      const frontier = entries.at(-1)!.occurredAt
-      await this.dbSet('interlude_scene', { id: scene.id }, { status: 'closed', endedAt: frontier, updatedAt: now })
-      await this.ensureContinuity(story, frontier)
-      const nextScene = await this.activeScene(story.id)
-      if (nextScene) await this.dbSet('interlude_scene', { id: nextScene.id }, { lastEntryId: entries.at(-1)!.id })
-    }
     const presenceUpdates = normalizeScenePresenceDrafts(scenePatch.presence, entries, now)
     // 压缩器附带的主角注意力状态（群聊意愿 auto 档输入）：合法三值才落库，
     // 无效/缺失保持旧值——状态不是本轮压缩的产物时不应被清空。
@@ -9125,31 +10122,86 @@ export class InterludeService extends Service {
     }
     let resolvedFacts = false
     for (const fact of decision.facts ?? []) {
-      if (!hasCompactionEvidence(fact.sourceEntryIds, entries)) continue
+      if (!hasCompactionEvidence(fact.sourceEntryIds, entries)) {
+        this.reportOperation('diagnostic', 'debug', story, 'advance', '长期事实未写入：缺少本轮新条目来源')
+        continue
+      }
       const knowledge = normalizeKnowledgeEvidence(fact.knowledge, entries, fact.sourceEntryIds ?? [])
       const resolved = supportsRecordedOutcome(knowledge)
         ? await this.resolveCompactionFacts(story.id, fact.resolvesFactIds, visibleFactIds, now) : false
       resolvedFacts ||= resolved
-      const mergedResolution = await this.persistFact(story.id, fact, entries, now)
+      const mergedResolution = await this.persistFact(story.id, fact, entries, now, factEmbeddings.get(normalizeFact(clip(fact.content, this.memoryConfig.factContentCharacters))) ?? [])
       resolvedFacts ||= mergedResolution
     }
     for (const patch of decision.statePatches ?? []) {
-      if (!hasCompactionEvidence(patch.sourceEntryIds, entries)) continue
-      await this.persistStatePatch(story, patch, entries, now)
+      if (!hasCompactionEvidence(patch.sourceEntryIds, entries)) {
+        this.reportOperation('diagnostic', 'debug', story, 'advance', '发展提案未保留：缺少本轮新条目来源')
+        continue
+      }
+      // Earlier feedback can support a new response, but only this increment
+      // advances the checkpoint or qualifies a proposal as new evidence.
+      await this.persistStatePatch(story, patch,
+        patch.target === 'relationship' ? [...precedingEntries, ...entries] : entries, now)
     }
     if (resolvedFacts) await this.markContinuityDirty(story.id, now)
+    // All outputs must succeed before the incremental frontier advances.
+    const explicitBoundary = scenePatch.close === true
+      && !!scenePatch.boundary?.reason.trim()
+      && hasCompactionEvidence(scenePatch.boundary.sourceEntryIds, entries)
+    await this.dbSet('interlude_scene', { id: scene.id }, {
+      hook: clip(scenePatch.hook ?? scene.hook, this.memoryConfig.sceneHookCharacters),
+      summary: clip(scenePatch.summary ?? scene.summary, this.memoryConfig.sceneSummaryCharacters),
+      entryCount: Math.max(0, scene.entryCount) + entries.length,
+      lastEntryId: entries.at(-1)?.id ?? scene.lastEntryId,
+      updatedAt: now,
+    })
+    if (explicitBoundary) {
+      // Preserve boundary provenance beside its original evidence. This
+      // checkpoint is navigation only, with no generated summary or prose.
+      const sourceIds = scenePatch.boundary!.sourceEntryIds.filter(id => entries.some(entry => entry.id === id))
+      const boundaryEntry = entries.find(entry => entry.id === Math.max(...sourceIds))
+      if (boundaryEntry) {
+        const source = (await this.dbGet('interlude_script_entry', { id: boundaryEntry.id }))[0] as ScriptEntry | undefined
+        if (source?.storyId === story.id) {
+          const first = (await this.dbGet('interlude_script_entry', {
+            storyId: story.id, occurredAt: { $gte: scene.startedAt }, id: { $lte: boundaryEntry.id },
+          }, { sort: { id: 'asc' }, limit: 1 }))[0] as ScriptEntry | undefined
+          await this.dbSet('interlude_script_entry', { id: source.id }, {
+            metadata: { ...source.metadata, sceneCheckpoint: {
+              sceneId: scene.id, startedAt: scene.startedAt.toISOString(),
+              endedAt: entries.at(-1)!.occurredAt.toISOString(),
+              boundarySourceEntryIds: sourceIds,
+              reason: scenePatch.boundary!.reason,
+              firstEntryId: first?.id ?? boundaryEntry.id,
+              lastEntryId: entries.at(-1)?.id ?? scene.lastEntryId,
+            } },
+          })
+          this.invalidateHistoryVectors(story.id)
+        }
+      }
+      // Close at the processed frontier, not at model completion. Entries
+      // arriving during the background request belong to the next review.
+      const frontier = entries.at(-1)!.occurredAt
+      await this.dbSet('interlude_scene', { id: scene.id }, { status: 'closed', endedAt: frontier, updatedAt: now })
+      await this.ensureContinuity(story, frontier)
+      const nextScene = await this.activeScene(story.id)
+      if (nextScene) await this.dbSet('interlude_scene', { id: nextScene.id }, { lastEntryId: entries.at(-1)!.id })
+    }
   }
 
-  private async persistFact(storyId: string, draft: import('./types').FactDraft, entries: ScriptEntry[], now: Date) {
+  private async persistFact(storyId: string, draft: import('./types').FactDraft, entries: ScriptEntry[], now: Date, preparedEmbedding: number[] = []) {
     const content = clip(draft.content, this.memoryConfig.factContentCharacters)
     if (!content) return false
-    const participantId = resolveParticipantId(draft.participantId, draft.sourceEntryIds, entries)
+    // Durable facts are global narrative evidence. Ignore the legacy model
+    // participantId field and persist new facts with an empty compatibility value.
+    const participantId = ''
+    if (factContentLooksAmbiguous(draft.scope, content)) return false
     const existing = await this.dbGet('interlude_fact', { storyId, status: 'active' })
     // 当前先做完全规范化匹配的去重；更复杂的语义去重可在检索层升级时替换。
-    const matching = existing.filter(fact => normalizeFact(fact.content) === normalizeFact(content) && fact.participantId === participantId)
+    const matching = existing.filter(fact => normalizeFact(fact.content) === normalizeFact(content))
     const sourceEntryIds = (draft.sourceEntryIds ?? []).filter(id => entries.some(entry => entry.id === id)).slice(0, 20)
     const relatedFactIds = Array.isArray(draft.knowledge?.relatedFactIds)
-      ? draft.knowledge.relatedFactIds.filter(id => existing.some(fact => fact.id === id && fact.participantId === participantId)) : []
+      ? draft.knowledge.relatedFactIds.filter(id => existing.some(fact => fact.id === id)) : []
     const knowledge = normalizeKnowledgeEvidence(draft.knowledge, entries, sourceEntryIds, relatedFactIds)
     // Promise facts are unresolved by default, unless the compactor explicitly
     // says that the promise has already been fulfilled or closed.
@@ -9159,7 +10211,7 @@ export class InterludeService extends Service {
     const unresolved = draft.unresolved === true || (draft.scope === 'promise' && (draft.unresolved !== false || !canClose))
     if (same && ((same.knowledge?.mode ?? 'unclassified') === knowledge.mode || !same.knowledge && canClose)) {
       const resolved = same.unresolved && draft.unresolved === false && canClose
-      const embedding = same.embedding?.length ? same.embedding : await this.embedText(content)
+      const embedding = same.embedding?.length ? same.embedding : preparedEmbedding
       await this.dbSet('interlude_fact', { id: same.id }, {
         importance: Math.max(same.importance, clampNumber(draft.importance, same.importance, 0, 1)),
         confidence: knowledge.clauses.some(clause => !same.sourceEntryIds.includes(clause.sourceEntryId)
@@ -9169,7 +10221,7 @@ export class InterludeService extends Service {
         unresolved: resolved ? false : same.unresolved || unresolved,
         ...(embedding.length ? { embedding } : {}),
         sourceEntryIds: Array.from(new Set([...same.sourceEntryIds, ...sourceEntryIds])), lastSeenAt: now, updatedAt: now,
-        knowledge: { ...knowledge, clauses: [...(same.knowledge?.clauses ?? []), ...knowledge.clauses].slice(-12),
+        knowledge: { ...knowledge, clauses: [...new Map([...(same.knowledge?.clauses ?? []), ...knowledge.clauses].map(clause => [JSON.stringify(clause), clause])).values()].slice(-12),
           relatedFactIds: [...new Set([...(same.knowledge?.relatedFactIds ?? []), ...knowledge.relatedFactIds])].slice(-12) },
       })
       return resolved
@@ -9181,7 +10233,7 @@ export class InterludeService extends Service {
     await this.dbCreate('interlude_fact', {
       storyId, participantId, scope: draft.scope, content, knowledge, importance: clampNumber(draft.importance, 0.5, 0, 1),
       confidence: clampNumber(draft.confidence, 0.5, 0, 1), unresolved,
-      embedding: await this.embedText(content), status: 'active', sourceEntryIds,
+      embedding: preparedEmbedding, status: 'active', sourceEntryIds,
       lastSeenAt: now, createdAt: now, updatedAt: now,
     })
     return false
@@ -9200,7 +10252,7 @@ export class InterludeService extends Service {
   private scheduleFactEmbeddingBackfill(storyId: string) {
     const embedding = this.config.model.embedding
     const batchSize = embedding?.backfillBatchSize ?? 5
-    if (!embedding?.enabled || !embedding.model?.trim() || batchSize <= 0) return
+    if (!embedding?.enabled || !this.modelRouting.embedding.available || batchSize <= 0) return
     if (this.factBackfills.has(storyId)) return
     this.factBackfills.add(storyId)
     // This maintenance task deliberately stays out of the narrative serial queue:
@@ -9211,14 +10263,18 @@ export class InterludeService extends Service {
   }
 
   private async backfillFactEmbeddings(storyId: string, batchSize: number) {
+    const generation = this.taskGeneration(storyId)
+    if (!this.taskGenerationCurrent(storyId, generation)) return
     const facts = await this.dbGet('interlude_fact', { storyId, status: 'active' })
     const missing = facts
       .filter(fact => !fact.embedding?.length)
       .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime())
       .slice(0, Math.max(0, batchSize))
     for (const fact of missing) {
+      if (!this.taskGenerationCurrent(storyId, generation)) break
       const embedding = await this.embedText(fact.content)
-      if (embedding.length) await this.dbSet('interlude_fact', { id: fact.id }, { embedding, updatedAt: new Date() })
+      if (!this.taskGenerationCurrent(storyId, generation)) break
+      if (embedding.length) await this.dbSet('interlude_fact', { id: fact.id, storyId, status: 'active', content: fact.content }, { embedding })
     }
   }
 
@@ -9244,7 +10300,7 @@ export class InterludeService extends Service {
     const receptionSupported = draft.target !== 'relationship' || reviewedDevelopmentSupport(draft, entries, participantId)
     if (!receptionSupported) {
       this.reportOperation('diagnostic', 'debug', story, 'advance',
-        '关系发展提案暂不保留：缺少已接收反馈的交互证据 目标=%s/%s', draft.target, path)
+        '关系发展提案暂不保留：缺少有效的用户反馈与后续已送达回应证据 目标=%s/%s', draft.target, path)
       return
     }
 
@@ -9274,7 +10330,8 @@ export class InterludeService extends Service {
       storyId: story.id, id: { $in: mergedSourceEntryIds },
     }) as ScriptEntry[]
     const evidence = statePatchEvidence(sourceRows, story.setting.timezone)
-    const minimumTurns = Math.max(3, this.memoryConfig.statePatchMinTurns ?? this.memoryConfig.statePatchMinEvidence)
+    // 下限 1:回合/天数下限开放给管理员调整(默认 3/2,见 Console 演化分区)
+    const minimumTurns = Math.max(1, this.memoryConfig.statePatchMinTurns ?? this.memoryConfig.statePatchMinEvidence)
     const minimumDays = Math.max(1, this.memoryConfig.statePatchMinDays ?? 2)
     const minimum = impact === 'major' ? this.memoryConfig.majorStatePatchConfidenceThreshold : this.memoryConfig.statePatchConfidenceThreshold
     const oldScenes = developmentScenes(sourceRows.filter(entry => candidate?.sourceEntryIds.includes(entry.id)))
@@ -9294,8 +10351,9 @@ export class InterludeService extends Service {
     // Ordinary changes require independent narrative turns on different days.
     if (!receptionSupported) return
     if (!candidate || evidence.scenes <= oldScenes || !this.memoryConfig.autoApplyStatePatches || (impact === 'major' && !this.memoryConfig.allowMajorStateChanges)) return
+    const majorMinScenes = Math.max(1, this.memoryConfig.statePatchMajorMinScenes ?? 2)
     const stableEvidence = impact === 'major'
-      ? mergedConfidence >= minimum && evidence.scenes >= 2
+      ? mergedConfidence >= minimum && evidence.scenes >= majorMinScenes
       : mergedConfidence >= minimum && evidence.scenes >= minimumTurns && evidence.days >= minimumDays
     if (!stableEvidence) {
       this.reportOperation('diagnostic', 'debug', story, 'advance',
@@ -9316,7 +10374,12 @@ export class InterludeService extends Service {
 
     // New tendencies remain sourced records, rather than accumulating in the
     // permanent Canon overlay. The live reader selects only relevant ones.
-    if (proposal?.id) await this.dbSet('interlude_state_patch', { id: proposal.id }, { status: 'applied', appliedAt: now })
+    if (proposal?.id) {
+      await this.dbSet('interlude_state_patch', { id: proposal.id }, { status: 'applied', appliedAt: now })
+      // 立即重建 overlay:统一语义下 overlay=未压缩 applied 补丁的合并,
+      // 不必等压缩周期(无快照/关压缩的实例此前永远看不到演化)
+      await this.rebuildLiveOverlayState(story, now)
+    }
   }
 
   private async developmentForPrompt(storyId: string, participantId: string | undefined, query: string) {
@@ -9457,10 +10520,20 @@ export class InterludeService extends Service {
     return story
   }
 
+  /** 当前异步调用链正在其中执行的故事串行域(用于嵌套写路径判断"已在队列内,勿再排队")。 */
+  private serialScope = new AsyncLocalStorage<string>()
+
+  private inSerial(id: string) {
+    // 基础设施缺失(最小测试桩/旧嵌入形态仅挂原型)时按"已在域内"处理,
+    // 保持旧的直接执行语义,不因缺 serialScope/queues 而抛错
+    if (!this.serialScope || !this.queues) return true
+    return this.serialScope.getStore() === id
+  }
+
   private serial<T>(id: string, task: () => Promise<T>) {
     // catch 保证前一次失败不会永久堵住同一故事；finally 语义通过 then 的两个分支释放队列。
     const previous = this.queues.get(id) ?? Promise.resolve()
-    const current = previous.catch(() => undefined).then(task)
+    const current = previous.catch(() => undefined).then(() => this.serialScope.run(id, task))
     this.queues.set(id, current)
     void current.then(
       () => { if (this.queues.get(id) === current) this.queues.delete(id) },
@@ -9470,6 +10543,7 @@ export class InterludeService extends Service {
   }
 
   private dbWrite<T>(task: () => Promise<T>) {
+    if (this.transactionScope.getStore()) return task()
     const run = this.databaseWriteQueue.then(() => this.retryDbWrite(task), () => this.retryDbWrite(task))
     this.databaseWriteQueue = run.catch(() => undefined)
     return run
@@ -9481,6 +10555,8 @@ export class InterludeService extends Service {
    * errors receive a small bounded retry instead of aborting a user turn.
    */
   private async dbRead<T>(task: () => Promise<T>) {
+    if (this.transactionScope.getStore()) return task()
+    if (this.transactionRunning) await this.databaseWriteQueue
     const delays = [50, 125, 250]
     for (let attempt = 0; ; attempt++) {
       try {
@@ -9501,7 +10577,7 @@ export class InterludeService extends Service {
 
   private dbGet(table: string, query: unknown, options?: unknown): Promise<any[]> {
     return this.dbRead(async () => {
-      const rows = await this.ctx.database.get(table as never, query as never, options as never) as any[]
+      const rows = await (this.transactionScope.getStore() ?? this.ctx.database).get(table as never, query as never, options as never) as any[]
       return rows.map(row => normalizeDatabaseRow(table, row))
     })
   }
@@ -9570,7 +10646,7 @@ export class InterludeService extends Service {
   private dbCreate(table: string, data: unknown): Promise<any> {
     return this.dbWrite(async () => {
       try {
-        return await this.ctx.database.create(table as never, data as never)
+        return await (this.transactionScope.getStore() ?? this.ctx.database).create(table as never, data as never)
       } catch (error) {
         // sql.js can report disk I/O after SQLite has already committed an
         // INSERT. Before retrying, look for the same logical row; this keeps a
@@ -9615,11 +10691,11 @@ export class InterludeService extends Service {
   }
 
   private dbSet(table: string, query: unknown, data: unknown): Promise<any> {
-    return this.dbWrite(() => this.ctx.database.set(table as never, query as never, data as never))
+    return this.dbWrite(() => (this.transactionScope.getStore() ?? this.ctx.database).set(table as never, query as never, data as never))
   }
 
   private dbRemove(table: string, query: unknown): Promise<any> {
-    return this.dbWrite(() => this.ctx.database.remove(table as never, query as never))
+    return this.dbWrite(() => (this.transactionScope.getStore() ?? this.ctx.database).remove(table as never, query as never))
   }
 
   /**
@@ -9957,6 +11033,14 @@ function isAnimatedImageMime(mime: string) {
 function sessionGroupId(session: Session) {
   const raw = String((session as any).guildId || session.channelId || '')
   return normalizeGroupId(raw)
+}
+
+/** Historical group metadata used both prefixed IDs and numeric QQ IDs. */
+function groupIdStorageVariants(value: string): Array<string | number> {
+  const id = normalizeGroupId(value)
+  const numeric = Number(id)
+  return [...new Set<string | number>([value, id, `group:${id}`, `guild:${id}`,
+    ...(id && Number.isFinite(numeric) ? [numeric] : [])])]
 }
 
 function normalizeGroupId(value: string) {
@@ -10304,8 +11388,10 @@ function mentionsBot(session: Session) {
 
 export function normalizeGroupVisibleReply(raw: NarrativeDecision['groupReply'], interaction: NarrativeDecision['interaction'], maxCharacters: number, separator = '<sep/>', splitEnabled = true) {
   const content = normalizeGroupReply(raw, maxCharacters, separator) || normalizeGroupInteractionReply(interaction, maxCharacters, separator)
-  // 与私聊同合约：只把空行（段落边界）视作气泡边界，单个换行留在一条消息内。
-  // 拆条关闭时不做转换，保持原始段落格式。
+  // 此处只把空行（段落边界）转换为分隔符，单个换行留在一条消息内；拆条关闭
+  // 时不做转换。注意：convertNewlineToSeparator 开启后，发送层
+  // （splitVisibleReplyBubbles）会把单个换行也视为气泡边界——群内容无分隔符
+  // 且无空行时按单换行拆条，属该开关的预期小模型语义。
   if (!splitEnabled || !content) return content
   const canonical = separator?.trim() || '<sep/>'
   return content.includes(canonical) ? content : content.replace(/\s*\r?\n\s*\r?\n+/g, canonical)
@@ -10555,6 +11641,17 @@ function normalizeAutomaticDeliverySummary(value: unknown) {
 
 function normalizeFollowUpSummary(value: unknown) {
   return typeof value === 'string' ? clip(value, 360).trim().replace(/\s+/g, ' ').toLowerCase() : ''
+}
+
+const MAX_FOLLOW_UP_DEFERRED_CHECKS = 5
+
+function followUpDeferredChecks(intent: NarrativeIntent) {
+  const value = Number(intent.payload?.deferredChecks)
+  return Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0
+}
+
+function followUpDeadline(intent: NarrativeIntent) {
+  return toDate(intent.payload?.expiresAt) ?? new Date(intent.createdAt.getTime() + 24 * Time.hour)
 }
 
 function followUpExpiresAt(value: unknown, now: Date) {
@@ -10971,6 +12068,14 @@ function resolveParticipantId(explicit: string | undefined, sourceEntryIds: numb
   return ids[0] ?? ''
 }
 
+function runStorySerialized<T>(service: any, storyId: string, task: () => Promise<T>) {
+  // A few embedders/tests invoke delivery methods on a minimal host object
+  // rather than a full InterludeService instance. Preserve that legacy shape
+  // while keeping real service calls re-entrant-safe.
+  if (typeof service.inSerial !== 'function' || typeof service.serial !== 'function') return task()
+  return service.inSerial(storyId) ? task() : service.serial(storyId, task)
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> { return !!value && typeof value === 'object' && !Array.isArray(value) }
 
 export function shouldSupersedeNarrativeRequest(
@@ -11054,6 +12159,20 @@ function clampNumber(value: unknown, fallback: number, min: number, max: number)
 }
 
 function normalizeFact(value: string) { return value.trim().toLocaleLowerCase().replace(/\s+/g, ' ') }
+
+/**
+ * Facts are narrated from their content, not from hidden participant metadata.
+ * Keep this guard deliberately conservative: it only rejects relationship
+ * facts whose subject is plainly absent or expressed only as a vague pronoun.
+ * The narrator prompt remains responsible for producing a concrete named fact.
+ */
+function factContentLooksAmbiguous(scope: NarrativeFact['scope'], content: string) {
+  if (scope !== 'relationship') return false
+  const text = content.trim()
+  if (!text) return true
+  return /^(?:关系|他|她|他们|她们|对方|那个人|这个人|双方|彼此)(?:说|表示|答应|承诺|想|要|已经|最近|变得|变得更|开始|继续|不再|无法|没有|和|与|对)/u.test(text)
+    || /(?:^|[，。；、\s])(?:他说|她说|他们说|她们说|对方说|他答应|她答应|对方答应|他承诺|她承诺|对方承诺)(?:[，。；、\s]|$)/u.test(text)
+}
 
 function limitEntriesByCharacters(entries: ScriptEntry[], limit: number) {
   if (limit <= 0) return []
@@ -11369,4 +12488,5 @@ function normalizeMajorEvents(value: unknown, patches: StatePatchProposal[], sna
   ]
   return Array.from(new Set([...retained, ...modelEvents].filter(Boolean))).slice(-20)
 }
+
 

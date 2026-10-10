@@ -18,8 +18,17 @@ export function buildEpisodeIndex(rows: Array<[number, EpisodeSource]>) {
   const groups = new Map<string, number[]>()
   const checkpoints = rows.map(([, row]) => row.checkpoint).filter((item): item is NonNullable<EpisodeSource['checkpoint']> => !!item
     && Number.isSafeInteger(item.firstEntryId) && Number.isSafeInteger(item.lastEntryId))
+  const ordered = [...checkpoints].sort((a, b) => a.firstEntryId - b.firstEntryId)
+  const disjoint = ordered.every((item, i) => !i || ordered[i - 1].lastEntryId < item.firstEntryId)
+  const checkpointAt = (id: number) => {
+    if (!disjoint) return checkpoints.find(item => id >= item.firstEntryId && id <= item.lastEntryId)
+    let lo = 0, hi = ordered.length
+    while (lo < hi) { const mid = (lo + hi) >>> 1; if (ordered[mid].firstEntryId <= id) lo = mid + 1; else hi = mid }
+    const item = ordered[lo - 1]
+    return item && id <= item.lastEntryId ? item : undefined
+  }
   for (const [id, row] of rows) {
-    const checkpoint = checkpoints.find(item => id >= item.firstEntryId && id <= item.lastEntryId)
+    const checkpoint = checkpointAt(id)
     const key = JSON.stringify([row.participantId, checkpoint ? `scene:${checkpoint.sceneId}` : row.frameId || `entry:${id}`])
     const ids = groups.get(key) ?? []
     ids.push(id)

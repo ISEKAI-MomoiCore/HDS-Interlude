@@ -1,5 +1,7 @@
 import { Context, Logger } from 'koishi'
 import { anthropicBody, anthropicHeaders, anthropicResponse, requestAnthropicStreaming } from './anthropic'
+import { geminiInteractionsBody, geminiInteractionsHeaders, geminiInteractionsResponse } from './gemini-interactions'
+import { describeHttpError, postJsonViaProxy, withProviderStream } from './http-proxy'
 import { urgeInstruction } from './urge'
 import { CONTENT_ONLY_TRANSPORT, familyOverrides, resolveManualSpecialty, LITE_ADMIN_NOTES, LITE_WORLD_EVENTS, LITE_EVENT_SOURCES, LITE_INTERVAL, LITE_JSON_CONTRACT, LITE_NEVER_INVENT, LITE_OWNERSHIP, LITE_TRANSPORT_ADVANCE, LITE_TRANSPORT_GROUP, LITE_TRANSPORT_PRIVATE, LITE_UNREAD, TYPED_MESSAGES_BASE, type ContractTier, type ModelFamily, type SpecialtyProfile } from './specialization'
 import { LIVED_WRITING_PROMPT, LIVED_LENGTH_PROMPT } from './script/lived-writing'
@@ -32,13 +34,17 @@ export { storyLocalTimeContext } from './time'
 export type ProviderResponseFormat = 'json-object' | 'prompt-only'
 export type ProviderStrategy = 'priority' | 'round-robin'
 export type ZhipuReasoningEffort = 'low' | 'high' | 'max'
-export type DeepSeekThinkingMode = 'disabled' | 'enabled'
+export type DeepSeekThinkingMode = 'inherit' | 'disabled' | 'enabled'
 export type ProviderMode =
   | 'openai-compatible' | 'zhipu-official' | 'openai-official'
   | 'deepseek-official' | 'moonshot-official' | 'dashscope-official'
-  | 'siliconflow-official' | 'openrouter' | 'gemini-openai'
+  | 'siliconflow-official' | 'openrouter' | 'gemini-openai' | 'gemini-interactions'
 
 export const ZHIPU_FIRST_VISIBLE_TOKEN_TIMEOUT = 45_000
+/** 首 token 之后不再设总超时(长思考合法),但持续的流内静默判死:
+ * 正常流式即使思考期也有 reasoning/心跳 chunk 不断续命,半开连接只会
+ * 让 reader.read() 永久 pending——冻结整个回合且 failover 永远到不了下一家。 */
+export const ZHIPU_STREAM_IDLE_TIMEOUT = 120_000
 
 export interface StickerDescription {
   description: string
@@ -59,7 +65,10 @@ export interface VisionDescriber {
 
 export interface ProviderConfig {
   /** Missing in historical rows means Chat Completions. */
-  protocol?: 'chat-completions' | 'anthropic-messages'
+  protocol?: 'chat-completions' | 'anthropic-messages' | 'gemini-interactions'
+  /** HTTP(S) 代理地址（如 http://127.0.0.1:7890）；空 = 直连。cordis http
+   * 不读系统代理，需要代理的服务商（如 Google）在此显式配置。 */
+  proxyAgent?: string
   anthropicCache?: boolean
   /** Legacy internal identifier. New Console rows derive identity from the model connection. */
   id?: string
@@ -294,18 +303,19 @@ export class OpenAICompatibleEmbedder implements NarrativeEmbedder {
 
     const text = input.trim().slice(0, Math.max(1, embedding.maxInputCharacters))
     if (!text) return []
-    const response = await this.ctx.http.post<EmbeddingResponse>(endpoint, {
+    const body = {
       model: assigned?.model || target.model,
       input: text,
       ...(embedding.dimensions > 0 ? { dimensions: embedding.dimensions } : {}),
-    }, {
-      headers: {
-        'content-type': 'application/json',
-        ...(provider.apiKey ? { authorization: `Bearer ${provider.apiKey}` } : {}),
-        ...parseObject(provider.extraHeaders, 'extraHeaders'),
-      },
-      timeout: embedding.timeout,
-    })
+    }
+    const headers = {
+      'content-type': 'application/json',
+      ...(provider.apiKey ? { authorization: `Bearer ${provider.apiKey}` } : {}),
+      ...parseObject(provider.extraHeaders, 'extraHeaders'),
+    }
+    const response = provider.proxyAgent
+      ? await postJsonViaProxy(endpoint, body, headers, embedding.timeout, provider.proxyAgent) as EmbeddingResponse
+      : await this.ctx.http.post<EmbeddingResponse>(endpoint, body, { headers, timeout: embedding.timeout })
     const vector = response.data?.[0]?.embedding
     if (!Array.isArray(vector) || !vector.length || !vector.every(value => typeof value === 'number' && Number.isFinite(value))) {
       throw new Error('Embedding provider returned an invalid vector.')
@@ -369,16 +379,11 @@ export class OpenAICompatibleNarrator implements NarrativeProvider {
     const hasMainRoute = !!mainModelId || !!assigned.length
     // Anthropic Messages has no native input_audio block. Exclude that
     // deterministic capability mismatch before failover so it is not retried
-    // or placed into the normal provider cooldown bucket. If an assigned main
-    // route contains only incompatible providers, fall back to compatible
-    // legacy candidates instead of failing before the failover loop starts.
-    let providers = (assigned.length ? assigned : this.selectRouteProviders(this.routing.main, !route.model))
-      .filter(provider => !request.audio?.length || provider.protocol !== 'anthropic-messages')
-    if (!providers.length && request.audio?.length && assigned.length) {
-      providers = this.selectRouteProviders(this.routing.main, !route.model)
-        .filter(provider => provider.protocol !== 'anthropic-messages')
-    }
-    if (!providers.length) throw new Error('No enabled OpenAI-compatible provider is available.')
+    // or placed into the normal provider cooldown bucket. Filter compatibility
+    // before cooldown, rotation and failover truncation, including assignments.
+    const compatible = (provider: ProviderConfig) => !request.audio?.length || provider.protocol !== 'anthropic-messages'
+    const providers = this.selectRouteProviders(this.routing.main, !route.model, compatible)
+    if (!providers.length) throw new Error('No enabled chat provider is available for this task (protocol/assignment filtered).')
 
     const failures: string[] = []
     const usages: TokenUsageRecord[] = []
@@ -394,25 +399,45 @@ export class OpenAICompatibleNarrator implements NarrativeProvider {
     try {
       for (const provider of providers) {
         const attempts = Math.max(1, this.config.failover.maxAttemptsPerProvider)
+        const overrides = {
+          model: assigned.length ? provider.model : route.model || provider.model,
+          temperature: hasMainRoute ? this.config.mainTemperature ?? provider.temperature : provider.temperature,
+          topP: hasMainRoute ? this.config.mainTopP ?? provider.topP : provider.topP,
+          maxTokens: hasMainRoute && this.config.mainMaxTokens && this.config.mainMaxTokens > 0 ? this.config.mainMaxTokens : route.maxTokens ?? provider.maxTokens,
+          timeout: hasMainRoute && this.config.mainTimeout && this.config.mainTimeout > 0 ? this.config.mainTimeout : route.timeout ?? provider.timeout,
+          responseFormat: hasMainRoute ? this.config.mainResponseFormat ?? route.responseFormat ?? provider.responseFormat : provider.responseFormat,
+        }
         for (let attempt = 1; attempt <= attempts; attempt++) {
           try {
-            const decision = await this.requestProvider(provider, requestWithEarlyReply, {
-              model: assigned.length ? provider.model : route.model || provider.model,
-              temperature: hasMainRoute ? this.config.mainTemperature ?? provider.temperature : provider.temperature,
-              topP: hasMainRoute ? this.config.mainTopP ?? provider.topP : provider.topP,
-              maxTokens: hasMainRoute && this.config.mainMaxTokens && this.config.mainMaxTokens > 0 ? this.config.mainMaxTokens : route.maxTokens ?? provider.maxTokens,
-              timeout: hasMainRoute && this.config.mainTimeout && this.config.mainTimeout > 0 ? this.config.mainTimeout : route.timeout ?? provider.timeout,
-              responseFormat: hasMainRoute ? this.config.mainResponseFormat ?? route.responseFormat ?? provider.responseFormat : provider.responseFormat,
-            }, usages, '主叙事')
+            const decision = await this.requestProvider(provider, requestWithEarlyReply, overrides, usages, '主叙事')
             // A provider that recovers should be eligible immediately; do not
             // retain an earlier failure's cooldown after a successful response.
             this.cooldownUntil.delete(providerKey(provider))
             return decision
           } catch (error) {
-            const detail = error instanceof Error ? error.message : String(error)
+            const detail = describeHttpError(error)
             if (earlyReplyCommitted) throw new Error(`Narrative stream failed after an early visible reply: ${detail}`)
+            // 思考型网关把 reasoning 计入输出预算:小 cap 下推理吃满,残句 JSON
+            // 必然解析失败,同 cap 重打只会耗满全部 attempts(侧端任务早有同款
+            // 恢复)。识别疑似截断后去掉 max_tokens 原样重试一次,成功路径不发
+            // 额外请求;anthropic 协议的截断有自己的错误形态,不在此列。
+            if ((overrides.maxTokens ?? 0) > 0
+              && provider.protocol !== 'anthropic-messages'
+              && /invalid JSON|Unterminated|Unexpected token|empty response|输出未完成|incomplete/i.test(detail)) {
+              this.logger?.warn?.('主叙事疑似被思考预算截断(%s),去掉 max_tokens 重试一次', detail.slice(0, 160))
+              try {
+                const retried = await this.requestProvider(provider, requestWithEarlyReply, { ...overrides, maxTokens: 0 }, usages, '主叙事')
+                this.cooldownUntil.delete(providerKey(provider))
+                return retried
+              } catch (retryError) {
+                failures.push(`${provider.label || provider.id} (uncapped retry): ${describeHttpError(retryError)}`)
+              }
+            }
             failures.push(`${provider.label || provider.id} (attempt ${attempt}): ${detail}`)
-            this.logger?.debug('叙事模型服务商失败：%s；尝试=%s', provider.label || provider.id, detail)
+            this.logger?.debug(
+              '叙事模型服务商失败 阶段=narrative-provider provider=%s protocol=%s model=%s attempt=%d 错误=%s',
+              provider.label || provider.id, provider.protocol || 'chat-completions', overrides.model || provider.model, attempt, detail,
+            )
           }
         }
 
@@ -482,11 +507,11 @@ export class OpenAICompatibleNarrator implements NarrativeProvider {
       const remaining = Math.max(1_000, deadline - Date.now())
       if (Date.now() >= deadline) throw new Error(`${task} provider total timeout exceeded.`)
       const body = buildBody(capped)
-      if (provider.zhipuOfficial && provider.protocol !== 'anthropic-messages') {
-        const text = await requestZhipuStreaming(provider.endpoint, { ...body, stream: true, thinking: { type: 'enabled' }, reasoning_effort: provider.reasoningEffort ?? 'high' }, headers, undefined, collect)
+      if (provider.zhipuOfficial && provider.protocol === 'chat-completions') {
+        const text = await requestZhipuStreaming(provider.endpoint, { ...body, stream: true, thinking: { type: 'enabled' }, reasoning_effort: provider.reasoningEffort ?? 'high' }, headers, undefined, collect, remaining, provider.proxyAgent)
         return parse(text)
       }
-      const response = await this.postChat(provider, body, headers, remaining)
+      const response = await this.postChat(provider, body, remaining)
       collect(response?.usage)
       let lastError: unknown = new Error('No textual response field found.')
       let sawText = false
@@ -504,7 +529,7 @@ export class OpenAICompatibleNarrator implements NarrativeProvider {
         return result
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
-        if (provider.protocol === 'anthropic-messages' || !/invalid JSON|Unterminated|Unexpected token|empty response/i.test(message)) throw error
+        if (provider.protocol === 'anthropic-messages' || !/invalid JSON|Unterminated|Unexpected token|empty response|输出未完成|incomplete/i.test(message)) throw error
         this.logger?.warn?.('%s 首次输出不可解析（疑似思考预算截断），已去掉 max_tokens 重试一次 错误=%s', task, message.slice(0, 200))
         if (Date.now() >= deadline) throw new Error(`${task} provider total timeout exceeded.`)
         const result = await run(false)
@@ -770,16 +795,11 @@ export class OpenAICompatibleNarrator implements NarrativeProvider {
         },
       ],
     }
-    const headers = {
-      'content-type': 'application/json',
-      ...(provider.apiKey ? { authorization: `Bearer ${provider.apiKey}` } : {}),
-      ...parseObject(provider.extraHeaders, 'extraHeaders', this.logger),
-    }
     const usages: TokenUsageRecord[] = []
     const collect = (raw: unknown) => this.collectUsage(usages, '贴纸描述', provider, provider.model, raw)
     try {
       const text = await (async () => {
-        const response = await this.postChat(provider, requestBody, headers, provider.timeout)
+        const response = await this.postChat(provider, requestBody, provider.timeout)
         collect(response?.usage)
         return extractChatText(response)
       })()
@@ -822,24 +842,24 @@ export class OpenAICompatibleNarrator implements NarrativeProvider {
             },
           ],
         }
-        const headers = {
-          'content-type': 'application/json',
-          ...(provider.apiKey ? { authorization: `Bearer ${provider.apiKey}` } : {}),
-          ...parseObject(provider.extraHeaders, 'extraHeaders', this.logger),
-        }
         for (let attempt = 1; attempt <= 2; attempt++) {
           try {
-            const response = await this.postChat(provider, { ...requestBody, stream: false }, headers, provider.timeout)
+            const response = await this.postChat(provider, { ...requestBody, stream: false }, provider.timeout)
             this.collectUsage(usages, '侧端识图', provider, provider.model, response?.usage)
             const text = extractChatText(response).trim().slice(0, 3_000)
             if (text) return [text]
             failures.push(`${provider.label} attempt ${attempt}: empty response`)
           } catch (error) {
-            failures.push(`${provider.label} attempt ${attempt}: ${error instanceof Error ? error.message : String(error)}`)
+            const detail = describeHttpError(error)
+            failures.push(`${provider.label} attempt ${attempt}: ${detail}`)
+            this.logger?.debug(
+              '侧端视觉请求失败 阶段=sidecar-vision provider=%s protocol=%s model=%s attempt=%d 错误=%s',
+              provider.label || provider.id, provider.protocol || 'chat-completions', provider.model, attempt, detail,
+            )
           }
         }
       }
-      if (failures.length) this.logger?.debug('侧端识图不可用：%s', failures.join(' | '))
+      if (failures.length) this.logger?.warn('侧端视觉请求全部失败 阶段=sidecar-vision 错误=%s', failures.join(' | '))
       return undefined
     } finally {
       this.emitUsage('侧端识图', usages)
@@ -864,19 +884,41 @@ export class OpenAICompatibleNarrator implements NarrativeProvider {
     this.onUsage(aggregated)
   }
 
-  private async postChat(provider: ProviderConfig, body: Record<string, unknown>, headers: Record<string, unknown>, timeout: number, cacheFirst = false): Promise<ChatCompletionResponse & { usage?: unknown }> {
-    if (provider.protocol === 'anthropic-messages') {
-      const response = await this.ctx.http.post(provider.endpoint, anthropicBody(body, provider, cacheFirst), {
-        headers: anthropicHeaders(provider, parseObject(provider.extraHeaders, 'extraHeaders', this.logger)), timeout,
-      })
-      return anthropicResponse(response)
+  private async postChat(provider: ProviderConfig, body: Record<string, unknown>, timeout: number, cacheFirst = false): Promise<ChatCompletionResponse & { usage?: unknown }> {
+    const extraHeaders = parseObject(provider.extraHeaders, 'extraHeaders', this.logger)
+    // 按协议提升 payload 与请求头；代理路径（provider.proxyAgent）对三种协议
+    // 统一走 undici ProxyAgent——Koishi 4.18 的 cordis http 不支持 proxyAgent
+    // 也不读系统代理，需要代理的服务商（如 Google）此前无法访问。
+    const payload = provider.protocol === 'anthropic-messages' ? anthropicBody(body, provider, cacheFirst)
+      : provider.protocol === 'gemini-interactions' ? geminiInteractionsBody(body)
+      : withDeepSeekThinking(provider, body)
+    const requestHeaders = (provider.protocol === 'anthropic-messages'
+      ? anthropicHeaders(provider, extraHeaders)
+      : provider.protocol === 'gemini-interactions'
+        ? geminiInteractionsHeaders(provider, extraHeaders)
+        : { 'content-type': 'application/json', ...(provider.apiKey ? { authorization: `Bearer ${provider.apiKey}` } : {}), ...extraHeaders }) as Record<string, string>
+    let response: any
+    try {
+      response = provider.proxyAgent
+        ? await postJsonViaProxy(provider.endpoint, payload, requestHeaders, timeout, provider.proxyAgent)
+        : await this.ctx.http.post(provider.endpoint, payload, { headers: requestHeaders, timeout })
+    } catch (error) {
+      // fetch 级失败只有 "fetch <url> failed"；真实原因在 cause 链，必须可见。
+      // 原地改写 message 保持错误对象同一性（时间导演退避等按对象判等）。
+      if (error instanceof Error) {
+        const enriched = describeHttpError(error)
+        if (enriched !== error.message) error.message = enriched
+      }
+      throw error
     }
-    return this.ctx.http.post<ChatCompletionResponse & { usage?: unknown }>(provider.endpoint, withDeepSeekThinking(provider, body), { headers, timeout })
+    if (provider.protocol === 'anthropic-messages') return anthropicResponse(response)
+    if (provider.protocol === 'gemini-interactions') return geminiInteractionsResponse(response)
+    return response
   }
 
-  private selectRouteProviders(route: ModelRoutingTable[ModelTask], requireModel = true) {
+  private selectRouteProviders(route: ModelRoutingTable[ModelTask], requireModel = true, compatible: (provider: ProviderConfig) => boolean = () => true) {
     // 冷却期内的服务商优先跳过；全部冷却时仍保留候选，避免长时间没有任何恢复机会。
-    const enabled = route.providers.filter(provider => provider.enabled && provider.endpoint && (!requireModel || provider.model || route.target.model))
+    const enabled = route.providers.filter(provider => compatible(provider) && provider.enabled && provider.endpoint && (!requireModel || provider.model || route.target.model))
     const now = Date.now()
     const ready = enabled.filter(provider => (this.cooldownUntil.get(providerKey(provider)) ?? 0) <= now)
     const candidates = ready.length ? ready : enabled
@@ -895,6 +937,7 @@ export class OpenAICompatibleNarrator implements NarrativeProvider {
     const streamingEarlyReply = this.config.mainStreamingMode === 'experimental'
       && request.phase === 'user-message'
       && !request.groupContext
+      && provider.protocol !== 'gemini-interactions'
       && (overrides.responseFormat ?? provider.responseFormat) === 'json-object'
       && !!request.onEarlyReply
     // Keep every non-visual request byte-for-byte compatible with existing
@@ -948,18 +991,18 @@ export class OpenAICompatibleNarrator implements NarrativeProvider {
     const text = provider.protocol === 'anthropic-messages' && streamingEarlyReply
       ? await requestAnthropicStreaming(provider.endpoint, anthropicBody(requestBody, provider, cacheFirstPayload),
         anthropicHeaders(provider, parseObject(provider.extraHeaders, 'extraHeaders', this.logger)) as Record<string, string>,
-        overrides.timeout ?? provider.timeout, onStreamText, collect)
-      : provider.zhipuOfficial
+        overrides.timeout ?? provider.timeout, onStreamText, collect, provider.proxyAgent)
+      : provider.zhipuOfficial && provider.protocol === 'chat-completions'
       ? await requestZhipuStreaming(provider.endpoint, {
           ...requestBody,
           stream: true,
           thinking: { type: 'enabled' },
           reasoning_effort: provider.reasoningEffort ?? 'high',
-        }, headers, onStreamText, collect)
+        }, headers, onStreamText, collect, undefined, provider.proxyAgent)
       : streamingEarlyReply
-        ? await requestOpenAICompatibleStreaming(provider.endpoint, withDeepSeekThinking(provider, { ...requestBody, stream: true }), headers, overrides.timeout ?? provider.timeout, onStreamText, collect)
+        ? await requestOpenAICompatibleStreaming(provider.endpoint, withDeepSeekThinking(provider, { ...requestBody, stream: true }), headers, overrides.timeout ?? provider.timeout, onStreamText, collect, provider.proxyAgent)
         : await (async () => {
-            const response = await this.postChat(provider, requestBody, headers, overrides.timeout ?? provider.timeout, cacheFirstPayload)
+            const response = await this.postChat(provider, requestBody, overrides.timeout ?? provider.timeout, cacheFirstPayload)
             collect(response?.usage)
 
             return extractChatText(response)
@@ -1024,11 +1067,18 @@ export function createVisionDescriber(ctx: Context, config: ModelConfig, silentL
 /** A single enabled model preset is the natural main narrator. This keeps the
  * Console configuration linear while preserving explicit selection for
  * installations that deliberately configure several models. */
-function withDeepSeekThinking(provider: ProviderConfig, requestBody: Record<string, unknown>) {
-  if (!provider.deepseekOfficial) return requestBody
-  const thinking = provider.deepseekThinking === 'enabled' ? 'enabled' : 'disabled'
+export function withDeepSeekThinking(provider: ProviderConfig, requestBody: Record<string, unknown>) {
+  // Official DeepSeek keeps its historical default (disabled). Custom
+  // OpenAI-compatible connections default to inherit so generic gateways and
+  // non-DeepSeek models are not sent an unknown provider-specific field.
+  const thinking = provider.deepseekThinking ?? (provider.deepseekOfficial ? 'disabled' : 'inherit')
+  if (thinking === 'inherit') return requestBody
+
+  // An explicit setting is authoritative over extraBody. In particular, do
+  // not leave a stale reasoning_effort beside an explicitly disabled mode.
+  const { reasoning_effort: _reasoningEffort, ...withoutReasoningEffort } = requestBody
   return {
-    ...requestBody,
+    ...withoutReasoningEffort,
     thinking: { type: thinking },
     ...(thinking === 'enabled' ? { reasoning_effort: provider.deepseekReasoningEffort ?? 'low' } : {}),
   }
@@ -1052,115 +1102,148 @@ export function createEmbedder(ctx: Context, config: ModelConfig, routing?: Mode
  * thinking pass is not mistaken for a whole-request timeout. The 20-second
  * guard applies only until the first visible content token; once content
  * starts, the stream intentionally has no total deadline. */
-async function requestZhipuStreaming(endpoint: string, body: Record<string, unknown>, headers: Record<string, string>, onText?: (content: string) => Promise<void>, collectUsage?: (usage: unknown) => void) {
-  const controller = new AbortController()
-  let receivedVisibleToken = false
-  let firstTokenTimedOut = false
-  const firstTokenTimer = setTimeout(() => {
-    if (!receivedVisibleToken) {
-      firstTokenTimedOut = true
-      controller.abort()
-    }
-  }, ZHIPU_FIRST_VISIBLE_TOKEN_TIMEOUT)
-  try {
-    const response = await fetch(endpoint, {
-      method: 'POST', headers, body: JSON.stringify(body), signal: controller.signal,
-    })
-    if (!response.ok) {
-      const detail = (await response.text()).slice(0, 1_000)
-      throw new Error(`Zhipu request failed (${response.status}): ${detail || response.statusText}`)
-    }
-    if (!response.body) throw new Error('Zhipu returned no streaming response body.')
-    const reader = response.body.getReader()
-    const decoder = new TextDecoder()
-    let pending = ''
-    let content = ''
-    while (true) {
-      const { done, value } = await reader.read()
-      pending += decoder.decode(value, { stream: !done })
-      const events = pending.split(/\r?\n\r?\n/)
-      pending = events.pop() ?? ''
-      for (const event of events) {
-        const data = event.split(/\r?\n/).filter(line => line.startsWith('data:')).map(line => line.slice(5).trim()).join('\n')
-        if (!data || data === '[DONE]') continue
-        let chunk: any
-        try { chunk = JSON.parse(data) } catch { continue }
-        if (chunk?.usage) collectUsage?.(chunk.usage)
-        const delta = chunk?.choices?.[0]?.delta?.content ?? chunk?.choices?.[0]?.message?.content ?? chunk?.choices?.[0]?.text
-        const text = flattenChatText(delta)
-        if (!text) continue
-        if (!receivedVisibleToken) {
-          receivedVisibleToken = true
-          clearTimeout(firstTokenTimer)
-        }
-        content += text
-        if (onText) await onText(content)
+async function requestZhipuStreaming(endpoint: string, body: Record<string, unknown>, headers: Record<string, string>, onText?: (content: string) => Promise<void>, collectUsage?: (usage: unknown) => void, totalTimeoutMs?: number, proxyAgent?: string) {
+  return withProviderStream(proxyAgent, async request => {
+    const controller = new AbortController()
+    let receivedVisibleToken = false
+    let firstTokenTimedOut = false
+    let idleTimedOut = false
+    const firstTokenTimer = setTimeout(() => {
+      if (!receivedVisibleToken) {
+        firstTokenTimedOut = true
+        controller.abort()
       }
-      if (done) break
+    }, ZHIPU_FIRST_VISIBLE_TOKEN_TIMEOUT)
+    // 流内静默守卫:任何网络 chunk 到达即续命;静默超过上限判死
+    let idleTimer: ReturnType<typeof setTimeout> | undefined
+    const resetIdle = () => {
+      clearTimeout(idleTimer)
+      idleTimer = setTimeout(() => { idleTimedOut = true; controller.abort() }, ZHIPU_STREAM_IDLE_TIMEOUT)
     }
-    if (!receivedVisibleToken) throw new Error('Zhipu stream ended without visible content.')
-    return content
-  } catch (error) {
-    if (firstTokenTimedOut) throw new Error(`Zhipu first visible token timed out after ${ZHIPU_FIRST_VISIBLE_TOKEN_TIMEOUT}ms.`)
-    throw error
-  } finally {
-    clearTimeout(firstTokenTimer)
-  }
+    resetIdle()
+    // 可选任务总时限(侧任务传入;主叙事刻意不限——长思考合法)
+    let totalTimedOut = false
+    let totalTimer: ReturnType<typeof setTimeout> | undefined
+    if (totalTimeoutMs && totalTimeoutMs > 0) {
+      totalTimer = setTimeout(() => { totalTimedOut = true; controller.abort() }, Math.max(1_000, totalTimeoutMs))
+    }
+    let reader: ReadableStreamDefaultReader<Uint8Array> | undefined
+    try {
+      const response = await request(endpoint, {
+        method: 'POST', headers, body: JSON.stringify(body), signal: controller.signal,
+      })
+      if (!response.ok) {
+        const detail = (await response.text()).slice(0, 1_000)
+        throw new Error(`Zhipu request failed (${response.status}): ${detail || response.statusText}`)
+      }
+      if (!response.body) throw new Error('Zhipu returned no streaming response body.')
+      reader = response.body.getReader()
+      const decoder = new TextDecoder()
+      let pending = ''
+      let content = ''
+      let stopped = false
+      while (!stopped) {
+        const { done, value } = await reader.read()
+        resetIdle()
+        pending += decoder.decode(value, { stream: !done })
+        const events = pending.split(/\r?\n\r?\n/)
+        pending = events.pop() ?? ''
+        if (done && pending.trim()) { events.push(pending); pending = '' }
+        for (const event of events) {
+          const data = event.split(/\r?\n/).filter(line => line.startsWith('data:')).map(line => line.slice(5).trim()).join('\n')
+          if (data === '[DONE]') { stopped = true; break }
+          if (!data) continue
+          let chunk: any
+          try { chunk = JSON.parse(data) } catch { continue }
+          if (chunk?.usage) collectUsage?.(chunk.usage)
+          const delta = chunk?.choices?.[0]?.delta?.content ?? chunk?.choices?.[0]?.message?.content ?? chunk?.choices?.[0]?.text
+          const text = flattenChatText(delta)
+          if (!text) continue
+          if (!receivedVisibleToken) {
+            receivedVisibleToken = true
+            clearTimeout(firstTokenTimer)
+          }
+          content += text
+          if (onText) await onText(content)
+        }
+        if (done) break
+      }
+      if (!receivedVisibleToken) throw new Error('Zhipu stream ended without visible content.')
+      return content
+    } catch (error) {
+      if (firstTokenTimedOut) throw new Error(`Zhipu first visible token timed out after ${ZHIPU_FIRST_VISIBLE_TOKEN_TIMEOUT}ms.`)
+      if (idleTimedOut) throw new Error(`Zhipu stream went silent for ${ZHIPU_STREAM_IDLE_TIMEOUT}ms after the first token.`)
+      if (totalTimedOut) throw new Error(`Zhipu task total timeout exceeded ${totalTimeoutMs}ms.`)
+      throw error
+    } finally {
+      clearTimeout(firstTokenTimer)
+      clearTimeout(idleTimer)
+      clearTimeout(totalTimer)
+      await reader?.cancel().catch(() => undefined)
+    }
+  })
 }
 
 /** Experimental SSE path for ordinary OpenAI Chat Completions endpoints.
  * It deliberately accepts only standard delta.content events; providers that
  * buffer or use another format stay safe because the final JSON is still
  * parsed by the ordinary contract. */
-async function requestOpenAICompatibleStreaming(endpoint: string, body: Record<string, unknown>, headers: Record<string, string>, timeout: number, onText?: (content: string) => Promise<void>, collectUsage?: (usage: unknown) => void) {
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), Math.max(1_000, timeout))
-  try {
-    const response = await fetch(endpoint, { method: 'POST', headers, body: JSON.stringify(body), signal: controller.signal })
-    if (!response.ok) {
-      const detail = (await response.text()).slice(0, 1_000)
-      throw new Error(`Streaming request failed (${response.status}): ${detail || response.statusText}`)
-    }
-    if (!response.body) throw new Error('Streaming provider returned no response body.')
-    const reader = response.body.getReader()
-    const decoder = new TextDecoder()
-    let pending = ''
-    let content = ''
-    let raw = ''
-    while (true) {
-      const { done, value } = await reader.read()
-      const chunk = decoder.decode(value, { stream: !done })
-      raw += chunk
-      pending += chunk
-      const events = pending.split(/\r?\n\r?\n/)
-      pending = events.pop() ?? ''
-      for (const event of events) {
-        const data = event.split(/\r?\n/).filter(line => line.startsWith('data:')).map(line => line.slice(5).trim()).join('\n')
-        if (!data || data === '[DONE]') continue
-        let parsed: any
-        try { parsed = JSON.parse(data) } catch { continue }
-        if (parsed?.usage) collectUsage?.(parsed.usage)
-        const delta = parsed?.choices?.[0]?.delta?.content ?? parsed?.choices?.[0]?.message?.content ?? parsed?.choices?.[0]?.text
-        const text = flattenChatText(delta)
-        if (!text) continue
-        content += text
-        if (onText) await onText(content)
-      }
-      if (done) break
-    }
-    if (content) return content
-    // A few gateways accept stream:true but still return one ordinary JSON body.
+async function requestOpenAICompatibleStreaming(endpoint: string, body: Record<string, unknown>, headers: Record<string, string>, timeout: number, onText?: (content: string) => Promise<void>, collectUsage?: (usage: unknown) => void, proxyAgent?: string) {
+  return withProviderStream(proxyAgent, async request => {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), Math.max(1_000, timeout))
+    let reader: ReadableStreamDefaultReader<Uint8Array> | undefined
     try {
-      const body = JSON.parse(raw) as ChatCompletionResponse & { usage?: unknown }
-      if (body?.usage) collectUsage?.(body.usage)
-      return extractChatText(body)
-    } catch { throw new Error('Streaming provider ended without visible content.') }
-  } catch (error) {
-    if (controller.signal.aborted) throw new Error(`Streaming request timed out after ${timeout}ms.`)
-    throw error
-  } finally {
-    clearTimeout(timer)
-  }
+      const response = await request(endpoint, { method: 'POST', headers, body: JSON.stringify(body), signal: controller.signal })
+      if (!response.ok) {
+        const detail = (await response.text()).slice(0, 1_000)
+        throw new Error(`Streaming request failed (${response.status}): ${detail || response.statusText}`)
+      }
+      if (!response.body) throw new Error('Streaming provider returned no response body.')
+      reader = response.body.getReader()
+      const decoder = new TextDecoder()
+      let pending = ''
+      let content = ''
+      let raw = ''
+      let stopped = false
+      while (!stopped) {
+        const { done, value } = await reader.read()
+        const chunk = decoder.decode(value, { stream: !done })
+        raw += chunk
+        pending += chunk
+        const events = pending.split(/\r?\n\r?\n/)
+        pending = events.pop() ?? ''
+        if (done && pending.trim()) { events.push(pending); pending = '' }
+        for (const event of events) {
+          const data = event.split(/\r?\n/).filter(line => line.startsWith('data:')).map(line => line.slice(5).trim()).join('\n')
+          if (data === '[DONE]') { stopped = true; break }
+          if (!data) continue
+          let parsed: any
+          try { parsed = JSON.parse(data) } catch { continue }
+          if (parsed?.usage) collectUsage?.(parsed.usage)
+          const delta = parsed?.choices?.[0]?.delta?.content ?? parsed?.choices?.[0]?.message?.content ?? parsed?.choices?.[0]?.text
+          const text = flattenChatText(delta)
+          if (!text) continue
+          content += text
+          if (onText) await onText(content)
+        }
+        if (done) break
+      }
+      if (content) return content
+      // A few gateways accept stream:true but still return one ordinary JSON body.
+      try {
+        const body = JSON.parse(raw) as ChatCompletionResponse & { usage?: unknown }
+        if (body?.usage) collectUsage?.(body.usage)
+        return extractChatText(body)
+      } catch { throw new Error('Streaming provider ended without visible content.') }
+    } catch (error) {
+      if (controller.signal.aborted) throw new Error(`Streaming request timed out after ${timeout}ms.`)
+      throw error
+    } finally {
+      clearTimeout(timer)
+      await reader?.cancel().catch(() => undefined)
+    }
+  })
 }
 
 /** Returns the first complete transport object while the rest of the JSON is
@@ -1524,6 +1607,20 @@ function phaseInstruction(phase: NarrativeRequest['phase'], groupTurn = false) {
  * available on this phase is described, so a private turn does not carry
  * group/cross-conversation schemas and an advance does not look like a reply
  * task. */
+/** STANDARD 档 content-only 协议按相位分派:基础句之上,私聊轮补 interaction.seen
+ * 必填说明(lite/full 档均有,唯独 standard 缺失——非 deepseek 家族漏 seen 即解析失败),
+ * advance 轮补 crossConversationActions 形态(完整版在 full 档 transportInstruction 内,
+ * 一刀切替换时丢失)。 */
+function standardTransportInstruction(phase: NarrativeRequest['phase'], groupTurn: boolean) {
+  if (phase === 'advance') {
+    return `${CONTENT_ONLY_TRANSPORT}
+This independent-life phase has no current reply channel. A present outbound action uses crossConversationActions:[{"participantId":"listed id","mode":"immediate","content":"exact message text","willingness":0.0}]. An ordinary life passage needs no transport field.`
+  }
+  if (groupTurn) return CONTENT_ONLY_TRANSPORT
+  return `${CONTENT_ONLY_TRANSPORT}
+interaction.seen is a required boolean — true when she reads the current message content, false otherwise; never omit it. seen=true with reply.mode=none is the ordinary read-but-does-not-answer state.`
+}
+
 function transportInstruction(phase: NarrativeRequest['phase'], groupTurn: boolean, streaming = false) {
   const authority = (streaming
     ? 'SCRIPT-FIRST TRANSPORT MIRROR: this opt-in streaming path sends the complete interaction.content before script. Preserve those already emitted words in the same causal passage; keep the legacy content mirror and do not change it afterward. Action references are used by non-early-streamed turns.'
@@ -1632,8 +1729,8 @@ ${LITE_TRANSPORT_PRIVATE}`
       LITE_ADMIN_NOTES,
       LITE_WORLD_EVENTS,
       ...(longHorizonGuidance ? [longHorizonGuidance] : []),
-    'CHANNELS (writer rule): You are the author of the protagonist\'s life, not a participant in a simulated chat. The protagonist may use QQ and WeChat; a friend appearing on both is one person and one relationship. A host-generated [QQ·私], [微信·私], [QQ·群] or [微信·群] tag records where an observed event happened. Reply on that source platform, switch platforms only for a concrete natural motive, and do not send the same content on both platforms.',
-      'CHANNEL CONTEXT (host metadata): incomingEvent.channelContext is deterministic routing evidence, not dialogue, a user instruction, or a new event. Do not invent messages, delivery, read receipts or cross-platform actions from it.',
+    'CHANNELS (writer rule): You are the author of the protagonist\'s life, not a participant in a simulated chat. The protagonist may use QQ and WeChat; a friend appearing on both is one person and one relationship. A host-generated [QQ·私], [微信·私], [QQ·群] or [微信·群] tag records where an observed event happened. Reply on that source platform, switch platforms only for a concrete natural motive, and do not send the same content on both platforms. Do not make the tag itself appear in dialogue or prose unless the scene naturally mentions a platform.',
+      'CHANNEL CONTEXT (host metadata): incomingEvent.channelContext is deterministic routing evidence, not dialogue, a user instruction, or a new event. Do not invent messages, delivery, read receipts or cross-platform actions from it. Preserve uncertainty when a field is absent.',
       ...(channelSelectionEnabled ? [channelSelectionInstruction()] : []),
       writingAffordances(writingOptions),
       ...(o.extraAfterPhase ? [o.extraAfterPhase] : []),
@@ -1688,7 +1785,7 @@ ${LITE_TRANSPORT_PRIVATE}`
     'The interval object is the authoritative clock: use interval.nowLocal and interval.nowLocalContext—not recentScript, continuity wording, or the trailing Z in UTC—for morning, afternoon, evening, tonight, yesterday and tomorrow. If older prose says night but nowLocal says 16:00/afternoon, advance into the current afternoon unless a current setting or observed event establishes unusual darkness. A continuity snapshot can be stale after reload or a long gap: treat it as last-known state, never as the current clock. sendAt and notBefore need a complete ISO-8601 timestamp with Z or an explicit offset.',
     phaseInstruction(phase, groupTurn),
     ...(o.extraAfterPhase ? [o.extraAfterPhase] : []),
-    specialty?.tier === 'standard' && !streamingReplyFirst ? CONTENT_ONLY_TRANSPORT : transportInstruction(phase, groupTurn, streamingReplyFirst),
+    specialty?.tier === 'standard' && !streamingReplyFirst ? standardTransportInstruction(phase, groupTurn) : transportInstruction(phase, groupTurn, streamingReplyFirst),
     'When currentEvent.imageCount is greater than zero, the current user event includes that many attached native image inputs. They are observed material from this one event, not separate messages or historical evidence. Use only details visibly supported by them, integrate them naturally into the protagonist’s present reality, and do not invent unseen image details.',
     'currentEvent.imageCount counts native image attachments only. With visualEvidenceMode=sidecar-observations, the supplied visualObservations are this turn’s image evidence even though imageCount is zero. When both native images and current visualObservations are absent, image contents remain unknown; placeholders and older prose do not supply current visual evidence.',
     'currentEvent.audioCount counts native audio attachments only; their sound arrives as audio input parts of this same user message. Treat them as the user speaking or sending an audio file. When audioCount is zero, voice-related mentions in text carry no audio evidence; do not invent spoken content.',
@@ -1717,7 +1814,7 @@ ${LITE_TRANSPORT_PRIVATE}`
     cacheFirstPayload ? 'PAYLOAD ORDER NOTE: recentExchange at the end duplicates the tail of recentScript beside the decision point. It is emphasis of established past, not new events; never treat it as a fresh message, and never reply to it as one.' : '',
     'previousScenes, when supplied, hold compact summaries of the scenes immediately before the current one, each bounded to its own time range. Treat them as established past that bridges the raw window and the arc; never relitigate them as present events.',
     'workingDetails, when supplied, lists small concrete in-flight details from recent life (codes, orders, errands, small pending promises) with optional expiry. Use them quietly as living background and let expired ones fade; never recite the list.',
-    'deliveryReality, when present, annotates the execution of actions in the original script. Continue the same scene with these outcomes: delivered is platform-confirmed, cancelled was withdrawn, and not-confirmed or delivery-not-confirmed-after-error leaves receipt unknown. Preserve the original passage as the authored action; let the next movement reflect what was actually confirmed. Platform acceptance does not establish that the recipient read it.',
+    'deliveryReality, when present, annotates the execution of actions in the original script. Continue the same scene with these outcomes: delivered is platform-confirmed. cancelled was withdrawn and never reached the recipient. not-confirmed or delivery-not-confirmed-after-error must be treated as not sent: keep the authored passage unchanged as what the character intended, but unless a later deliveryReality marks that message delivered, the recipient did not receive it — follow-up scenes must not assume it arrived, and the character should notice the silence or try again rather than believe the message went through. Platform acceptance does not establish that the recipient read it.',
     'recalledScript, when supplied, contains bounded contiguous excerpts of older original script selected by semantic, lexical or source linkage. They are established past: let them restore causal memory when relevant, never recite them, and never treat them as a new event. Their absence is not evidence that something never happened; preserve uncertainty instead of inventing a contradiction.',
     'Never invent an incoming message, phone vibration, notification, or quoted sentence absent from the observed-event ledger; do not write “the phone vibrated” or “X sent a message” unless that exact external event is in the supplied context. In a no-event phase, do not use an imagined notification as a scene transition or closing hook: let anticipation remain anticipation, closing on her own life at now.',
     'The character may remember or wonder about an unobserved person, but must describe it as uncertainty without claiming that contact happened. The script is an account of observed reality, not a simulation of messages that the plugin did not receive or send.',
@@ -2020,7 +2117,7 @@ export function toPromptPayload(request: NarrativeRequest, options?: { cacheFirs
     })),
     durableFacts: compactPromptRecords(request.facts ?? [], 8_000).map(fact => ({
       ...factEvidenceForPrompt(fact),
-      participantId: fact.participantId, scope: fact.scope, content: fact.content, importance: fact.importance, confidence: fact.confidence,
+      scope: fact.scope, content: fact.content, importance: fact.importance, confidence: fact.confidence,
       sourceEntryIds: fact.sourceEntryIds, unresolved: fact.unresolved,
     })),
     overlayEvolution: compactPromptRecords((request.overlaySnapshots ?? []).map(snapshot => ({
@@ -2291,14 +2388,18 @@ function alterAnalysisPrompt(customPrompt = '') {
 }
 
 export function compactionPrompt(fixedPrompt: string, compactionMainPrompt = '', compactionFixedPrompt = '', compactionStylePrompt = '', specialty?: { tier?: string }) {
+  const sourceContract = 'Every fact and statePatch needs sourceEntryIds from supplied entries. precedingEntries may explain a relationship feedback chain, but every proposal must cite at least one new entry; old context alone is not new evidence. Return empty facts/statePatches arrays when nothing qualifies.'
   if (specialty?.tier === 'lite') {
     return [
       "You are the low-cost continuity editor for HDS Interlude.",
       "Compress only events that have already happened. Never invent future events.",
       "Return JSON with scene.summary and arc.summary on every review; facts and statePatches are optional. If the arc has not changed, carry its established summary forward.",
-      '{"scene":{"hook":"short active-scene hook","summary":"compact scene summary","close":false},"arc":{"title":"...","summary":"..."},"facts":[{"scope":"character|world|relationship|event|promise","participantId":"optional relationship id","content":"...","importance":0.0,"confidence":0.0,"unresolved":false}],"statePatches":[{"target":"character|world|relationship","path":"...","proposedValue":"...","evidence":"...","confidence":0.0,"impact":"minor|major"}],"lifeStatus":"busy|asleep|idle"}',
+      '{"scene":{"hook":"short active-scene hook","summary":"compact scene summary","close":false},"arc":{"title":"...","summary":"..."},"facts":[{"scope":"character|world|relationship|event|promise","content":"self-contained fact with any related person named explicitly","importance":0.0,"confidence":0.0,"unresolved":false,"sourceEntryIds":[1]}],"statePatches":[{"target":"character|perspective|world|relationship","participantId":"relationship id when target is relationship","path":"...","proposedValue":"...","evidence":"...","confidence":0.0,"impact":"minor|major","sourceEntryIds":[1]}],"lifeStatus":"busy|asleep|idle"}',
+      sourceContract,
+      'Development uses only these target/path pairs: character/traits|preferences|coping; perspective/values|interpretation; relationship/trust|closeness|boundaries; world/established.',
+      'For relationship development, cite actual user feedback and her subsequent delivered response in sourceEntryIds and interactionReview:{outcome:"supported|contested|unresolved",feedbackEntryIds:[actual user ids],responseEntryIds:[actual sent-message ids]}. Use the same participantId for both. Only supported reception qualifies; her interpretation, an unsent response or silence is not endorsement.',
       "Also return lifeStatus:\"busy|asleep|idle\" for her present attention (busy = schedule-loaded or deeply occupied, asleep = sleeping per established routine, idle = free); omit when uncertain.",
-      "Facts must be durable and non-redundant. Set unresolved=true only while a promise or concrete open matter is genuinely pending. State patches are proposals for gradual, durable changes supported by repeated behavior across turns; a temporary mood or one unusual reply belongs in the scene summary instead.",
+       "Facts are global narrative evidence. If a fact concerns a participant, name that person explicitly in the content itself; do not rely on vague pronouns when the subject is unclear. Facts must be durable and non-redundant. Set unresolved=true only while a promise or concrete open matter is genuinely pending. State patches are proposals for gradual, durable changes supported by repeated behavior across turns; a temporary mood or one unusual reply belongs in the scene summary instead.",
       "Close a scene only when the supplied entries clearly show a structural transition — a real change of place, activity or company; elapsed time alone is not a boundary.",
       "COMPACTION MAIN PROMPT (user-configurable):",
       compactionMainPrompt?.trim() || "Compress completed scenes into concise continuity notes while preserving causality, promises, unresolved matters, and gradual character change.",
@@ -2314,11 +2415,12 @@ export function compactionPrompt(fixedPrompt: string, compactionMainPrompt = '',
     'You are the low-cost continuity editor for HDS Interlude.',
     'Compress only events that have already happened. Never invent future events.',
     'Return JSON with scene.summary and arc.summary on every review; facts and statePatches are optional. If the arc has not changed, carry its established summary forward.',
-    '{"scene":{"hook":"short active-scene hook","summary":"compact scene summary","close":false,"boundary":{"reason":"explicit structural transition","sourceEntryIds":[1]},"presence":[{"name":"named supporting character","status":"present|off-scene|expected","basis":"explicit observed transition","sourceEntryIds":[1]}]},"arc":{"title":"...","summary":"..."},"facts":[{"scope":"character|world|relationship|event|promise","participantId":"optional relationship id","content":"...","importance":0.0,"confidence":0.0,"unresolved":false,"sourceEntryIds":[1],"resolvesFactIds":[12]}],"statePatches":[{"target":"character|perspective|world|relationship","participantId":"relationship id when target is relationship","path":"...","proposedValue":"...","evidence":"...","confidence":0.0,"impact":"minor|major","sourceEntryIds":[1]}],"workingDetails":[{"label":"short label","value":"concrete detail","expiresAt":"future ISO-8601 or omit","sourceEntryIds":[1]}],"lifeStatus":"busy|asleep|idle"}',
+    '{"scene":{"hook":"short active-scene hook","summary":"compact scene summary","close":false,"boundary":{"reason":"explicit structural transition","sourceEntryIds":[1]},"presence":[{"name":"named supporting character","status":"present|off-scene|expected","basis":"explicit observed transition","sourceEntryIds":[1]}]},"arc":{"title":"...","summary":"..."},"facts":[{"scope":"character|world|relationship|event|promise","content":"self-contained fact with any related person named explicitly","importance":0.0,"confidence":0.0,"unresolved":false,"sourceEntryIds":[1],"resolvesFactIds":[12]}],"statePatches":[{"target":"character|perspective|world|relationship","participantId":"relationship id when target is relationship","path":"...","proposedValue":"...","evidence":"...","confidence":0.0,"impact":"minor|major","sourceEntryIds":[1]}],"workingDetails":[{"label":"short label","value":"concrete detail","expiresAt":"future ISO-8601 or omit","sourceEntryIds":[1]}],"lifeStatus":"busy|asleep|idle"}',
+    sourceContract,
     'Also return lifeStatus as one of busy|asleep|idle describing the protagonist’s present attention for the coming hours: busy (schedule-loaded or deeply occupied), asleep (sleeping per established routine), idle (free, ordinary attention). Ground it in the supplied entries and schedule context; omit the field when genuinely uncertain.',
     'workingDetails capture only small concrete present-state details from the supplied entries (pickup codes, orders, errands, tiny pending promises) that do not warrant a durable fact. Carry the same matter forward under its existing label, with newer sourceEntryIds and the current literal value. If a clearer label is useful, replacesLabel may name exactly one existing label for the SAME participant and matter; supply observed/reported knowledge with exact source clauses showing the transition. Keep distinct matters separate. Preserve conditions and the difference between a wish and an observed state. Never store a future checkpoint, prediction, hoped-for outcome, planned inspection or unobserved deadline as a workingDetail. Do not duplicate durable facts.',
     'New entries labelled original-v2 are the committed original; proposedTimeline is only the preceding plan. Read lifeHandoff as quotes into that original. Older timelineEvidence bounds legacy automatic passages. Actual incoming messages and deliveryReality decide communication, including no-outgoing-action-recorded: a narrative mention of sending alone does not establish a sent message. Distinguish another person’s dated report from the protagonist’s ongoing guess.',
-    'Facts must be durable and non-redundant. Set participantId for relationship-specific facts; leave it empty for world-wide facts. Use unresolved=true only while a promise or concrete open matter is genuinely pending. When supplied entries fulfill, cancel or otherwise close an existing unresolved fact, include its visible id in resolvesFactIds and describe the completed outcome in the new fact. State patches are proposals, not direct rewrites. Use them only for a gradual, durable personality, perspective, world, or relationship change supported by repeated behavior across separate narrative turns. perspective is the protagonist’s separate individual values and way of seeing the world; propose it only for a sustained change in how she naturally understands people or events, never for a mood, theme, moral lesson, or one isolated choice. Keep the same target/path/proposedValue when the same change is observed again so the host can accumulate evidence.',
+    'Facts are global narrative evidence and may be supplied to every conversation context. Do not use participantId or hidden metadata to identify who a fact concerns. If a fact concerns a participant, name that person explicitly in the content itself; do not rely on vague pronouns such as “他”“她”“对方” when the subject is not otherwise clear. For example, “小林说他准备出门” is valid, while “他说他准备出门” is not self-contained. Whether to reveal a fact to the current participant or connect it to the current conversation is a narrative decision, not a storage or visibility rule. Facts must be durable and non-redundant. Use unresolved=true only while a promise or concrete open matter is genuinely pending. When supplied entries fulfill, cancel or otherwise close an existing unresolved fact, include its visible id in resolvesFactIds and describe the completed outcome in the new fact. State patches are proposals, not direct rewrites. Use them only for a gradual, durable personality, perspective, world, or relationship change supported by repeated behavior across separate narrative turns. perspective is the protagonist’s separate individual values and way of seeing the world; propose it only for a sustained change in how she naturally understands people or events, never for a mood, theme, moral lesson, or one isolated choice. Keep the same target/path/proposedValue when the same change is observed again so the host can accumulate evidence.',
     'scene.presence is a tiny current-scene roster, not a cast list. Omit it unless supplied entries explicitly show a named supporting character arriving, being present, leaving, or expected later. Each update needs sourceEntryIds and a concrete basis. A Canon character is available to the story but is not automatically present in the current scene. Never infer a goodbye, departure, arrival, or reunion from mood, omission, or convenience.',
     'Set scene.close=true only for a structural boundary explicitly present in the supplied entries, and include scene.boundary with its reason and sourceEntryIds. Elapsed time, message count, prose rhythm, or a convenient summary ending are not scene boundaries.',
     'Read precedingEntries as original-script context before the checkpoint, and entries as the new chronological evidence. Continue the existing arc from these passages: preserve the initiating cause, consequential choices, relationship changes and unresolved commitments with their exact conditions. Update outcomes only where new evidence settles them. The arc is an index of established causality that helps return to original text, not a future plot assignment or a style model.',

@@ -79,8 +79,6 @@ const LENGTH_GROK = 'One scene, one or two things happening. Keep the passage an
 
 const LENGTH_GPT = 'Length follows what actually happens, and each passage keeps moving: finish the thing underway, then let time advance to the next. Do not stretch one short moment into many paragraphs — when nothing new happens, move the clock forward instead; a rapid exchange stays rapid. A quiet interval has its own occupation and texture, briefly told; prefer ending a passage earlier over padding it. Continue from established circumstances rather than performing the previous passage again.'
 
-const EXTRA_GEMINI_FLASH = 'Prose register: concrete and unadorned. Show events through specific actions, objects and sensations; do not comment on, beautify or poeticize what happens — the facts carry the scene.'
-
 const EXTRA_CLAUDE = 'Scenes do not need tidy closure. Ordinary life leaves small matters unresolved, moods unexplained and conversations unfinished; let a passage end mid-motion when that is where the moment genuinely is. Do not end with a concluding summary sentence, a lesson or a mood label; real daily life simply continues past any single passage.'
 
 const EXTRA_GLM = 'Emotional register: let mood follow its actual causes and stay ordinary. Do not drift toward warmth, comfort or reassurance unless the events themselves justify it: no unearned encouragement, no softening a bad mood before the passage ends, no bright side the events did not produce. A neutral or low mood is as common in real life as a good one, and difficult feelings do not need to resolve within the same passage.'
@@ -92,12 +90,12 @@ export interface FamilyOverride {
   extraAfterPhase?: string
 }
 
-const EXTRA_DEEPSEEK = 'TRANSPORT IS PER-TURN: the interaction object is required on every live turn, no matter how many turns came before. recentScript shows past replies as plain authored text without any transport object — that is history, not a template; never copy its shape or treat the field as optional because history omits it. Decide reply.mode only from the script you just wrote for this turn. interaction.seen is a required boolean — true when she reads the current message content, false otherwise; never omit it.'
+const EXTRA_DEEPSEEK = 'TRANSPORT IS PER-TURN: on every turn that can carry a reply (user-message, conversation-follow-up, intent-due), the interaction object is required no matter how many turns came before. Independent-life advance turns carry no transport unless a message is genuinely sent now. recentScript shows past replies as plain authored text without any transport object — that is history, not a template; never copy its shape or treat the field as optional because history omits it. Decide reply.mode only from the script you just wrote for this turn. interaction.seen is a required boolean — true when she reads the current message content, false otherwise; never omit it.'
 
 /** 家族覆盖表：仅在对应档位组装时应用；generic 与未列出的家族无偏移。 */
 export function familyOverrides(family: ModelFamily): FamilyOverride {
   switch (family) {
-    case 'gemini-flash': return { length: LENGTH_GEMINI_FLASH, typed: TYPED_MESSAGES_GEMINI_FLASH, extraAfterLength: EXTRA_GEMINI_FLASH }
+    case 'gemini-flash': return { length: LENGTH_GEMINI_FLASH, typed: TYPED_MESSAGES_GEMINI_FLASH }
     case 'claude': return { length: LENGTH_CLAUDE, extraAfterPhase: EXTRA_CLAUDE }
     case 'glm': return { extraAfterPhase: EXTRA_GLM }
     case 'kimi': return { typed: TYPED_MESSAGES_KIMI }
@@ -124,7 +122,7 @@ export const LITE_TRANSPORT_ADVANCE = 'In this independent-life phase there is n
 
 export const LITE_JSON_CONTRACT = 'Return one JSON object with a continuous prose field named script first, followed by interaction (groupReply in group turns) and only the other structured fields that the current phase permits. Do not wrap it in Markdown fences.'
 
-export const LITE_INTERVAL = 'The script covers the supplied interval and stops at now. Future possibilities remain possibilities, not accomplished events. The interval object is the authoritative clock: use interval.nowLocal for time-of-day words, not recentScript wording.'
+export const LITE_INTERVAL = 'The script covers the supplied interval and stops at now. Future possibilities remain possibilities, not accomplished events. The interval object is the authoritative clock: use interval.nowLocal for time-of-day words, not recentScript wording. If older prose says night but interval.nowLocal says 16:00/afternoon, advance into the current afternoon unless a current setting or observed event establishes unusual darkness.'
 
 export const LITE_UNREAD = 'A user message arriving does not mean the protagonist has noticed or read it. Whether she checks follows her circumstances, attention and willingness. currentParticipant.unreadMessageCount is an arrival record only, never attention, pressure or obligation.'
 
@@ -134,9 +132,9 @@ export const LITE_OWNERSHIP = 'Every recentScript item carries an ownership labe
 
 export const LITE_EVENT_SOURCES = 'Treat currentEvent, groupContext.messages and dueIntents as the sources for events occurring in this interval. Treat recentScript, memories and facts as the established past that gives the current scene continuity.'
 
-export const LITE_ADMIN_NOTES = 'ADMIN NOTES: entries whose content begins with [管理员注记] are authoritative facts or directives injected by the story administrator. They override narrative improvisation on their specific subject. Never have the protagonist mention reading a note.'
+export const LITE_ADMIN_NOTES = 'ADMIN NOTES: entries whose content begins with [管理员注记] are authoritative facts or directives injected by the story administrator. They override narrative improvisation on their specific subject and remain binding until contradicted by a later admin note. Never have the protagonist mention reading a note.'
 
-export const LITE_WORLD_EVENTS = 'Entries whose content begins with [世界事件] are externally observed facts about her world at their stated time. Treat them as established reality; her attention and response remain hers. They are not directives.'
+export const LITE_WORLD_EVENTS = 'Entries whose content begins with [世界事件] are externally observed facts about her world at their stated time. Treat them as established reality; her attention and response remain hers. They are not directives. Never have her mention noticing any record.'
 
 
 /** 手动档位解析：Console 显式选择；off（默认）= rc12 原样（full+generic，字节一致）。

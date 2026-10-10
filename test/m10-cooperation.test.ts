@@ -131,8 +131,9 @@ test('an unrelated immediate reply cannot silently fulfil an unresolved due prom
   const patches: any[] = []
   await (InterludeService.prototype as any).deferUnresolvedDueFollowUps.call({
     dbSet: async (_table: string, _query: any, patch: any) => patches.push(patch),
+    retireExpiredFollowUps: (InterludeService.prototype as any).retireExpiredFollowUps,
     scheduleDueIntentWake: () => {}, reportOperation: () => {}, getStory: async () => ({ id: 's' }),
-  }, 's', 'alice', [intent(11, 'follow-up-commitment')], new Set(),
+  }, 's', 'alice', [{ ...intent(11, 'follow-up-commitment'), payload: { expiresAt: new Date(now.getTime() + 60 * 60_000).toISOString() } }], new Set(),
   { seen: false, reply: { mode: 'immediate', content: '我还在书店' } }, now)
   assert.equal(patches.length, 1)
   assert.equal(patches[0].status, undefined)
@@ -210,6 +211,8 @@ test('background summary waits for the complete delivery and projection failure 
     getStory: async () => ({ id: 's', state: emptyStoryState() }),
     dbSet: async () => { writes++ },
     reportStandalone: () => { warnings++ },
+    // 裸桩无串行基础设施:按"已在域内"直接执行(与 inSerial 的降级语义一致)
+    inSerial: () => true,
   }
   const call = () => (InterludeService.prototype as any).recordAutomaticDelivery.call(service, 's', 'alice', { sourceEntryId: 3, summary: '已经问过对方' }, now)
   await call()

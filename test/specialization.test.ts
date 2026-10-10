@@ -51,10 +51,12 @@ test('LITE contract trims to the core and applies the gemini-flash family blocks
   assert.match(s, /ownership label that is authoritative/)
   assert.match(s, /TRANSPORT: reply.content/)
   assert.match(s, /Return one JSON object with a continuous prose field named script first/)
-  // gemini-flash 特化块
+  // gemini-flash 特化块;"朴素具体"register 块已删(与 length 块同义反复)
   assert.match(s, /plain nouns and specific verbs carry the scene/)
-  assert.match(s, /Prose register: concrete and unadorned/)
+  assert.doesNotMatch(s, /Prose register: concrete and unadorned/)
   assert.match(s, /Each reply is an independent choice/)
+  // L4: lite 时钟冲突仲裁句
+  assert.match(s, /If older prose says night but interval\.nowLocal says 16:00\/afternoon/)
 })
 
 test('STANDARD keeps the full contract with content-only transport and family extras', () => {
@@ -73,6 +75,18 @@ test('STANDARD keeps the full contract with content-only transport and family ex
   const deepseek = systemPrompt('user-message', '', '', '', '', '', false, false, false, false, false, undefined, false, undefined, false, false, false, false, undefined,
     { tier: 'standard', family: 'deepseek', source: 'auto', probe: 'deepseek-v4' })
   assert.match(deepseek, /the unadorned noun, the specific number, the plain verb/)
+  // S1: standard 私聊轮补 interaction.seen 必填说明(此前只有 lite/full 有)
+  assert.match(glm, /interaction\.seen is a required boolean/)
+  assert.match(glm, /read-but-does-not-answer state/)
+  // S3: deepseek 的 per-turn 必填限定在可回复轮,不再与 advance 的"无需 transport"矛盾
+  assert.match(deepseek, /on every turn that can carry a reply/)
+  assert.match(deepseek, /advance turns carry no transport unless a message is genuinely sent/)
+
+  // S2: standard advance 轮补 crossConversationActions 形态说明
+  const stdAdvance = systemPrompt('advance', '', '', '', '', '', false, false, false, false, false, undefined, false, undefined, false, false, false, false, undefined,
+    { tier: 'standard', family: 'glm', source: 'auto', probe: 'glm-5.3' })
+  assert.match(stdAdvance, /crossConversationActions:\[\{"participantId":"listed id"/)
+  assert.match(stdAdvance, /An ordinary life passage needs no transport field/)
 })
 
 test('FULL tier applies claude/gpt blocks with simple protocol', () => {
@@ -109,14 +123,14 @@ test('decide() applies the manually selected tier with family auto-detection', a
     await narrator.decide({ phase: 'user-message', from: now, now, story: { setting: { timezone: 'Asia/Shanghai' } as any, state: {} as any }, participant: null, participants: [], recentEntries: [], memories: [], dueIntents: [], supersededIntents: [], activeConsequences: [] } as any)
     assert.match(bodies[0].messages[0].content, expectPattern)
   }
-  await run('gemini-3.7-flash', /Prose register: concrete and unadorned/, { specialization: 'lite' })
+  await run('gemini-3.7-flash', /plain nouns and specific verbs carry the scene/, { specialization: 'lite' })
   await run('claude-opus-5', /Scenes do not need tidy closure/, { specialization: 'full' })
   await run('glm-5.3', /Emotional register: let mood follow its actual causes/, { specialization: 'standard' })
   // 默认 off：即使模型名可识别也保持 rc12 原样
   await run('gemini-3.7-flash', /When interaction is permitted/)
   await run('grok-4.5', /When interaction is permitted/)
   // 家族显式指定：中转别名场景
-  await run('mystery-relay-alias', /Prose register: concrete and unadorned/, { specialization: 'lite', specializationFamily: 'gemini-flash' })
+  await run('mystery-relay-alias', /plain nouns and specific verbs carry the scene/, { specialization: 'lite', specializationFamily: 'gemini-flash' })
   // 家族 generic：档位生效但不套家族块
   await run('gemini-3.7-flash', /Length follows what actually happens:/, { specialization: 'lite', specializationFamily: 'generic' })
 })

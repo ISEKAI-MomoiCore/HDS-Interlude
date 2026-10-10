@@ -16,6 +16,8 @@ export interface ScriptDeliveryAction {
     eventId: string;
     eventKind: ScriptEventDraft['kind'];
     participantId?: string;
+    /** Authored route, retained so a restart can retry the same endpoint. */
+    endpointId?: string;
     status: ScriptDeliveryStatus;
     segments: ScriptDeliverySegment[];
     updatedAt: string;
@@ -27,8 +29,9 @@ export interface ScriptDeliveryReference {
     segmentIndex: number;
 }
 /** Materialize an outbox-shaped ledger inside the authoritative script row.
- * This is deliberately metadata-only for M6.1: no second sender and no schema
- * migration can change the existing delivery timing. */
+ * The ledger itself is metadata-only: it creates no sender or schema
+ * migration. Pending compensation reuses the existing transport, and durable
+ * split intents retain ownership of their typing schedule. */
 export declare function createScriptDeliveryActions(commit: ScriptCommitDraft): ScriptDeliveryAction[];
 export declare function updateScriptDeliveryActions(current: unknown, reference: ScriptDeliveryReference, status: ScriptDeliverySegmentStatus, at: Date, reason?: string): ScriptDeliveryAction[] | undefined;
 export declare function deliveryReference(event: ScriptEventDraft | undefined, scriptEntryId: number | undefined, segmentIndex?: number): ScriptDeliveryReference | undefined;

@@ -173,10 +173,11 @@ export function applySchedulePreplanProposal(
     regimes = mergeBy(regimes, proposal.regimes ?? [], item => item.id)
     exceptions = mergeBy(exceptions, proposal.exceptions ?? [], item => item.date)
   }
-  if (!regimes.length) {
+  if (!regimes.length && !exceptions.length) {
     // Empty is a valid initial result when the story has not established any
     // recurring rhythm. Persist that review so the system waits for new
     // evidence instead of repeatedly paying for the same empty conclusion.
+    // (单次安排住在 exceptions 里:没有重复规律 ≠ 没有任何日程,两者分开判断)
     if (!current) {
       return {
         storyId: '', revision: 1, timezone, validFrom: today, validThrough: addDate(today, config.horizonDays - 1),
@@ -189,6 +190,8 @@ export function applySchedulePreplanProposal(
     return refreshSchedulePreplan(current, today, timezone, config, now, 'Empty proposal ignored; existing Schedule Preplan retained.')
   }
   const validThrough = addDate(today, config.horizonDays - 1)
+  const retainedRegimes = retainSchedulePreplanRegimes(regimes, today, config.horizonDays)
+  const retainedExceptions = retainSchedulePreplanExceptions(exceptions, today, validThrough)
   return {
     storyId: current?.storyId ?? '',
     revision: (current?.revision ?? 0) + 1,
@@ -198,17 +201,41 @@ export function applySchedulePreplanProposal(
     lastReviewedLocalDate: today,
     lastEvidenceEntryId: Math.max(current?.lastEvidenceEntryId ?? 0, ...evidence.map(entry => entry.id), 0),
     reviewReason: proposal.reason,
-    regimes: regimes.slice(-6),
-    exceptions: exceptions.filter(item => item.date >= addDate(today, -1)).slice(-30),
-    materializedDays: materializeSchedulePreplan(regimes, exceptions, today, config.horizonDays),
+    // Keep every effective stage in the window (including yesterday's overnight
+    // segment), rather than evicting today's plan when a future stage is added.
+    regimes: retainedRegimes,
+    exceptions: retainedExceptions,
+    materializedDays: materializeSchedulePreplan(retainedRegimes, retainedExceptions, today, config.horizonDays),
     createdAt: current?.createdAt ?? now,
     updatedAt: now,
   }
 }
 
+function retainSchedulePreplanRegimes(regimes: SchedulePreplanRegime[], today: string, horizonDays: number) {
+  const retained = new Set<SchedulePreplanRegime>()
+  for (let offset = -1; offset < Math.max(1, horizonDays); offset++) {
+    const date = addDate(today, offset)
+    const matching = regimes.filter(regime => regime.from <= date && (!regime.to || regime.to >= date))
+      .sort((left, right) => right.from.localeCompare(left.from))[0]
+    if (matching) retained.add(matching)
+  }
+  const validThrough = addDate(today, horizonDays - 1)
+  for (const regime of regimes.filter(item => item.from > validThrough)
+    .sort((left, right) => left.from.localeCompare(right.from)).slice(0, 6)) retained.add(regime)
+  return regimes.filter(item => retained.has(item))
+}
+
+function retainSchedulePreplanExceptions(exceptions: SchedulePreplanException[], today: string, validThrough: string) {
+  const upcoming = exceptions.filter(item => item.date >= addDate(today, -1))
+    .sort((left, right) => left.date.localeCompare(right.date))
+  return [...upcoming.filter(item => item.date <= validThrough), ...upcoming.filter(item => item.date > validThrough).slice(0, 6)]
+}
+
 export function materializeSchedulePreplan(regimes: SchedulePreplanRegime[], exceptions: SchedulePreplanException[], startDate: string, horizonDays: number): SchedulePreplanDay[] {
   const days: SchedulePreplanDay[] = []
-  for (let offset = 0; offset < Math.max(1, horizonDays); offset++) {
+  // 从 -1 开始物化:昨日开始的跨夜安排(end<=start)在今日凌晨仍是进行中,
+  // 只物化今天会让值夜班/通宵出行在午夜后从日程里凭空消失
+  for (let offset = -1; offset < Math.max(1, horizonDays); offset++) {
     const date = addDate(startDate, offset)
     const matching = regimes
       .filter(regime => regime.from <= date && (!regime.to || regime.to >= date))
@@ -236,7 +263,9 @@ export function schedulePreplanWindow(record: SchedulePreplanRecord | undefined,
   const blocks: SchedulePreplanWindow['blocks'] = []
   for (const day of record.materializedDays) {
     const dayOffset = dateDifference(today, day.date)
-    if (dayOffset < 0 || dayOffset > 1) continue
+    // -1 允许昨日跨夜安排(23:00–次日 07:00)的剩余区间进入窗口;
+    // 块级 start/end 比较会自然过滤早已结束的昨日块
+    if (dayOffset < -1 || dayOffset > 1) continue
     for (const block of day.blocks) {
       const start = dayOffset * 1_440 + timeMinutes(block.start)
       let end = dayOffset * 1_440 + timeMinutes(block.end)
@@ -291,15 +320,15 @@ function normalizeProposal(value: unknown, validEvidenceIds: ReadonlySet<number>
   if (!reason) return undefined
   const sourceEntryIds = ids(value.sourceEntryIds).filter(id => validEvidenceIds.has(id))
   const allowTentative = variationLevel === 'granular'
-  const regimes = normalizeRegimes(value.regimes, validEvidenceIds, allowTentative)
-  const exceptions = normalizeExceptions(value.exceptions, validEvidenceIds, allowTentative)
+  const regimes = normalizeRegimes(value.regimes, validEvidenceIds, allowTentative, 6)
+  const exceptions = normalizeExceptions(value.exceptions, validEvidenceIds, allowTentative, 30)
   if ((outcome === 'patch' || outcome === 'replace') && validEvidenceIds.size && !sourceEntryIds.length && !regimes.some(item => item.sourceEntryIds?.length) && !exceptions.some(item => item.sourceEntryIds?.length)) return undefined
   return { outcome, reason, confidence: finite(value.confidence), sourceEntryIds, regimes, exceptions }
 }
 
-function normalizeRegimes(value: unknown, validEvidenceIds?: ReadonlySet<number>, allowTentative = true) {
+function normalizeRegimes(value: unknown, validEvidenceIds?: ReadonlySet<number>, allowTentative = true, limit = 64) {
   if (!Array.isArray(value)) return []
-  return value.map(item => normalizeRegime(item, validEvidenceIds, allowTentative)).filter((item): item is SchedulePreplanRegime => !!item).slice(0, 6)
+  return value.map(item => normalizeRegime(item, validEvidenceIds, allowTentative)).filter((item): item is SchedulePreplanRegime => !!item).slice(0, limit)
 }
 
 function normalizeRegime(value: unknown, validEvidenceIds?: ReadonlySet<number>, allowTentative = true): SchedulePreplanRegime | undefined {
@@ -317,9 +346,9 @@ function normalizeRegime(value: unknown, validEvidenceIds?: ReadonlySet<number>,
   return { id, label, from, ...(to ? { to } : {}), weekly, sourceEntryIds: evidenceIds(value.sourceEntryIds, validEvidenceIds) }
 }
 
-function normalizeExceptions(value: unknown, validEvidenceIds?: ReadonlySet<number>, allowTentative = true) {
+function normalizeExceptions(value: unknown, validEvidenceIds?: ReadonlySet<number>, allowTentative = true, limit = 64) {
   if (!Array.isArray(value)) return []
-  return value.map(item => normalizeException(item, validEvidenceIds, allowTentative)).filter((item): item is SchedulePreplanException => !!item).slice(0, 30)
+  return value.map(item => normalizeException(item, validEvidenceIds, allowTentative)).filter((item): item is SchedulePreplanException => !!item).slice(0, limit)
 }
 
 function normalizeException(value: unknown, validEvidenceIds?: ReadonlySet<number>, allowTentative = true): SchedulePreplanException | undefined {
@@ -357,6 +386,9 @@ function normalizeBlock(value: unknown, validEvidenceIds?: ReadonlySet<number>, 
   const kind = KINDS.includes(value.kind as SchedulePreplanBlockKind) ? value.kind as SchedulePreplanBlockKind : undefined
   if (!id || !start || !end || start === end || !label || !kind) return undefined
   const location = text(value.location, 120)
+  // 候选模式未启用时,模型违规返回的 tentative 块明确丢弃——擦掉标志把它
+  // 转成普通日程等于把不确定安排升级为已确认,失去候选激活/隐藏机制
+  if (value.tentative === true && (!allowTentative || kind === 'fixed' || kind === 'routine')) return undefined
   const tentative = allowTentative && value.tentative === true && (kind === 'flexible' || kind === 'open')
   return { id, start, end, label, kind, ...(location ? { location } : {}), ...(tentative ? { tentative: true } : {}), sourceEntryIds: evidenceIds(value.sourceEntryIds, validEvidenceIds) }
 }

@@ -315,8 +315,6 @@ export interface StorySettingOverlay {
     perspective?: string;
     relationship?: string;
     world?: string;
-    supportingCast?: string;
-    location?: string;
     /** Small, accumulated trait changes expressed as evidence-backed notes. */
     characterTraits?: string[];
 }
@@ -446,7 +444,11 @@ export interface NarrativeFact {
     knowledge?: import('./script/knowledge-evidence').KnowledgeEvidence;
     id: number;
     storyId: string;
-    /** Empty means a world-wide fact; otherwise it is relationship-specific. */
+    /**
+     * Legacy database compatibility only. New facts are global narrative
+     * material and their related people must be named in `content`; this field
+     * no longer controls visibility, ownership, or narrative scope.
+     */
     participantId: string;
     scope: 'character' | 'world' | 'relationship' | 'event' | 'promise';
     content: string;
@@ -524,6 +526,9 @@ export interface IntentUpdateDraft {
 export interface OutgoingMessageDraft {
     participantId: string;
     content: string;
+    /** Optional typ-0 correlation copied into persisted delayed/split intents. */
+    traceId?: string;
+    processingId?: string;
     /** M3 §八：出站端点——省略 = 本回合来源端点（由 resolveDeliveryTarget 兜底）。 */
     endpointId?: string;
     /** Attached only to no-current-user background deliveries. */
@@ -537,16 +542,7 @@ export interface OutgoingMessageDraft {
     /** Set by transport when a literal quote was converted into a platform reply. */
     quoteMessageId?: string;
     /** Stable link back to the one script event that authored all bubbles. */
-    scriptEvent?: {
-        commitId: string;
-        eventId: string;
-        eventKind: 'outgoing-message' | 'group-message';
-        causedByEventIds: string[];
-        endpointId?: string;
-        fullContent: string;
-        bubbleIndex: number;
-        bubbleCount: number;
-    };
+    scriptEvent?: import('./script/contract').ScriptMessageEventReference;
 }
 /** A future browsing action proposed by the narrator. It is not an observed
  * fact until Puppeteer finishes and produces a WebObservation. */
@@ -1000,6 +996,7 @@ export interface CompactionRequest {
 export interface FactDraft {
     knowledge?: import('./script/knowledge-evidence').KnowledgeEvidence;
     scope: NarrativeFact['scope'];
+    /** @deprecated Accepted only for old model payload compatibility; ignored when persisted. */
     participantId?: string;
     content: string;
     importance?: number;

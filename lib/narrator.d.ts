@@ -7,9 +7,13 @@ export { storyLocalTimeContext } from './time';
 export type ProviderResponseFormat = 'json-object' | 'prompt-only';
 export type ProviderStrategy = 'priority' | 'round-robin';
 export type ZhipuReasoningEffort = 'low' | 'high' | 'max';
-export type DeepSeekThinkingMode = 'disabled' | 'enabled';
-export type ProviderMode = 'openai-compatible' | 'zhipu-official' | 'openai-official' | 'deepseek-official' | 'moonshot-official' | 'dashscope-official' | 'siliconflow-official' | 'openrouter' | 'gemini-openai';
+export type DeepSeekThinkingMode = 'inherit' | 'disabled' | 'enabled';
+export type ProviderMode = 'openai-compatible' | 'zhipu-official' | 'openai-official' | 'deepseek-official' | 'moonshot-official' | 'dashscope-official' | 'siliconflow-official' | 'openrouter' | 'gemini-openai' | 'gemini-interactions';
 export declare const ZHIPU_FIRST_VISIBLE_TOKEN_TIMEOUT = 45000;
+/** 首 token 之后不再设总超时(长思考合法),但持续的流内静默判死:
+ * 正常流式即使思考期也有 reasoning/心跳 chunk 不断续命,半开连接只会
+ * 让 reader.read() 永久 pending——冻结整个回合且 failover 永远到不了下一家。 */
+export declare const ZHIPU_STREAM_IDLE_TIMEOUT = 120000;
 export interface StickerDescription {
     description: string;
     aliases: string[];
@@ -26,7 +30,10 @@ export interface VisionDescriber {
 }
 export interface ProviderConfig {
     /** Missing in historical rows means Chat Completions. */
-    protocol?: 'chat-completions' | 'anthropic-messages';
+    protocol?: 'chat-completions' | 'anthropic-messages' | 'gemini-interactions';
+    /** HTTP(S) 代理地址（如 http://127.0.0.1:7890）；空 = 直连。cordis http
+     * 不读系统代理，需要代理的服务商（如 Google）在此显式配置。 */
+    proxyAgent?: string;
     anthropicCache?: boolean;
     /** Legacy internal identifier. New Console rows derive identity from the model connection. */
     id?: string;
@@ -252,6 +259,10 @@ export declare class OpenAICompatibleNarrator implements NarrativeProvider {
 export declare function createNarrator(ctx: Context, config: ModelConfig, silentLogs?: boolean, onUsage?: (record: TokenUsageRecord) => void, routing?: ModelRoutingTable): NarrativeProvider;
 export declare function createStickerDescriber(ctx: Context, config: ModelConfig, silentLogs?: boolean, onUsage?: (record: TokenUsageRecord) => void, routing?: ModelRoutingTable): StickerDescriber;
 export declare function createVisionDescriber(ctx: Context, config: ModelConfig, silentLogs?: boolean, onUsage?: (record: TokenUsageRecord) => void, routing?: ModelRoutingTable): VisionDescriber;
+/** A single enabled model preset is the natural main narrator. This keeps the
+ * Console configuration linear while preserving explicit selection for
+ * installations that deliberately configure several models. */
+export declare function withDeepSeekThinking(provider: ProviderConfig, requestBody: Record<string, unknown>): Record<string, unknown>;
 export declare function createCompactor(ctx: Context, config: ModelConfig, silentLogs?: boolean, onUsage?: (record: TokenUsageRecord) => void, routing?: ModelRoutingTable): NarrativeCompactor;
 export declare function createEmbedder(ctx: Context, config: ModelConfig, routing?: ModelRoutingTable): NarrativeEmbedder;
 /** Returns the first complete transport object while the rest of the JSON is

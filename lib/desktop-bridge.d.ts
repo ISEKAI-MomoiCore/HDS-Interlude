@@ -11,6 +11,8 @@ export interface DesktopOnebotActionResult {
     error?: string;
 }
 export interface DesktopInboundEvent {
+    /** Host-owned business correlation ID; optional for older desktop hosts. */
+    traceId?: string;
     transport: 'snowluma' | 'onebot-external' | 'sandbox';
     accountKey: string;
     platform: string;

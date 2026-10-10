@@ -1,6 +1,6 @@
 # Agency Window
 
-适用版本：`1.0.1-rc36`
+适用版本：`1.0.1-rc50`
 
 ## 定位
 
@@ -54,7 +54,7 @@ Agency Window 只负责外部联系行动的现实容量：日程负荷、隐私
 - 私人内容且环境不私密：不立即发送。
 - 普通忙碌状态只允许承诺或实际安排突破。
 - 普通联系受 `minimumProactiveIntervalMinutes` 限制；承诺可绕过。
-- willingness 仍需达到 `runtime.proactiveWillingnessThreshold`。
+- `strict` 模式使用运行时或 Urge 的有效主动联系意愿阈值；`natural`/`balanced` 模式使用 `agency.naturalWillingnessThreshold`。设备、隐私、日程容量、白名单和每日上限仍独立生效。
 
 ## 延后重查
 

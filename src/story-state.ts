@@ -66,8 +66,6 @@ export function upgradeStoryState(value: unknown): StoryState {
       perspective: clippedTextOrUndefined(overlay.perspective, 1_000),
       relationship: textOrUndefined(overlay.relationship),
       world: textOrUndefined(overlay.world),
-      supportingCast: textOrUndefined(overlay.supportingCast),
-      location: textOrUndefined(overlay.location),
       characterTraits: Array.isArray(overlay.characterTraits)
         ? overlay.characterTraits.filter((item): item is string => typeof item === 'string')
         : [],

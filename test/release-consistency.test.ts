@@ -29,7 +29,15 @@ test('published documentation includes every README-linked design index and curr
   const manifest = JSON.parse(read('package.json')) as { files: string[] }
   assert.ok(manifest.files.includes('docs/README.md'))
   assert.ok(manifest.files.includes('docs/development'))
+  // Yarn 4 的 files 按路径匹配：目录需递归 glob，根文件需锚定，避免夹带归档。
+  assert.ok(manifest.files.includes('docs/development/**'))
+  assert.ok(manifest.files.includes('lib/**'))
+  for (const file of ['README.md', 'DEPLOYMENT_GUIDE.md', 'CONFIGURATION_GUIDE.md', 'BEGINNER_GUIDE.md', 'command.md']) {
+    assert.ok(manifest.files.includes(`./${file}`))
+    assert.ok(!manifest.files.includes(file))
+  }
   assert.ok(manifest.files.includes('docs/SCHEDULE_PREPLAN.md'))
+  assert.ok(manifest.files.includes('docs/V2_VS_BETA10_COMPARISON.md'))
   assert.match(read('CONFIGURATION_GUIDE.md'), /useForStickers/)
   assert.match(read('DEPLOYMENT_GUIDE.md'), /DeepSeek 官方提供商/)
   assert.match(read('README.md'), /corepack yarn add/)

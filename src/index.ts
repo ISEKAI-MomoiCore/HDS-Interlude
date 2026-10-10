@@ -7,6 +7,9 @@ import { GroupWillingnessConfig } from './group-willingness'
 import { resolveSchedulePreplanConfig, SchedulePreplanConfig, schedulePreplanWindow } from './schedule-preplan'
 import { formatLogTime, formatStoryDisplayTime } from './time'
 import { installDesktopBridge } from './desktop-bridge'
+import { fetchShare, summarizeShare, formatDiffLines, buildConfigPatch, runAutoSync, readSyncState, snapshotDeepCopy } from './share-sync'
+export { fetchShare, sanitizeSharePayload, summarizeShare, formatDiffLines, buildConfigPatch, diffSection, storyDefaultsToSettingPatch, normalizeShareCode, SHARE_SECTIONS, runAutoSync, readSyncState, writeSyncState } from './share-sync'
+export type { ShareInfo, ShareSection, SectionDiff, ShareSummaryLines, SyncState, AutoUpdateResult } from './share-sync'
 
 declare module 'koishi' { interface Context { interlude: InterludeService } }
 
@@ -42,7 +45,8 @@ const defaultProvider: ProviderConfig = {
 const ProviderIdentity = Schema.object({
   label: Schema.string().default('Primary model').description('连接名称。'),
   enabled: Schema.boolean().default(true).description('启用此连接。'),
-  mode: Schema.union(['openai-compatible', 'zhipu-official', 'openai-official', 'deepseek-official', 'moonshot-official', 'dashscope-official', 'siliconflow-official', 'openrouter', 'gemini-openai']).default('openai-compatible').description('接口预设；重载后显示对应字段。'),
+  mode: Schema.union(['openai-compatible', 'zhipu-official', 'openai-official', 'deepseek-official', 'moonshot-official', 'dashscope-official', 'siliconflow-official', 'openrouter', 'gemini-openai', 'gemini-interactions']).default('openai-compatible').description('接口预设；重载后显示对应字段。'),
+  proxyAgent: Schema.string().default('').description('HTTP(S) 代理地址，如 http://127.0.0.1:7890（可选，留空直连）。访问需要代理的服务商（如 Google Gemini）时填写；只影响该连接的模型请求，实验性流式抢先回复与智谱官方流式通道暂不经过代理。'),
 })
 
 const ProviderAssignments = Schema.object({
@@ -58,7 +62,7 @@ const ProviderAssignments = Schema.object({
   priceCachedInput: Schema.number().min(0).default(0).description('缓存输入单价（百万 tokens；0 按输入计）。'),
 })
 
-function OfficialProvider(mode: 'openai-official' | 'moonshot-official' | 'siliconflow-official' | 'openrouter' | 'gemini-openai', defaultModel: string, description: string): Schema<any> {
+function OfficialProvider(mode: 'openai-official' | 'moonshot-official' | 'siliconflow-official' | 'openrouter' | 'gemini-openai' | 'gemini-interactions', defaultModel: string, description: string): Schema<any> {
   return Schema.object({
     mode: Schema.const(mode),
     apiKey: Schema.string().role('secret').default('').description(`${description} API Key。官方 endpoint 自动使用。`),
@@ -76,6 +80,8 @@ const Provider: Schema<ProviderConfig> = Schema.intersect([
       anthropicCache: Schema.boolean().default(false).description('Anthropic 缓存标记（服务端需支持）：缓存 system；cache-first 时同时标记历史前缀。关闭仍保留 cache-first 内容顺序。'),
       apiKey: Schema.string().role('secret').default('').description('API Key。'),
       model: Schema.string().default('').description('模型名。'),
+      deepseekThinking: Schema.union(['inherit', 'disabled', 'enabled']).default('inherit').description('DeepSeek 思考参数：inherit 不主动发送；disabled 强制关闭；enabled 强制开启。仅适用于支持该参数的 DeepSeek 兼容端点，非 DeepSeek 服务请保持 inherit。'),
+      deepseekReasoningEffort: Schema.union(['low', 'high', 'max']).default('low').description('仅在 DeepSeek 思考模式为 enabled 时生效。'),
       extraHeaders: Schema.string().role('textarea').default('').description('额外请求头 JSON（可留空）。'),
       extraBody: Schema.string().role('textarea').default('').description('额外请求体 JSON（可留空）。'),
     }),
@@ -102,7 +108,8 @@ const Provider: Schema<ProviderConfig> = Schema.intersect([
     }),
     OfficialProvider('siliconflow-official', 'Qwen/Qwen3-8B', '硅基流动官方'),
     OfficialProvider('openrouter', 'openai/gpt-5-mini', 'OpenRouter'),
-    OfficialProvider('gemini-openai', 'gemini-2.5-flash', 'Google Gemini OpenAI 兼容'),
+    OfficialProvider('gemini-interactions', 'gemini-2.5-flash', 'Google Gemini · Interactions API（推荐；AI Studio 密钥直用）'),
+    OfficialProvider('gemini-openai', 'gemini-2.5-flash', 'Google Gemini OpenAI 兼容层（旧；部分密钥已不可用）'),
   ]),
   ProviderAssignments,
 ]) as unknown as Schema<ProviderConfig>
@@ -191,7 +198,7 @@ const Model: Schema<ModelConfig> = Schema.object({
     mainPrompt: Schema.string().role('textarea').default('Compress completed scenes into concise continuity notes while preserving causality, promises, unresolved matters, and gradual character change.').description('压缩任务指令：定义摘要、事实和状态变更的提取目标。'),
     fixedPrompt: Schema.string().role('textarea').default('').description('压缩器必须遵守的长期规则。'),
     stylePrompt: Schema.string().role('textarea').default('Concise, factual, chronological, and concrete.').description('压缩结果的表达风格。'),
-  }) as unknown as Schema<CompactionConfig>).default({ enabled: true, modelId: '', providerId: '', model: '', temperature: 0.3, topP: 1, maxTokens: 2048, timeout: 60_000, responseFormat: 'json-object', mainPrompt: 'Compress completed scenes into concise continuity notes while preserving causality, promises, unresolved matters, and gradual character change.', fixedPrompt: '', stylePrompt: 'Concise, factual, chronological, and concrete.' }).description('高级：后台压缩与 Preplan 共用设置；一般保持默认即可。').collapse(true),
+  }) as unknown as Schema<CompactionConfig>).default({ enabled: true, modelId: '', providerId: '', model: '', temperature: 0.3, topP: 1, maxTokens: 2048, timeout: 60_000, responseFormat: 'json-object', mainPrompt: 'Compress completed scenes into concise continuity notes while preserving causality, promises, unresolved matters, and gradual character change.', fixedPrompt: '', stylePrompt: 'Concise, factual, chronological, and concrete.' }).description('高级：后台压缩与 Preplan 共用启用状态、模型路由与请求参数框架；Preplan 另有独立的 maxTokens/温度限制。关闭压缩会让 Preplan 模型调用直接返回空。一般保持默认即可。').collapse(true),
 })
 
 const RestWindowSchema: Schema<RestWindow> = Schema.object({
@@ -255,8 +262,8 @@ const SchedulePreplan: Schema<SchedulePreplanConfig> = Schema.object({
   enabled: Schema.boolean().default(true).description('启用近期日程审查与投影。'),
   horizonDays: Schema.natural().min(3).max(30).default(14).description('日程保存和展开天数。'),
   variationLevel: Schema.union(['stable', 'contextual', 'granular']).default('stable').description('变化颗粒度：稳定规律、阶段例外或少量候选变化。'),
-  candidateActivationProbability: Schema.number().min(0.05).max(0.5).step(0.05).default(0.25).description('候选变化激活概率。'),
-  candidateRevealMinutes: Schema.natural().min(15).max(360).default(120).description('候选具体内容的提前揭示时间。'),
+  candidateActivationProbability: Schema.number().min(0.05).max(0.5).step(0.05).default(0.25).description('候选变化激活概率(仅【变化颗粒度=granular】的 tentative 块适用;按故事+日期+块标识确定性决定,不逐轮重掷)。'),
+  candidateRevealMinutes: Schema.natural().min(15).max(360).default(120).description('候选具体内容的提前揭示时间(仅 granular 模式;已激活候选在揭示时间之前仅显示"可能的个人安排",进入揭示时间后显示具体内容;未激活候选不显示)。'),
   reviewAfterLocalHour: Schema.natural().min(0).max(23).default(3).description('每天从主角本地时间几点起允许进行一次空闲审查；没有新证据且覆盖充足时不调用模型。'),
   anchorAutoAdvance: Schema.boolean().default(true).description('让固定日程的开始/结束成为自动推进候选锚点，减少随机推进跨过上课、到校或离校等关键节点。'),
 })
@@ -286,8 +293,8 @@ const ChatRhythm: Schema<ChatRhythmConfig> = Schema.object({
 
 const AlterSystem: Schema<AlterSystemConfig> = Schema.object({
   enabled: Schema.boolean().default(true).description('启用情绪偏移追踪。它只增加临时氛围参考，不替代 recentScript、continuity 或稳定设定。'),
-  baseThreshold: Schema.number().min(1).max(50).default(10).description('Alter 累计绝对值达到此基础阈值时调用侧端分析模型。'),
-  densityFactor: Schema.number().min(0).max(1).step(0.05).default(0.3).description('最近一小时叙事越密集，阈值降低的比例越大；运行时最低不会低于基础阈值的一半。'),
+  baseThreshold: Schema.number().min(1).max(50).default(10).description('Alter 累计绝对值达到此基础阈值时调用侧端分析模型。按各参与者/独立生活 scope 分别累计,不是全故事总量。'),
+  densityFactor: Schema.number().min(0).max(1).step(0.05).default(0.3).description('最近一小时该 scope 的叙事越密集，阈值降低的比例越大；运行时最低不会低于基础阈值的一半。'),
   sameDirectionBoost: Schema.number().min(0).max(1).step(0.01).default(0.05).description('新变化与上次触发方向一致时，每点 Alter 增加的提示权重。'),
   oppositeDecay: Schema.number().min(0).max(1).step(0.01).default(0.15).description('新变化与上次触发方向相反时，每点 Alter 衰减的提示权重。'),
   minWeight: Schema.number().min(0).max(1).step(0.05).default(0.2).description('权重低于该值时清除当前 emotionalOffset。'),
@@ -328,8 +335,9 @@ const Memory: Schema<MemoryConfig> = Schema.object({
   factLimit: Schema.natural().min(1).max(200).default(20).description('每次主叙事请求附带的长期事实数。'),
   statePatchConfidenceThreshold: Schema.number().min(0).max(1).default(0.82).description('普通设定变更的最低置信度；低于此值只保留为候选。'),
   majorStatePatchConfidenceThreshold: Schema.number().min(0).max(1).default(0.95).description('重大设定变更的最低置信度。'),
-  statePatchMinEvidence: Schema.natural().min(1).max(20).default(3).description('兼容旧配置；普通变化至少需要的证据回合数下限。运行时不会低于 3。'),
-  statePatchMinTurns: Schema.natural().min(3).max(20).default(3).description('普通人格或关系变化至少需要来自多少个不同剧本回合。'),
+  statePatchMinEvidence: Schema.natural().min(1).max(20).default(3).description('【兼容旧配置】已被 statePatchMinTurns 取代；仅当后者未设置时生效，新配置请改用 statePatchMinTurns。'),
+  statePatchMinTurns: Schema.natural().min(1).max(20).default(3).description('普通人格或关系变化至少需要来自多少个不同剧本回合。可调低至 1 加快演化(证据要求随之变松)。'),
+  statePatchMajorMinScenes: Schema.natural().min(1).max(20).default(2).description('重大(major)设定变更自动应用所需的最少独立场景数。默认 2。'),
   statePatchMinDays: Schema.natural().min(1).max(30).default(2).description('普通变化至少要跨越多少个日历日；重大事件不受此限制。'),
   statePatchCooldownHours: Schema.natural().min(1).max(720).default(72).description('同一人格或关系路径应用一次长期变化后，多少小时内不再应用新的变化。'),
   maxFactsPerStory: Schema.natural().min(10).max(2_000).default(200).description('单个主剧本保留的长期事实总量上限。'),
@@ -338,7 +346,8 @@ const Memory: Schema<MemoryConfig> = Schema.object({
   compactionCharacterLimit: Schema.natural().min(500).max(200_000).default(32_000).description('压缩模型单次读取的最大字符数。'),
   sceneHookCharacters: Schema.natural().min(100).max(10_000).default(2_000).description('场景引子的最大字符数。'),
   sceneSummaryCharacters: Schema.natural().min(500).max(50_000).default(8_000).description('场景摘要的最大字符数。'),
-  arcSummaryCharacters: Schema.natural().min(500).max(100_000).default(12_000).description('剧情弧线摘要的最大字符数。'),
+  arcSummaryCharacters: Schema.natural().min(500).max(100_000).default(12_000).description('剧情弧线摘要的最大字符数(存储与压缩写入侧)。'),
+  arcPromptCharacters: Schema.natural().min(500).max(100_000).default(6_000).description('弧摘要随每回合提示词携带的最大字符数;超长时保留尾部(最贴近当前剧情),全量仍存库供压缩使用。'),
   previousSceneSummaries: Schema.natural().min(0).max(4).default(2).description('随主提示词附带几个紧邻已关闭场景的摘要（每条裁剪至 2000 字符，带时间范围），填补原始窗口与弧线摘要之间的记忆缝隙。0 表示关闭。'),
   factContentCharacters: Schema.natural().min(100).max(20_000).default(4_000).description('单条长期事实的最大字符数。'),
   factImportanceWeight: Schema.number().min(0).max(1).default(0.5).description('事实排序中的重要度权重。'),
@@ -346,8 +355,8 @@ const Memory: Schema<MemoryConfig> = Schema.object({
   factRecencyWeight: Schema.number().min(0).max(1).default(0.15).description('事实排序中的时间衰减权重。'),
   semanticWeight: Schema.number().min(0).max(2).default(0.55).description('启用 Embedding 后的语义相关度权重。'),
   unresolvedWeight: Schema.number().min(0).max(2).default(0.2).description('未解决事项的额外排序权重。'),
-  autoApplyStatePatches: Schema.boolean().default(true).description('是否自动应用达到门槛的设定演化建议。'),
-  allowMajorStateChanges: Schema.boolean().default(true).description('是否允许自动应用重大人物或世界状态变更。'),
+  autoApplyStatePatches: Schema.boolean().default(true).description('是否自动应用达到门槛的设定演化建议。关闭后提案不再自动应用——需用 interlude.memory.apply 逐条手动批准,否则会持续停留在待积累状态。'),
+  allowMajorStateChanges: Schema.boolean().default(true).description('是否允许自动应用重大人物或世界状态变更。关闭后 major 提案会停留在待积累状态(不算被拒绝),同样可用 interlude.memory.apply 手动批准。'),
   activeConsequencesEnabled: Schema.boolean().default(true).description('启用“剧情余波”：让确实影响后续生活的谈话或事件，在之后的写作中持续发挥短期作用。关闭后不会新增或注入余波。'),
   activeConsequencePromptLimit: Schema.natural().min(1).max(20).default(6).description('单次主叙事写作最多携带几条仍在生效的剧情余波。数值越高，连续性更强，但会增加少量上下文。'),
   activeConsequenceMaxDays: Schema.natural().min(1).max(30).default(7).description('一条剧情余波最长保留多少天。到期后会自然淡出；它不用于永久修改角色设定。'),
@@ -357,7 +366,7 @@ const Memory: Schema<MemoryConfig> = Schema.object({
   overlayMonthlyAfterDays: Schema.natural().min(5).max(180).default(10).description('超过多少天后，将短期摘要合并为长期状态。默认 10 天。'),
   overlayWeeklyWindowDays: Schema.natural().min(1).max(14).default(5).description('短期 overlay 摘要的合并窗口。默认每 5 天合并一次。'),
   overlayMonthlyWindowDays: Schema.natural().min(5).max(30).default(10).description('长期 overlay 状态的合并窗口。默认每 10 天合并一次。'),
-  overlayWeeklySummaryCharacters: Schema.natural().min(300).max(8_000).default(1_600).description('单个七天 overlay 摘要的最大字符数。'),
+  overlayWeeklySummaryCharacters: Schema.natural().min(300).max(8_000).default(1_600).description('单个短期(周窗口)overlay 摘要的最大字符数;窗口宽度见 overlayWeeklyWindowDays。'),
   overlayMonthlySummaryCharacters: Schema.natural().min(300).max(12_000).default(2_400).description('单个长期 overlay 摘要的最大字符数。'),
 }).collapse(true)
 
@@ -521,7 +530,7 @@ export const Config: Schema<InterludeConfig> = Schema.object({
   urge: Schema.object({
     enabled: Schema.boolean().default(false).description('启用弹性推进，替代固定间隔及对话后 10/20 分钟补写；不改变剧本文本。总自动推进开关仍优先。'),
     frequency: Schema.union(['low', 'medium', 'high', 'custom']).default('medium').description('低/中/高频或自定义；自定义未填写项沿用中频。高频会增加主叙事和时间导演调用。'),
-    proactiveWillingnessThreshold: Schema.number().min(0).max(1).step(.05).default(.4).description('仅 Urge 启用时的主动联系意愿门槛；不是发送概率。'),
+    proactiveWillingnessThreshold: Schema.number().min(0).max(1).step(.05).default(.4).description('仅 Urge 启用时的主动联系意愿门槛(Agency strict 模式使用;natural/balanced 模式改用 Agency 的 naturalWillingnessThreshold,调这里不生效)；不是发送概率。'),
     advanced: UrgeAdvanced.description('高级时间范围、随机性与调用预算；填写时间覆盖档位。'),
   }).description('【节奏 6】Urge 弹性推进：剧本驱动的自动调度（可选，替代固定间隔）。'),
   schedulePreplan: SchedulePreplan.description('【节奏 7】日程预排：近期稳定日程与变化颗粒度；主提示词只读取未来约半天。'),
@@ -551,15 +560,23 @@ export const Config: Schema<InterludeConfig> = Schema.object({
     intensity: Schema.union(['subtle', 'moderate', 'strong']).default('subtle').description('指导强度（第一版默认 subtle）。'),
   }).collapse(true).description('【扩展 16】长线叙事催化器（实验）：生成潜在张力与首次微表达许可（默认关闭）。'),
   qzone: Schema.object({
-    enabled: Schema.boolean().default(false).description('启用 QQ 空间（说说）通道：需要 SnowLuma 连接在线（qzone 系列扩展动作）。启用后可经 interlude.qzone 命令以她本人身份发说说；叙事决策流（何时发/发什么/对好友动态的反应）随后续版本接入。高频会被 Qzone 风控，请保持保守上限。'),
+    enabled: Schema.boolean().default(false).description('启用 QQ 空间（说说）通道：需要 SnowLuma 连接在线（qzone 系列扩展动作）。启用后可经 interlude.qzone 命令以她本人身份发说说;满足运行条件时叙事也会自动读取好友动态,并按模型安排的发帖/评论/点赞意图在限流内执行。高频会被 Qzone 风控，请保持保守上限。'),
     dailyPostCap: Schema.natural().min(0).max(20).default(3).description('每日发帖上限（0=禁止发帖）。'),
     dailyCommentCap: Schema.natural().min(0).max(60).default(6).description('每日评论上限（0=禁止评论）。'),
     dailyLikeCap: Schema.natural().min(0).max(120).default(12).description('每日点赞上限（0=禁止点赞）。'),
     minIntervalMinutes: Schema.natural().min(10).max(1_440).default(90).description('任意两次空间动作的最小间隔（分钟），跨类型共享。'),
     feedWindowMinutes: Schema.natural().min(15).max(720).default(120).description('好友动态轮询只消费该时间窗内的新鲜说说（分钟）；轮询节律为窗口的一半（15~60 分钟），单轮最多入账 2 条。'),
   }).collapse(true).description('【扩展 17】QQ 空间：说说/评论/点赞通道（需 SnowLuma；默认关闭）。'),
-  blindMode: BlindMode.description('【维护 15】盲区模式：低频心跳的最小运行形态。'),
-  logging: Logging.description('【维护 16】日志：级别、信息密度、布局和隐私预览。'),
+  presetSync: Schema.object({
+    enabled: Schema.boolean().default(false).description('启用预设同步：从 typ0-site 分享站自动拉取并应用配置。需填写分享码。'),
+    baseUrl: Schema.string().default('https://typ0.space').description('分享站地址。局域网自托管可填 http://192.168.x.x:5177。'),
+    shareCode: Schema.string().default('').description('8 位分享码(大小写均可,可带连字符)。在 typ0-site 详情页获取。'),
+    autoUpdate: Schema.boolean().default(false).description('自动更新：重载时检查远端 revision,有新版本才应用。关闭时仅通过 interlude.preset.sync 手动触发。'),
+    sections: Schema.array(Schema.string()).role('table').default([]).description('要同步的分区(留空 = 预设里有什么就同步什么)。可选:storyDefaults(配合"应用到当前故事"),runtime,urge,agency,memory,alterSystem,schedulePreplan,timelineDirector,chatActions,stickers,sharedStory,browser,worldSeeder,longHorizon,qzone,blindMode,logging。'),
+    applyToCurrentStory: Schema.boolean().default(false).description('同时将 storyDefaults 应用到当前运行中的故事(修改角色名/人设/世界等)。'),
+  }).collapse(true).description('【扩展 18】预设同步：从 typ0-site 分享站自动拉取配置(默认关闭)。'),
+  blindMode: BlindMode.description('【维护 19】盲区模式：低频心跳的最小运行形态。'),
+  logging: Logging.description('【维护 20】日志：级别、信息密度、布局和隐私预览。'),
   mainPrompt: Schema.string().role('textarea').default('').description('⚠️ 除非有把握，否则不要修改。系统主提示词（主叙事行为指令）：与固定合约、文风和特化块协作，塑造全部回合的写作行为；留空使用内置默认，改动下回合立即生效，出问题清空即可恢复默认。'),
   chatRhythm: ChatRhythm.description('【已弃用】对话节奏：仅兼容旧配置，不再统计、干预写作或重试。').hidden(),
 })
@@ -576,6 +593,12 @@ export function apply(ctx: Context, config: InterludeConfig) {
   // not register any Console field or change ordinary Koishi behaviour.
   const disposeDesktopBridge = installDesktopBridge(service)
   if (disposeDesktopBridge) ctx.on('dispose', disposeDesktopBridge)
+  // 预设同步:启动时 autoUpdate 检查(失败静默,不影响启动)
+  if (config.presetSync?.enabled && config.presetSync?.autoUpdate && config.presetSync?.shareCode?.trim()) {
+    void runAutoSync(ctx, service).catch((error) => {
+      startupLogger.warn('预设同步启动检查失败(不影响运行):%s', (error as Error).message)
+    })
+  }
   if (blindModeEnabled) {
     // Registered commands from every plugin reach this hook before their
     // action runs. Returning an empty fragment consumes them silently.
@@ -583,6 +606,18 @@ export function apply(ctx: Context, config: InterludeConfig) {
   } else {
     registerCommands(ctx, service, config)
   }
+
+  // 空格子命令兼容:Koishi 解析器对 "interlude script note" 是逐 token 贪心匹配,
+  // 中间层命令(如 interlude.script)一旦声明了参数即停止贪心,note 会被误当成
+  // 该参数——路由到 interlude.script 而非 interlude.script.note,两种写法行为
+  // 完全不同。这里在解析前把能命中已注册命令的空格前缀重写为点分形式。
+  ctx.middleware((session, next) => {
+    const commander = (ctx as any).$commander
+    if (!commander?.get) return next()
+    const rewritten = normalizeInterludeSpacing(session.content ?? '', (name) => !!commander.get(name, session))
+    if (rewritten !== undefined) session.content = rewritten
+    return next()
+  }, true)
 
   ctx.middleware(async (session, next) => {
     if (!session.content?.trim() && !extractSessionVoiceCount(session)) return next()
@@ -603,6 +638,15 @@ export function apply(ctx: Context, config: InterludeConfig) {
 
 function registerCommands(ctx: Context, service: InterludeService, config: InterludeConfig) {
   ctx.command('interlude', 'HDS Interlude：管理与查看命令')
+    .action(() => [
+      'HDS Interlude 命令入口。子命令用点分书写,例如:',
+      '· interlude.status —— 查看当前故事与模型状态',
+      '· interlude.timeline 10 —— 查看近期剧本',
+      '· interlude.memory 10 —— 查看相关记忆',
+      '· interlude.context —— 查看运行上下文摘要',
+      '管理命令:interlude.script.note / interlude.memory.apply / interlude.overlay.clear / interlude.preset.sync 等,',
+      '完整清单见文档 command.md。(空格写法如 "interlude script note" 也能自动识别,但推荐点分)',
+    ].join('\n'))
 
   const startStoryFromConsole = async (session: Session, legacyName?: string) => {
     const denial = service.manageSessionDenial(session)
@@ -665,7 +709,7 @@ function registerCommands(ctx: Context, service: InterludeService, config: Inter
       if (typeof story === 'string') return story
       const text = String(content ?? '').trim()
       if (!text) return '说说内容不能为空。'
-      if (!(await service.qzoneAvailable())) return 'QQ 空间通道不可用：请确认 Console 已启用【扩展 16】且 SnowLuma 连接在线。'
+      if (!(await service.qzoneAvailable())) return 'QQ 空间通道不可用：请确认 Console 已启用 QQ 空间(qzone.enabled,【扩展 17】)且 SnowLuma 连接在线。'
       const result = await service.qzoneExecute(story, 'post', { content: text, ugcRight: 4 }, session?.bot?.selfId)
       return result.ok ? `已发表说说（tid=${result.tid}，好友可见）。` : `发表失败：${result.error}`
     })
@@ -681,6 +725,9 @@ function registerCommands(ctx: Context, service: InterludeService, config: Inter
       const result = await service.linkParticipantEndpoint(participant, session?.platform ?? 'onebot', account)
       return result.ok ? `用户端点已链接（${account} → ${participant.displayName || id}）。` : `链接失败：${result.error}`
     })
+
+  /* ── 分享码:与 typ0-site 分享站联动的预设拉取/应用/回滚 ── */
+  registerPresetCommands(ctx, service)
 
   ctx.command('interlude.participant.unlink <endpointId>', '管理员：解除一个用户端点链接（可撤销；身份与历史保留）。')
     .action(async ({ session }, endpointId) => {
@@ -817,7 +864,7 @@ function registerCommands(ctx: Context, service: InterludeService, config: Inter
       if (typeof story === 'string') return story
       const participant = await service.findParticipant(session, story)
       const [scene, arc, facts] = await Promise.all([
-        service.activeScene(story.id), service.activeArc(story.id), service.facts(story.id, 8, '', participant?.id),
+        service.activeScene(story.id), service.activeArc(story.id), service.facts(story.id, 8),
       ])
       return [
         `场景引子：${scene?.hook || '尚未整理'}`,
@@ -869,13 +916,15 @@ function registerCommands(ctx: Context, service: InterludeService, config: Inter
       return facts.map(fact => `#${fact.id} [${fact.scope}] 重要度=${fact.importance.toFixed(2)} 置信度=${fact.confidence.toFixed(2)} 未解决=${fact.unresolved}\n${fact.content}`).join('\n\n')
     })
 
-  ctx.command('interlude.memory.add <scope:string> <content:text>', '管理员：手动添加长期事实；scope 为 character/world/relationship/event/promise')
+  ctx.command('interlude.memory.add <scope:string> <content:text>', '管理员：手动添加全局长期事实；relationship 事实必须在正文中明确写出相关人物；scope 为 character/world/relationship/event/promise')
     .action(async ({ session }, scope, content) => {
       if (!requireManager(service, session)) return '当前 QQ 没有共享主剧本的管理权限。'
       if (!isFactScope(scope)) return 'scope 必须是 character、world、relationship、event 或 promise。'
       const story = await requireStory(service, session)
       if (typeof story === 'string') return story
-      return await service.addAdminFact(story, scope, content) ? '已添加高置信度长期事实。' : '事实内容为空，未添加。'
+      return await service.addAdminFact(story, scope, content)
+        ? '已添加高置信度全局长期事实。'
+        : '事实内容为空或主体不明确，未添加；relationship 事实请在正文中写出具体人物，例如“小林说他准备出门”。'
     })
 
   ctx.command('interlude.memory.forget <id:number>', '管理员：将指定长期事实标记为已失效，可审计且不会物理删除')
@@ -917,7 +966,21 @@ function registerCommands(ctx: Context, service: InterludeService, config: Inter
       if (typeof story === 'string') return story
       const patches = await service.adminStatePatches(story.id, limit)
       if (!patches.length) return '当前没有设定演化提案。'
-      return patches.map(patch => `#${patch.id} [${patch.status}/${patch.target}/${patch.impact}] 置信度=${patch.confidence.toFixed(2)}\n提案：${patch.proposedValue}\n证据：${patch.evidence}`).join('\n\n')
+      const preview = (text: string, max = 220) => text.length > max ? `${text.slice(0, max)}…(共${text.length}字,详情可查数据库)` : text
+      return patches.map(patch => [
+        `#${patch.id} [${patch.status}/${patch.target}/${patch.impact}] 置信度=${patch.confidence.toFixed(2)}`,
+        `提出：${formatDateTime(patch.createdAt)}${patch.participantId ? ` · 关系对象：${patch.participantId}` : ''}`,
+        `提案：${preview(patch.proposedValue)}`,
+        `证据：${preview(patch.evidence, 160)}`,
+      ].join('\n')).join('\n\n')
+    })
+
+  ctx.command('interlude.memory.apply <id:number>', '管理员：手动批准一条设定演化提案——绕过证据阈值与自动应用开关,效果立即写入 overlay')
+    .action(async ({ session }, id) => {
+      if (!requireManager(service, session)) return '当前 QQ 没有共享主剧本的管理权限。'
+      const story = await requireStory(service, session)
+      if (typeof story === 'string') return story
+      return await service.applyAdminStatePatch(story, id) ? `设定演化提案 #${id} 已批准并写入 overlay。` : `未找到待批准的设定演化提案 #${id}。`
     })
 
   ctx.command('interlude.memory.reject <id:number>', '管理员：拒绝一条尚未应用的设定演化提案')
@@ -928,29 +991,32 @@ function registerCommands(ctx: Context, service: InterludeService, config: Inter
       return await service.rejectAdminStatePatch(story.id, id) ? `设定演化提案 #${id} 已拒绝。` : `未找到待审核的设定演化提案 #${id}。`
     })
 
-  ctx.command('interlude.overlay.clear <target:string>', '管理员：只清理指定部分的设定演化 overlay，不删除剧本和记忆；执行前会询问 y/n')
+  ctx.command('interlude.overlay.clear <target:string>', '管理员：只清理指定部分的设定演化 overlay，不删除剧本和记忆；执行前展示将清理的内容并询问 y/n')
     .action(async ({ session }, target) => {
-      if (!requireManager(service, session)) return '无权限：当前账号不是 HDSI 管理员。'
+      if (!requireManager(service, session)) return '无权限：当前 QQ 不是 HDSI 管理员。'
       const normalized = String(target || '').trim().toLowerCase() as 'character' | 'perspective' | 'relationship' | 'world' | 'all'
       if (!['character', 'perspective', 'relationship', 'world', 'all'].includes(normalized)) return 'target 必须是 character、perspective、relationship、world 或 all。'
-      if (!await askConfirmation(session, `即将清理 ${normalized} overlay；剧本和记忆不会删除。确认执行吗？(y/n)`)) return '操作已取消。'
       const story = await requireStory(service, session)
       if (typeof story === 'string') return story
+      // 预览将清理的内容,避免盲清(提案与快照计数 + overlay 现有内容摘要)
+      const status = await service.adminOverlayStatus(story.id)
+      const preview = describeOverlayForClear(status.state, normalized, status.proposed.length, status.snapshots.length)
+      if (!await askConfirmation(session, `${preview}\n\n即将清理 ${normalized} overlay；剧本和记忆不会删除。确认执行吗？(y/n)`)) return '操作已取消。'
       const result = await service.clearSettingOverlay(story, normalized)
       const participantNote = normalized === 'relationship' || normalized === 'all' ? `，已清理 ${result.participantCount} 个参与者关系 overlay` : ''
       return `已清理 ${normalized} overlay${participantNote}；剧本、长期事实和普通记忆均未删除。`
     })
 
-  ctx.command('interlude.overlay.status', '管理员：查看当前 overlay、待积累提案和压缩归档状态')
+  ctx.command('interlude.overlay.status', '查看当前 overlay、待积累提案和压缩归档状态(只读,对白名单用户开放)')
     .action(async ({ session }) => {
-      if (!requireManager(service, session)) return '无权限：当前账号不是 HDSI 管理员。'
       const story = await requireStory(service, session)
       if (typeof story === 'string') return story
       const status = await service.adminOverlayStatus(story.id)
-      const overlay = JSON.stringify(status.state)
       return [
-        `当前全局 overlay：${overlay === '{}' ? '空' : overlay}`,
-        `待积累提案：${status.proposed.length} 条（需要跨多个剧本回合和日期后才会应用）`,
+        '当前全局 overlay：',
+        ...(describeOverlayState(status.state) || ['(空——设定尚未产生稳定演化)']),
+        '',
+        `待积累提案：${status.proposed.length} 条（可 interlude.memory.apply 手动批准,或等证据跨回合跨日后自动应用）`,
         `已应用/已归档提案：${status.applied.length} 条`,
         `已清理提案：${status.cleared.length} 条`,
         `overlay 压缩快照：${status.snapshots.length} 条`,
@@ -1014,7 +1080,16 @@ function registerCommands(ctx: Context, service: InterludeService, config: Inter
       if (!requireManager(service, session)) return '无权限：当前账号不是 HDSI 管理员。'
       if (!await askConfirmation(session, '即将清空 HDSI 自有数据库，剧本、记忆和状态记录都会删除。确认执行吗？(y/n)')) return '操作已取消。'
       const result = await service.clearDatabase()
-      return `HDSI 数据库清空完成：处理 ${result.removed} 条记录${result.logicallyCleared ? `，其中 ${result.logicallyCleared} 条因 SQLite 锁定改为逻辑清空` : ''}。`
+      // 清库同时重置分享码同步状态:否则"已同步 revision N"的记忆会让下次
+      // 自动同步跳过,重建的故事只能孵化自旧配置模板(rc48 修复)
+      let syncStateReset = false
+      try {
+        const fs = await import('node:fs')
+        const path = await import('node:path')
+        fs.unlinkSync(path.join(ctx.baseDir, 'data', 'hds-interlude', 'preset-sync-state.json'))
+        syncStateReset = true
+      } catch { /* 状态文件本就不存在时无需处理 */ }
+      return `HDSI 数据库清空完成：处理 ${result.removed} 条记录${result.logicallyCleared ? `，其中 ${result.logicallyCleared} 条因 SQLite 锁定改为逻辑清空` : ''}。${syncStateReset ? '分享码同步状态已重置：下次启动/手动 sync 会重新拉取并应用预设。' : ''}`
     })
 
   ctx.command('interlude.purge.all', '管理员：彻底重置所有平台的剧本、记忆与 Canon；执行前会询问 y/n')
@@ -1095,8 +1170,258 @@ async function changeStatus(service: InterludeService, session: Session, status:
 
 function requireManager(service: InterludeService, session: Session) { return service.canManageSession(session) }
 
+/** minato timestamp 即 Date;统一成本地可读时间。 */
+const formatDateTime = (value: Date | string | undefined) => {
+  const d = value instanceof Date ? value : value ? new Date(String(value).replace(' ', 'T')) : undefined
+  return d && !Number.isNaN(d.getTime())
+    ? d.toLocaleString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false })
+    : '—'
+}
+
+/** overlay 字段的人读摘要(每字段一行预览),替代原始 JSON 倾泻。 */
+function describeOverlayState(overlay: { characterProfile?: string; characterTraits?: string[]; perspective?: string; world?: string; relationship?: string } | undefined): string[] {
+  if (!overlay) return []
+  const line = (label: string, text?: string) => text ? `· ${label}(${text.length}字)：${text.length > 80 ? `${text.slice(0, 80)}…` : text}` : ''
+  return [
+    line('角色人设', overlay.characterProfile),
+    overlay.characterTraits?.length ? `· 角色特质(${overlay.characterTraits.length}条)：${overlay.characterTraits.slice(-3).join(' / ').slice(0, 80)}` : '',
+    line('视角', overlay.perspective),
+    line('世界', overlay.world),
+    line('全局关系', overlay.relationship),
+  ].filter(Boolean)
+}
+
+/** overlay.clear 确认前的预览:现有内容 + 将被标记清理的提案/快照规模。 */
+function describeOverlayForClear(overlay: Parameters<typeof describeOverlayState>[0], target: string, proposedCount: number, snapshotCount: number) {
+  const affects = (field: string) => target === 'all' || target === field
+  const parts: string[] = []
+  if (affects('character') && (overlay?.characterProfile || overlay?.characterTraits?.length)) parts.push('角色人设/特质演化')
+  if (affects('perspective') && overlay?.perspective) parts.push('视角演化')
+  if (affects('relationship') && overlay?.relationship) parts.push('全局关系演化')
+  if (affects('world') && overlay?.world) parts.push('世界演化')
+  const overlayNote = parts.length ? `overlay 现有内容:${parts.join('、')}` : 'overlay 现有内容:(所选范围为空)'
+  return `${overlayNote};待积累提案 ${proposedCount} 条、压缩快照 ${snapshotCount} 条将按范围标记清理。`
+}
+
+/* ═══ 分享码命令(typ0-site 联动) ═══ */
+const SHARE_SNAPSHOT_DIR = () => 'data/hds-interlude'
+const SHARE_SNAPSHOT_FILE = () => 'data/hds-interlude/share-snapshot.json'
+
+function registerPresetCommands(ctx: Context, service: InterludeService) {
+  const shareBase = () => String(process.env.HDSI_SHARE_BASE ?? '').trim() || 'https://typ0.space'
+  const parseArgs = (text: string) => {
+    const args = String(text ?? '').trim().split(/\s+/).filter(Boolean)
+    const valueOf = (flag: string) => { const i = args.findIndex((a) => a.toLowerCase() === flag); return i >= 0 ? args[i + 1] : undefined }
+    return {
+      code: args.find((a, i) => !a.startsWith('--') && args[i - 1]?.toLowerCase() !== '--sections' && args[i - 1]?.toLowerCase() !== '--base'),
+      baseUrl: valueOf('--base') ?? shareBase(),
+      story: args.some((a) => a.toLowerCase() === '--story'),
+      sectionFilter: (() => { const v = valueOf('--sections'); return v ? v.split(/[,，]/).map((s) => s.trim()).filter(Boolean) : null })(),
+    }
+  }
+
+  ctx.command('interlude.preset.check <code:text>', '管理员:拉取分享码预设并预览与本地配置的差异(不写入任何内容)。')
+    .action(async ({ session }, text) => {
+      if (!requireManager(service, session)) return '当前 QQ 没有共享主剧本的管理权限。'
+      const { code, baseUrl, story, sectionFilter } = parseArgs(String(text ?? ''))
+      if (!code) return '用法:interlude.preset.check <分享码> [--base http://…] [--sections runtime,urge] [--story]'
+      try {
+        const { info, removed } = await fetchShare(ctx, baseUrl, code)
+        const sections = sectionFilter ? info.sections.filter((s) => sectionFilter.includes(s)) : info.sections
+        if (!sections.length) return '指定的分区在该预设中不存在。'
+        const summary = summarizeShare(service, info, sections)
+        const lines = formatDiffLines(summary)
+        if (removed.length) lines.push(`(插件侧清洗剔除 ${removed.length} 个连接类字段)`)
+        if (!summary.diffs.length && !Object.keys(summary.storyPatch).length) lines.push('(与本地配置无差异)')
+        const baseArg = baseUrl !== shareBase() ? ` --base ${baseUrl}` : ''
+        lines.push('', `确认无误后执行:interlude.preset.apply ${info.code}${baseArg}${story ? ' --story' : ''}${sectionFilter ? ` --sections ${sectionFilter.join(',')}` : ''}`)
+        return lines.join('\n')
+      } catch (error) { return `分享码检查失败:${(error as Error).message}` }
+    })
+
+  ctx.command('interlude.preset.apply <code:text>', '管理员:应用分享码预设——预览差异、y/n 确认后写入配置(含 revision 二次校验与应用前快照)。')
+    .action(async ({ session }, text) => {
+      if (!requireManager(service, session)) return '当前 QQ 没有共享主剧本的管理权限。'
+      const { code, baseUrl, story: applyStory, sectionFilter } = parseArgs(String(text ?? ''))
+      if (!code) return '用法:interlude.preset.apply <分享码> [--base http://…] [--sections runtime,urge] [--story]'
+      try {
+        // 第一次拉取:预览
+        const first = await fetchShare(ctx, baseUrl, code)
+        const sections = sectionFilter ? first.info.sections.filter((s) => sectionFilter.includes(s)) : first.info.sections
+        if (!sections.length) return '指定的分区在该预设中不存在。'
+        const summary = summarizeShare(service, first.info, sections)
+        const lines = formatDiffLines(summary)
+        const previewRevision = first.info.revision
+        if (!await askConfirmation(session, [...lines, '', `即将应用 revision ${previewRevision}(配置分区整段替换${sections.includes('storyDefaults') ? ',storyDefaults 同时写入配置模板' : ''}${applyStory ? ',并应用到当前故事' : ''})。继续吗?`].join('\n'))) return '操作已取消。'
+        // 第二次拉取:revision 必须与预览一致,防止预览与应用之间远端发新版
+        const second = await fetchShare(ctx, baseUrl, code)
+        if (second.info.revision !== previewRevision) {
+          return `远端已更新(revision ${previewRevision} → ${second.info.revision}),预览内容可能已过期。请重新执行 interlude.preset.check ${second.info.code}。`
+        }
+        // 配置写入面 = 运行时分区 + storyDefaults 模板(清库重建与新故事的孵化来源)
+        const patchSections = sections.includes('storyDefaults') && second.info.payload.storyDefaults && typeof second.info.payload.storyDefaults === 'object'
+          ? [...summary.configSections, 'storyDefaults']
+          : summary.configSections
+        // 应用前快照(配置分区 + 可选故事设定);深拷贝避免 scope.update/updateSetting 原地修改污染快照
+        const snapshot: Record<string, unknown> = {}
+        for (const section of patchSections) snapshot[section] = snapshotDeepCopy((service.config as any)[section] ?? null)
+        const foundStory = applyStory && Object.keys(summary.storyPatch).length ? await service.findStory(session!) : undefined
+        const storyForSnapshot = foundStory && typeof foundStory !== 'string' ? foundStory : null
+        // 故事设定快照必须在 updateSetting 之前拷贝,否则快照里是"应用后"的值
+        const storySettingSnapshot = snapshotDeepCopy(storyForSnapshot?.setting ?? null)
+        // 写入配置(scope.update 持久化到 koishi.yml)
+        const results: string[] = []
+        if (patchSections.length) {
+          const patch = buildConfigPatch(service.config as unknown as Record<string, unknown>, second.info.payload, patchSections, { includeStoryDefaults: true })
+          ctx.scope.update(patch as any)
+          results.push(`配置已写入:${patchSections.join('、')}(storyDefaults 模板即时生效于新故事;部分运行时参数需插件重载后生效)`)
+        }
+        if (applyStory) {
+          if (storyForSnapshot && Object.keys(summary.storyPatch).length) {
+            const cleanPatch = JSON.parse(JSON.stringify(summary.storyPatch))
+            if (cleanPatch.user && !cleanPatch.user.displayName) delete cleanPatch.user.displayName
+            if (cleanPatch.user && !Object.keys(cleanPatch.user).length) delete cleanPatch.user
+            await service.updateSetting(storyForSnapshot, cleanPatch)
+            results.push('storyDefaults 已应用到当前故事设定。')
+          } else {
+            results.push('当前会话没有可应用的故事(或预设无 storyDefaults 内容),已跳过故事设定。')
+          }
+        }
+        // 保存快照供回滚
+        try {
+          const fs = await import('node:fs')
+          const path = await import('node:path')
+          const file = path.join(ctx.baseDir, SHARE_SNAPSHOT_FILE())
+          fs.mkdirSync(path.join(ctx.baseDir, SHARE_SNAPSHOT_DIR()), { recursive: true })
+          fs.writeFileSync(file, JSON.stringify({
+            code: second.info.code, revision: second.info.revision, title: second.info.title,
+            appliedAt: new Date().toISOString(), configSections: snapshot,
+            storySetting: storySettingSnapshot, storyId: storyForSnapshot?.id ?? null,
+          }))
+          results.push('(已保存应用前快照:interlude.preset.rollback 可恢复)')
+        } catch { results.push('(快照保存失败,不影响本次应用结果)') }
+        return [`已应用「${second.info.title}」revision ${second.info.revision}。`, ...results].join('\n')
+      } catch (error) { return `分享码应用失败:${(error as Error).message}` }
+    })
+
+  ctx.command('interlude.preset.status', '管理员:查看最近一次分享码应用的状态。')
+    .action(async ({ session }) => {
+      if (!requireManager(service, session)) return '当前 QQ 没有共享主剧本的管理权限。'
+      try {
+        const fs = await import('node:fs')
+        const path = await import('node:path')
+        const snap = JSON.parse(fs.readFileSync(path.join(ctx.baseDir, SHARE_SNAPSHOT_FILE()), 'utf8'))
+        return [
+          `最近应用:${snap.title}(分享码 ${snap.code},revision ${snap.revision})`,
+          `时间:${snap.appliedAt}`,
+          `分区:${Object.keys(snap.configSections ?? {}).join('、') || '(无)'}`,
+          snap.storySetting ? '含当前故事设定快照' : '',
+        ].filter(Boolean).join('\n')
+      } catch { return '尚无应用记录。' }
+    })
+
+  ctx.command('interlude.preset.sync', '管理员:手动触发预设同步(使用 Console 配置区填写的分享码),或查看同步配置状态。')
+    .action(async ({ session }) => {
+      if (!requireManager(service, session)) return '当前 QQ 没有共享主剧本的管理权限。'
+      const sync = service.config.presetSync
+      if (!sync?.enabled || !sync.shareCode?.trim()) {
+        return [
+          '预设同步未启用。',
+          '请在 Console → 【扩展 18】预设同步 中配置:',
+          '  1. 启用预设同步',
+          '  2. 填写分享码(8 位,在 typ0-site 详情页获取)',
+          `  3.${sync?.autoUpdate ? ' 自动更新已开启(重载时检查)' : ' 自动更新未开启(仅手动触发)'}`,
+          '',
+          '填好后保存并重载,再执行 interlude.preset.sync 手动触发一次同步。',
+        ].join('\n')
+      }
+      // 显示配置状态
+      const state = await readSyncState(ctx.baseDir)
+      const statusLines = [
+        `同步配置:${sync.baseUrl} · 分享码 ${sync.shareCode}`,
+        `自动更新:${sync.autoUpdate ? '开启(重载时检查)' : '关闭(仅手动)'}`,
+        `应用分区:${sync.sections?.length ? sync.sections.join('、') : '预设里有什么就同步什么'}`,
+        `应用到当前故事:${sync.applyToCurrentStory ? '是' : '否'}`,
+      ]
+      if (state) {
+        statusLines.push(`最近同步:${state.title} revision ${state.revision} @ ${state.appliedAt}`)
+        if (state.lastError) statusLines.push(`上次错误:${state.lastError}`)
+      } else {
+        statusLines.push('(尚未同步过)')
+      }
+      // 触发同步
+      if (!await askConfirmation(session, [...statusLines, '', '现在触发一次同步吗?'].join('\n'))) {
+        return statusLines.join('\n')
+      }
+      // 手动触发始终强制重新应用:revision 未变也重写配置模板与故事设定,
+      // 否则清库重建/配置漂移后没有任何恢复手段(rc48 修复)
+      const result = await runAutoSync(ctx, service, { force: true })
+      if (!result) return '同步未执行(请检查配置)。'
+      return [...statusLines, '', `同步结果:${result.applied ? '✅ 已应用' : '⏭ 跳过'} — ${result.reason}`].join('\n')
+    })
+
+  ctx.command('interlude.preset.rollback', '管理员:回滚最近一次分享码应用(恢复应用前快照)。')
+    .action(async ({ session }) => {
+      if (!requireManager(service, session)) return '当前 QQ 没有共享主剧本的管理权限。'
+      let snap: any
+      try {
+        const fs = await import('node:fs')
+        const path = await import('node:path')
+        snap = JSON.parse(fs.readFileSync(path.join(ctx.baseDir, SHARE_SNAPSHOT_FILE()), 'utf8'))
+      } catch {
+        // 手动 apply 无记录时,回退读自动同步的状态文件(含同样的应用前快照),
+        // 否则 autoUpdate 应用后无法回滚
+        const syncState = await readSyncState(ctx.baseDir)
+        if (syncState && syncState.configSections && Object.keys(syncState.configSections).length) {
+          snap = {
+            title: syncState.title, code: syncState.code, revision: syncState.revision, appliedAt: syncState.appliedAt,
+            configSections: syncState.configSections, storySetting: syncState.storySetting, storyId: syncState.storyId,
+          }
+        } else {
+          return '没有可回滚的应用记录。'
+        }
+      }
+      if (!await askConfirmation(session, `将把以下分区恢复到应用「${snap.title}」之前的状态:\n${Object.keys(snap.configSections ?? {}).join('、')}${snap.storySetting ? '\n以及该故事的角色设定' : ''}\n继续吗?`)) return '操作已取消。'
+      try {
+        const sections = Object.entries(snap.configSections ?? {}) as [string, unknown][]
+        if (sections.length) {
+          const restore: Record<string, unknown> = { ...(service.config as any) }
+          for (const [section, value] of sections) {
+            // 应用前不存在的分区(快照为 null)回滚时移除,而不是置 null——置 null 可能过不了 Schema 校验
+            if (value == null) delete restore[section]
+            else restore[section] = value
+          }
+          ctx.scope.update(restore as any)
+        }
+        if (snap.storySetting && snap.storyId) {
+          await (service as any).dbSet('interlude_story', { id: snap.storyId }, { setting: snap.storySetting, updatedAt: new Date() })
+        }
+        return `已回滚到「${snap.title}」应用之前的状态。`
+      } catch (error) { return `回滚失败:${(error as Error).message}` }
+    })
+}
+
+
 function isFactScope(value: string): value is 'character' | 'world' | 'relationship' | 'event' | 'promise' {
   return ['character', 'world', 'relationship', 'event', 'promise'].includes(value)
+}
+
+/** 空格子命令归一化:把能命中已注册命令的空格前缀重写为点分形式。
+ * 背景:Koishi 解析器逐 token 贪心匹配,中间层命令(如 interlude.script)声明了
+ * 参数即停止贪心——"interlude script note x" 会路由到 interlude.script(limit
+ * 收到 note),与点分写法行为完全不同。返回 undefined 表示无需重写。 */
+export function normalizeInterludeSpacing(content: string, isRegistered: (name: string) => boolean): string | undefined {
+  const trimmed = String(content ?? '').trim()
+  const match = trimmed.match(/^([/!.]?)(interlude)(\s+)(\S[\s\S]*)$/)
+  if (!match) return undefined
+  const tokens = `interlude ${match[4]}`.split(/\s+/)
+  for (let n = Math.min(tokens.length, 4); n >= 2; n--) {
+    const name = tokens.slice(0, n).join('.')
+    if (!isRegistered(name)) continue
+    const rest = tokens.slice(n).join(' ')
+    return `${match[1]}${name}${rest ? ` ${rest}` : ''}`
+  }
+  return undefined
 }
 
 export function looksLikeInterludeCommand(content: string) { return /^[!/.]?interlude(?:\s|$|\.)/i.test(content.trim()) }
@@ -1104,3 +1429,6 @@ export function looksLikeInterludeCommand(content: string) { return /^[!/.]?inte
 export * from './narrator'
 export * from './service'
 export * from './types'
+
+// Public pure decoder for read-only integrations (no dependency on unpublished src paths).
+export { decodeStoryState } from './story-state'

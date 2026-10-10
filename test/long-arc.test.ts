@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
+  advanceLongHorizonGenerationBaseline,
   calculateLongHorizonScore,
   DEFAULT_LONG_HORIZON_CONFIG,
   isEligibleNarrativeEntry,
@@ -65,6 +66,20 @@ test('resolveConversationKind：script 优先读取 scriptEvents，避免群聊�
 
 // ── 加权计分 ─────────────────────────────────────────────────────────────────
 
+test('advanceLongHorizonGenerationBaseline：隐私过滤空窗口只消费一次复核基线', () => {
+  const progress = {
+    storyId: 's', lastCountedEntryId: 10, totalScore: 25,
+    privateCount: 25, privateScore: 25, groupCount: 0, groupScore: 0,
+    unknownCount: 0, lastGenerationScore: 0, lastGenerationEntryId: 0,
+    updatedAt: new Date('2026-10-01T00:00:00.000Z'),
+  }
+  const advanced = advanceLongHorizonGenerationBaseline(progress, 25, 12, new Date('2026-10-02T00:00:00.000Z'))
+  assert.equal(advanced.totalScore, 25)
+  assert.equal(advanced.lastGenerationScore, 25)
+  assert.equal(advanced.lastGenerationEntryId, 12)
+  assert.equal(advanced.lastCountedEntryId, 10)
+  assert.equal(advanced.updatedAt.toISOString(), '2026-10-02T00:00:00.000Z')
+})
 test('calculateLongHorizonScore：私聊 1.0 / 群聊 0.5 / unknown 0', () => {
   const entries = [
     entry({ id: 1, kind: 'user-message', metadata: { conversationKind: 'private' } }),
@@ -272,4 +287,18 @@ test('resolveLongHorizonConfig：默认关闭 + 范围夹取', () => {
   assert.equal(clamped.reviewIncrement, 500, '最大值 500')
   assert.equal(clamped.privateWeight, 1.0, '私聊权重固定为 1.0')
   assert.equal(clamped.groupWeight, 0.5, '群聊权重固定为 0.5')
+})
+
+test('进度更新载荷不得包含主键 storyId（cannot modify primary key 回归）', async () => {
+  const { progressUpdatePayload } = await import('../src/long-arc')
+  const row = {
+    storyId: 'character:onebot:10001:20002',
+    lastCountedEntryId: 42, totalScore: 88.5,
+    privateCount: 10, privateScore: 60, groupCount: 4, groupScore: 12, unknownCount: 2,
+    lastGenerationScore: 30, lastGenerationEntryId: 20, updatedAt: new Date(),
+  }
+  const payload = progressUpdatePayload(row)
+  assert.equal('storyId' in payload, false, 'set 载荷含主键会让 minato 抛 cannot modify primary key')
+  assert.equal(payload.lastCountedEntryId, 42)
+  assert.equal(payload.totalScore, 88.5)
 })

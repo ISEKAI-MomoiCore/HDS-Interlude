@@ -79,6 +79,44 @@ test('fact retrieval reserves lanes for recently resolved events and open promis
   assert.ok(selected.some(item => item.id === promise.id))
 })
 
+test('participant-specific legacy facts remain global narrative evidence', async () => {
+  const factAboutOtherParticipant = fact(201, 'relationship', false, '小林说他准备出门')
+  factAboutOtherParticipant.participantId = 'legacy-private-id'
+  const service = {
+    memoryConfig: { factLimit: 10, maxFactsPerStory: 100, factImportanceWeight: 0.5, factConfidenceWeight: 0.35, factRecencyWeight: 0.15, semanticWeight: 0.55, unresolvedWeight: 0.2 },
+    config: { model: { embedding: { liveQuery: false } } },
+    dbGet: async (_table: string, query: any) => query.scope === 'event' && query.unresolved === false
+      ? []
+      : query.scope === 'promise' ? [] : [factAboutOtherParticipant],
+  }
+  const selected = await (InterludeService.prototype as any).facts.call(service, 'story', 10, '', 'current-participant') as NarrativeFact[]
+  assert.deepEqual(selected.map(item => item.id), [factAboutOtherParticipant.id])
+})
+
+test('narrator facts expose content but not the legacy participant id', () => {
+  const request: NarrativeRequest = {
+    phase: 'user-message', story: story(), from: now, now, userMessage: '你好', participant: null,
+    participants: [], shareParticipantDetails: false, dueIntents: [], activeConsequences: [], supersededIntents: [],
+    recentEntries: [], memories: [], facts: [fact(202, 'relationship', false, '小林说他准备出门')],
+  }
+  ;(request.facts![0] as any).participantId = 'legacy-private-id'
+  const payload = toPromptPayload(request) as any
+  const durableFacts = payload.relevantEstablishedEpisodes.durableFacts
+  assert.equal(durableFacts[0].participantId, undefined)
+  assert.equal(durableFacts[0].content, '小林说他准备出门')
+})
+
+test('ambiguous relationship facts are not persisted as standalone facts', async () => {
+  const service = {
+    memoryConfig: { factContentCharacters: 4_000, maxFactsPerStory: 200 },
+    dbGet: async () => { throw new Error('ambiguous fact should be rejected before reading existing rows') },
+  }
+  const rejected = await (InterludeService.prototype as any).persistFact.call(service, 'story', {
+    scope: 'relationship', content: '他说他准备出门', sourceEntryIds: [],
+  }, [], now)
+  assert.equal(rejected, false)
+})
+
 test('fact retrieval scans a broad bounded pool and lets literal old evidence outrank generic rows', async () => {
   const target = { ...fact(999, 'event', false, '星期二男孩是 13 号，不是 27 号'), importance: 0.1 }
   const crowded = Array.from({ length: 220 }, (_, index) => fact(index + 1, 'event', true, `普通高重要度事件 ${index}`))

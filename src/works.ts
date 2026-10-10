@@ -112,12 +112,12 @@ export class SharedWorks {
     if (this.active.size >= 1 || jobs.some(j => j.status === 'running')) throw new Error('已有作品任务进行中或中断待确认；请查看任务状态。')
     pruneTerminalJobs(row.state)
     pruneTerminalProposals(row.state)
-    if (jobs.length >= 32 || row.state.proposals.length >= 32) throw new Error('作品任务或提案达到上限；请先处理待决提案。')
+    if (row.state.jobs!.length >= 32 || row.state.proposals.length >= 32) throw new Error('作品任务或提案达到上限；请先处理待决提案。')
     const request = parseWorkGenerationRequest(input)
     if (request.baseRevisionId !== row.state.head) throw new Error('创作基础版本已过期。')
     const job: WorkGenerationJob = { ...request, id: randomUUID(), operationKey, sourceEntryId,
       modelId: boundedText(modelId, '模型 ID', 200), status: 'running', createdAt: new Date().toISOString() }
-    jobs.push(job)
+    row.state.jobs!.push(job)
     // Reserve before awaiting CAS, so competing relationships cannot exceed concurrency.
     this.active.add(job.id)
     try { await this.save(row) } catch (error) { this.active.delete(job.id); throw error }

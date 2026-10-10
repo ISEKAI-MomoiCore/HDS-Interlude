@@ -475,6 +475,15 @@ function stringList(value: unknown, limit: number): string[] {
 
 /** 数据库行类型（database.ts 的表声明引用）。 */
 /** Durable accumulator state, kept separate from versioned guidance rows. */
+/** Minato 的 set 拒绝更新载荷包含主键（"cannot modify primary key"）——
+ * progress 表主键为 storyId，更新时必须从载荷中剔除。 */
+export function progressUpdatePayload(
+  progress: LongArcProgressRow,
+): Omit<LongArcProgressRow, 'storyId'> {
+  const { storyId: _primaryKey, ...mutable } = progress
+  return mutable
+}
+
 export interface LongArcProgressRow {
   storyId: string
   lastCountedEntryId: number
@@ -489,6 +498,25 @@ export interface LongArcProgressRow {
   updatedAt: Date
 }
 
+/**
+ * Consume a review window when no evidence is visible to the background model.
+ * The score remains cumulative, but the already-audited window must not trigger
+ * the same generation again on every later private/hidden entry.
+ */
+export function advanceLongHorizonGenerationBaseline(
+  progress: LongArcProgressRow,
+  currentScore: number,
+  lastGenerationEntryId: number,
+  updatedAt = new Date(),
+): LongArcProgressRow {
+  return {
+    ...progress,
+    totalScore: currentScore,
+    lastGenerationScore: currentScore,
+    lastGenerationEntryId: Math.max(progress.lastGenerationEntryId, lastGenerationEntryId),
+    updatedAt,
+  }
+}
 export interface LongArcGuidanceRow {
   id?: number
   storyId: string

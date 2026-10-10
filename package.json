@@ -1,6 +1,6 @@
 {
   "name": "koishi-plugin-hds-interlude",
-  "version": "1.0.1-rc36",
+  "version": "1.0.1-rc50",
   "description": "A time-aware, persistent narrative chat framework for Koishi.",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",
@@ -11,18 +11,19 @@
     "test:model": "node --import tsx --test test/model-behavior.test.ts"
   },
   "files": [
-    "lib",
-    "README.md",
-    "DEPLOYMENT_GUIDE.md",
-    "CONFIGURATION_GUIDE.md",
-    "BEGINNER_GUIDE.md",
-    "command.md",
+    "lib/**",
+    "./README.md",
+    "./DEPLOYMENT_GUIDE.md",
+    "./CONFIGURATION_GUIDE.md",
+    "./BEGINNER_GUIDE.md",
+    "./command.md",
     "docs/README.md",
     "docs/FORWARD_MESSAGE_READING_DESIGN.md",
     "docs/GROUP_HISTORICAL_IMAGE_CONTEXT_DESIGN.md",
     "docs/ARCHITECTURE.md",
     "docs/SCRIPT_CENTRIC_ARCHITECTURE_REDESIGN.md",
     "docs/V2_IN_PLACE_REFACTOR_IMPLEMENTATION_FORM.md",
+    "docs/V2_VS_BETA10_COMPARISON.md",
     "docs/ALTER_SYSTEM.md",
     "docs/AGENCY_WINDOW.md",
     "docs/SCHEDULE_PREPLAN.md",
@@ -37,7 +38,8 @@
     "docs/INDIRECT_SUBJECT_DESIGN.md",
     "docs/LONG_HORIZON_NARRATIVE_GUIDANCE_DESIGN.md",
     "docs/OFFLINE_ATTENTION_EXPERIMENT.md",
-    "docs/development"
+    "docs/development",
+    "docs/development/**"
   ],
   "keywords": [
     "koishi",
@@ -66,7 +68,8 @@
     "koishi-plugin-puppeteer": "^3.9.0"
   },
   "dependencies": {
-    "qface": "^1.4.1"
+    "qface": "^1.4.1",
+    "undici": "^7.30.0"
   },
   "repository": {
     "type": "git",

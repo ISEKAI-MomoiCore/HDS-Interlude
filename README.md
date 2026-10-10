@@ -1,12 +1,12 @@
-# HDS Interlude / 幕间系统
+当前版本：`1.0.1-rc50`。
 
-> 聊天在幕前发生，生活在幕间继续。
+当前文档已同步至 2026-10-11 的 rc50，累计变更以 rc48 为基线。发布流程现已执行源码构建，rc50 由本次生成的 `lib/` 与 `release/koishi-plugin-hds-interlude-1.0.1-rc50.tgz` 交付；旧 rc48 安装包不会自动获得这些修改，运行实例须安装并重载后才生效。验收与边界见 [发布验证报告](docs/development/RELEASE_VERIFICATION_2026-10-11_RC50.md)。
 
-交流群：421430402，群主24小时解答，欢迎来玩！
+rc50 相对 rc48 汇总：端点在线状态与 pending 投递恢复、统一投递确认、分段气泡与到期补写互斥、承诺回访退役、全局事实正文明确人物、后台记忆整理输入与来源修复、兼容端点 DeepSeek thinking 控制，以及调度、模型路由和等价性能优化。详见 [更新记录](docs/CHANGELOG.md) 和 [投递与调度边界](docs/ARCHITECTURE.md#投递与调度边界2026-10-10-工作区更新)。
 
-HDS Interlude 是一个面向 Koishi 一对一与多参与者场景的持续叙事聊天框架。它让用户消息、角色的沉默、延迟回复、主动联系和自动推进，都成为同一段生活剧本中自然可见的部分，并由一次主叙事写作连贯地决定。
+沿用 rc48 及此前能力：分享码同步会将 `storyDefaults` 同步写入配置模板；清库重建或新故事不会回退到旧人设；`interlude.preset.sync` 可强制重新应用预设；`database clear` 会重置同步状态；群音频可以直接触发携带原生音频的写作；跨会话投递能力继续保留。
 
-当前版本：`1.0.1-rc36`（长线叙事催化器 dormant/prime/activate；发行前修复三批：投递幂等/Qzone 增量一致性/崩溃诊断/日志分级与脱敏；管理权限拒绝可诊断；`contextEntryLimit` 硬地板移除——小模型可收缩历史上下文；新增小模型换行分句开关 `convertNewlineToSeparator`。前版要点：单剧本多通道 M2/M3/M4 全量、DeepSeek V4.1 回复模式修复、世界事件切面轮换；见 [更新记录](docs/CHANGELOG.md)）。rc12 起新增可选 Anthropic Messages 端点，兼容现有 payload 与 cache-first 编排；群音频可直接触发携带原生音频的写作。保留跨会话投递能力。配置与边界见 [rc12 说明](docs/development/ANTHROPIC_MESSAGES_RC12.md)、[更新记录](docs/CHANGELOG.md) 与 [文档索引](docs/README.md)。
+历史兼容说明：rc12 起支持可选的 Anthropic Messages 自定义协议。该协议仍属于 `openai-compatible` 自定义连接，不是独立的官方 Provider 模式。详见 [rc12 适配说明](docs/development/ANTHROPIC_MESSAGES_RC12.md)、[更新记录](docs/CHANGELOG.md) 与 [文档索引](docs/README.md)。
 
 ## 文档导航
 
@@ -285,29 +285,29 @@ OneBot 模式采用显式白名单：启用后，绑定的机器人 QQ 账号和
 ```bash
 npm install koishi-plugin-hds-interlude@beta
 # 或使用 corepack yarn（Koishi 官方推荐）：
-corepack yarn add "koishi-plugin-hds-interlude@file:./koishi-plugin-hds-interlude-1.0.1-rc36.tgz" --exact
+corepack yarn add "koishi-plugin-hds-interlude@file:./koishi-plugin-hds-interlude-1.0.1-rc50.tgz" --exact
 ```
 
 稳定版发布后可省略 `@beta`。然后在 Koishi Console 添加 `hds-interlude` 插件并完成配置。
 
 ### 本地 tgz 安装
 
-使用本地预发布包时，Koishi Desktop 实例必须使用 Yarn 4 更新 package.json 与 yarn.lock；不要用 npm 安装：
+rc50 安装包由本次发布流程生成；安装前请确认实际 tgz 路径，必要时核对同目录的 SHA-256 校验文件。使用本地预发布包时，Koishi Desktop 实例必须使用 Yarn 4 更新 package.json 与 yarn.lock；不要用 npm 安装：
 
 ```bash
-node .yarn/releases/yarn-4.12.0.cjs add "koishi-plugin-hds-interlude@file:C:/absolute/path/to/koishi-plugin-hds-interlude-1.0.1-rc36.tgz" --exact
+node .yarn/releases/yarn-4.12.0.cjs add "koishi-plugin-hds-interlude@file:C:/absolute/path/to/koishi-plugin-hds-interlude-1.0.1-rc50.tgz" --exact
 ```
 
 Windows 示例：
 
 ```powershell
-node .yarn/releases/yarn-4.12.0.cjs add "koishi-plugin-hds-interlude@file:C:/dev/HDS-Interlude/plugins/hds-interlude/release/koishi-plugin-hds-interlude-1.0.1-rc36.tgz" --exact
+node .yarn/releases/yarn-4.12.0.cjs add "koishi-plugin-hds-interlude@file:C:/dev/HDS-Interlude/plugins/hds-interlude/release/koishi-plugin-hds-interlude-1.0.1-rc50.tgz" --exact
 ```
 
 Koishi Desktop 的实例使用 Yarn 4。请在实例目录执行以下命令，并在完成后重载插件或重启 Desktop：
 
 ```powershell
-node .yarn/releases/yarn-4.12.0.cjs add "koishi-plugin-hds-interlude@file:C:/dev/HDS-Interlude/plugins/hds-interlude/release/koishi-plugin-hds-interlude-1.0.1-rc36.tgz" --exact
+node .yarn/releases/yarn-4.12.0.cjs add "koishi-plugin-hds-interlude@file:C:/dev/HDS-Interlude/plugins/hds-interlude/release/koishi-plugin-hds-interlude-1.0.1-rc50.tgz" --exact
 ```
 
 安装后重新加载 Koishi，再在 Console 启用插件。
@@ -357,7 +357,7 @@ OneBot / NapCat 未启动时可能出现 `ECONNREFUSED`，表示适配器正在�
 | `interlude.script [limit]` | 查看近期剧本条目。 |
 | `interlude.advance` | 手动推进一次剧本。 |
 | `interlude.memory [limit]` | 查看记忆摘要。 |
-| `interlude.memory.add <scope> <content>` | 手动写入长期事实。 |
+| `interlude.memory.add <scope> <content>` | 手动写入全局长期事实；relationship 内容必须明确写出相关人物。 |
 | `interlude.memory.intents [limit]` | 查看延迟回复、提醒等待处理意图。 |
 | `interlude.overlay.status` | 查看 Overlay 与候选状态。 |
 | `interlude.overlay.compact` | 手动整理 Overlay。 |

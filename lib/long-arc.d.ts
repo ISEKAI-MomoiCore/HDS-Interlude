@@ -159,6 +159,9 @@ export declare function normalizeLongArcDecision(value: unknown, validEvidenceId
 export declare function normalizeLongArcGuidance(value: unknown, validEvidenceIds: ReadonlySet<number>, config: LongHorizonGuidanceConfig): LongArcGuidancePayload | undefined;
 /** 数据库行类型（database.ts 的表声明引用）。 */
 /** Durable accumulator state, kept separate from versioned guidance rows. */
+/** Minato 的 set 拒绝更新载荷包含主键（"cannot modify primary key"）——
+ * progress 表主键为 storyId，更新时必须从载荷中剔除。 */
+export declare function progressUpdatePayload(progress: LongArcProgressRow): Omit<LongArcProgressRow, 'storyId'>;
 export interface LongArcProgressRow {
     storyId: string;
     lastCountedEntryId: number;
@@ -172,6 +175,12 @@ export interface LongArcProgressRow {
     lastGenerationEntryId: number;
     updatedAt: Date;
 }
+/**
+ * Consume a review window when no evidence is visible to the background model.
+ * The score remains cumulative, but the already-audited window must not trigger
+ * the same generation again on every later private/hidden entry.
+ */
+export declare function advanceLongHorizonGenerationBaseline(progress: LongArcProgressRow, currentScore: number, lastGenerationEntryId: number, updatedAt?: Date): LongArcProgressRow;
 export interface LongArcGuidanceRow {
     id?: number;
     storyId: string;

@@ -1,6 +1,6 @@
 # HDS Interlude 管理与查看指令
 
-适用版本：`1.0.1-rc36`
+适用版本：`1.0.1-rc50`
 ## 使用前先看这里
 
 - 新手安装和首次测试：`BEGINNER_GUIDE.md`
@@ -12,6 +12,10 @@
 本文档说明 HDS Interlude 当前提供的 Koishi 指令。建议在私聊执行；授权群聊中的 `interlude.*` 同样会交给 Koishi 命令解析器。所有命令都会经过 HDSI 的授权检查，写入、调度与清理类操作还需要管理员权限。
 
 `blindMode.enabled=true` 时，本页全部指令以及当前 Koishi 实例的其它已解析指令都会被静默屏蔽；请在 Console 关闭失明模式并重载插件后再使用管理功能。
+
+## 指令书写格式
+
+子命令一律用点分书写，如 `interlude.script.note 内容`。发送 `interlude script note 内容`（空格写法）时插件会在解析前自动把能识别的空格前缀重写为点分形式——但这依赖中间层命令没有声明参数等解析细节，**不要依赖空格写法**，一律用点分。直接发送 `interlude` 可查看命令入口提示。
 
 ## 权限模型
 
@@ -50,7 +54,7 @@ sharedStory:
 | `interlude.init [旧名称]` | 管理员 | 兼容别名；名称参数已忽略，请改用 `interlude.story.start` |
 | `interlude.status` | 白名单用户 | 查看故事状态、运行游标、主动消息与 Agency Window |
 | `interlude.setup <JSON>` | 管理员 | 修改当前故事的基础设定（Canon） |
-| `interlude.qzone <内容>` | 管理员 | 经限流门以她本人身份发一条 QQ 空间说说（需 Console 启用【扩展 16】且 SnowLuma 在线；默认好友可见） |
+| `interlude.qzone <内容>` | 管理员 | 经限流门以她本人身份发一条 QQ 空间说说（需 Console 启用【扩展 17】且 SnowLuma 在线；默认好友可见） |
 | `interlude.story.alias [remove <别名ID>]` | 管理员 | 查看/回滚剧本别名重定向（单剧本多通道 M1b；回滚写审计） |
 | `interlude.story.endpoint [add <平台> <账号> [qq\|wechat] \| disable <端点ID>]` | 管理员 | 管理剧本的角色端点（账号迁移唯一显式途径；多通道 M2：注册/停用/列出） |
 | `interlude.reset` | 管理员 | 询问 y/n 后完全重置——清空数据库并将故事设定重置为 Console 档案当前值 |
@@ -74,8 +78,9 @@ sharedStory:
 | `interlude.memory.cancel <编号>` | 管理员 | 取消一条等待中的意图 |
 | `interlude.memory.patches [条数]` | 管理员 | 查看人物、关系和世界设定的演化提案 |
 | `interlude.memory.reject <编号>` | 管理员 | 拒绝尚未应用的演化提案 |
+| `interlude.memory.apply <编号>` | 管理员 | 手动批准演化提案，绕过证据阈值，立即写入 overlay |
 | `interlude.overlay.clear <部分>` | 管理员 | 询问 y/n 后，只清理 character、perspective、relationship、world 或 all 对应的设定 overlay |
-| `interlude.overlay.status` | 管理员 | 查看当前 overlay、待积累提案和压缩归档数量 |
+| `interlude.overlay.status` | 白名单用户 | 查看当前 overlay、待积累提案和压缩归档数量（只读） |
 | `interlude.overlay.compact` | 管理员 | 只合并和压缩已应用的 overlay，不整理普通剧本记忆 |
 | `interlude.schedule` | 已授权用户 | 查看 Schedule Preplan 覆盖范围和未来约半天的日程 |
 | `interlude.schedule.refresh` | 管理员 | 重新审查当前日程，保留旧计划作为稳定参考 |
@@ -84,6 +89,11 @@ sharedStory:
 | `interlude.purge.all` | 管理员 | 询问 y/n 后彻底重置所有平台的剧本、记忆与 Canon，只保留一部空白主剧本 |
 | `interlude.purge.platform <平台>` | 管理员 | 询问 y/n 后清空并归档指定平台的所有故事，例如 sandbox 或 onebot |
 | `interlude.purge.range <开始> <结束>` | 管理员 | 询问 y/n 后删除时间范围内的剧本与关联记忆 |
+| `interlude.preset.check <分享码>` | 管理员 | 拉取 typ0-site 分享码预设并预览差异，不写入 |
+| `interlude.preset.apply <分享码>` | 管理员 | 确认后应用分享码预设（含 revision 二次校验与快照） |
+| `interlude.preset.status` | 管理员 | 查看最近一次分享码应用状态 |
+| `interlude.preset.sync` | 管理员 | 用 Console 配置的分享码手动强制同步（revision 未变也重应用） |
+| `interlude.preset.rollback` | 管理员 | 回滚最近一次分享码应用 |
 
 ## 详细用法
 
@@ -202,7 +212,7 @@ interlude.timeline 20
 interlude.memory 15
 ```
 
-显示内容包含事实范围、重要度和正文。Embedding 只用于检索排序，不会把向量发送给主叙事模型。
+显示内容包含记忆类别、重要度和正文。这是场景记忆摘要，不是 `interlude_fact` 的全局长期事实清单；原始事实审计请使用 `interlude.memory.facts`。Embedding 只用于检索排序，不会把向量发送给主叙事模型。
 
 ### `interlude.context`
 
@@ -213,7 +223,7 @@ interlude.memory 15
 - 当前账号的初始关系和参与者状态 JSON
 - 主角当前的全局 Overlay
 - 当前 Agency Window（日程负荷、隐私、设备和有效期）
-- 与当前账号相关的最多八条长期事实
+- 从全局事实池选出的最多八条长期事实（不按当前账号过滤；正文应明确相关人物）
 
 ```text
 interlude.context
@@ -265,16 +275,19 @@ interlude.memory.facts 30
 
 ### `interlude.memory.add <范围> <内容>`
 
-人工写入一条高置信度（`1.0`）长期事实。允许的范围为：
+人工写入一条高置信度（`1.0`）的全局长期事实。事实进入共享叙事候选池，每次主叙事按相关性与预算选取，不按参与者屏蔽；是否向当前参与者显露由模型决定。允许的范围为：
 
 - `character`：主角稳定事实
 - `world`：世界或环境事实
-- `relationship`：关系事实
+- `relationship`：关系事实；正文必须明确写出相关人物，不要只写“他说”“对方”或“关系变亲密了”
 - `event`：长期影响事件
 - `promise`：承诺、约定或待办
 
 ```text
 interlude.memory.add promise 主角答应在周三晚些时候告诉小林面试结果。
+
+relationship 示例：
+interlude.memory.add relationship 小林说他准备出门。
 ```
 
 ### `interlude.memory.forget <编号>`
@@ -300,19 +313,27 @@ interlude.memory.cancel 15
 
 ```text
 interlude.memory.patches 20
-interlude.memory.reject 8
+interlude.memory.apply 8
+interlude.memory.reject 12
 ```
 
-状态提案的生命周期是：`proposed`（积累证据）→ `applied`（写入当前 overlay）→ `compacted`（已进入历史快照）。执行 overlay 清理后会标记为 `cleared`。普通人格和关系变化默认需要至少 3 个不同剧本回合、跨越至少 2 个日历日，并受同一路径 72 小时冷却限制；重大变化仍需高置信度。
+状态提案的生命周期是：`proposed`（积累证据）→ `applied`（达到门槛,参与后续 overlay 重建）→ `compacted`（已进入历史快照）；被新反证降级会标记 `rejected`，执行 overlay 清理后标记为 `cleared`。`applied` 只是状态变更——overlay 字段由压缩周期的重建步骤统一刷新，`development.*` 类提案始终不进 overlay。普通人格和关系变化默认需要至少 3 个不同剧本回合、跨越至少 2 个日历日（回合/天数下限可在 Console 调低），并受同一路径 72 小时冷却限制；重大变化默认只需 2 个独立场景加高置信度（场景数下限可在 Console 调整）。
+
+### `interlude.memory.apply <编号>`
+
+手动批准一条待积累的设定演化提案——管理员判断优先于证据阈值、`autoApplyStatePatches` 与 `allowMajorStateChanges` 开关。关闭自动应用后，提案只有两个出口：被本命令批准，或被 `interlude.memory.reject` 拒绝。批准后效果**立即写入** overlay（不等压缩周期）。
 
 ### `interlude.overlay.clear <部分>`
 
 只清理剧情累计形成的设定 overlay，不删除 Canon、剧本、长期事实、普通记忆或等待中的意图。适合在 Console 中大幅修改某一项初始设定后使用。
 
 - `character`：清理主角性格、人物资料和特征的演化 overlay。
+- `perspective`：清理主角视角的演化 overlay。
 - `relationship`：清理全局关系 overlay，以及所有参与者各自的关系 overlay。
 - `world`：清理世界状态的演化 overlay。
 - `all`：清理以上全部 overlay，但仍保留剧本和记忆。
+
+确认前会先展示所选范围内 overlay 的现有内容摘要与提案/快照数量，再询问是否继续。
 
 执行后插件会询问“确认执行吗？(y/n)”，请回复 `y` 才会继续；回复 `n` 或 60 秒内没有回复都会取消。对应的已应用 overlay、历史压缩快照和仍在积累的候选提案都会失效并保留审计记录，避免旧候选在之后重新写回 overlay。
 
@@ -366,6 +387,35 @@ interlude.schedule.refresh
 ```
 
 `interlude.schedule.rebuild` 保留为兼容别名，效果与 `refresh` 相同。
+
+## 分享码预设（typ0-site 联动）
+
+### `interlude.preset.check <分享码>`
+
+拉取分享站预设并预览与本地配置的差异，不写入任何内容。支持 `--base` 指定自建分享站地址、`--sections` 指定分区、`--story` 预览人设应用到当前故事的效果。
+
+### `interlude.preset.apply <分享码>`
+
+应用分享码预设：预览差异、y/n 确认后写入配置（预览与应用之间做 revision 二次校验，远端有新版则拒绝）。storyDefaults 同时写入配置模板（新故事孵化来源）并按 `--story` 应用到当前故事；保存应用前快照供回滚。
+
+### `interlude.preset.status`
+
+查看最近一次手动应用的状态（标题/分享码/revision/时间/分区）。
+
+### `interlude.preset.sync`
+
+使用 Console【扩展 18】配置的分享码手动触发同步：revision 未变也会强制重新应用（含配置模板与故事设定），适合清库重建或配置漂移后恢复。自动路径只在重载时检查且有 revision 幂等闸。
+
+### `interlude.preset.rollback`
+
+回滚最近一次分享码应用（恢复应用前快照）：手动 apply 优先，其次自动同步的状态文件。
+
+```text
+interlude.preset.check ABCD2345
+interlude.preset.apply ABCD2345 --story
+interlude.preset.sync
+interlude.preset.rollback
+```
 
 ## 删除剧本和记忆
 

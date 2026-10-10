@@ -42,7 +42,7 @@ function backfillHost(rows: any[], batchSize = 5) {
   const queries: any[] = []
   const host: any = {
     config: { model: { embedding: { enabled: true, semanticHistory: true, backfillBatchSize: batchSize } } },
-    embedder: { identity: () => 'model-a' }, historyBackfills: new Set(), historyBackoff: new Map(), historyVectors: new Map(),
+    embedder: { identity: () => 'model-a' }, historyBackfills: new Set(), historyBackoff: new Map(), historyVectors: new Map(), automaticRecallCache: new Map(),
     getStory: async () => ({ id: 's', state }), serial: async (_id: string, fn: () => any) => fn(),
     embedText: async (text: string) => { calls.push(text); return [1, 0] },
     dbGet: async (_table: string, query: any, options: any = {}) => {
@@ -140,7 +140,7 @@ test('P1 detail handoff uses newer same-owner evidence, preserves identity age a
   }
   const review = async (id: number, label: string, replacesLabel?: string, owner = 'alice', mode = 'reported') => {
     const row = entry(id, '我现在不睡了，正在玩游戏', owner)
-    return proto.persistCompaction.call(host, { id: 's' }, { id: 1, entryCount: 0 }, {
+    return proto.persistCompactionOutputs.call(host, { id: 's' }, { id: 1, entryCount: 0 }, {
       scene: { summary: '生活继续' }, arc: { summary: '原剧情弧' }, workingDetails: [{ label, replacesLabel,
         value: row.content, sourceEntryIds: [id], knowledge: { mode, clauses: [{ role: 'observation', sourceEntryId: id, quote: row.content }] } }],
     }, [row], now)
@@ -198,7 +198,7 @@ test('P1 automatic recall is original-only, public-only without participant, and
     [2, { ...entry(2, '取餐的私聊秘密'), occurredAt: now.toISOString() }],
   ])
   const host: any = { ensureHistoryVectors: async () => {}, historyVectors: new Map([['s', rows]]),
-    sharedStoryConfig: { shareParticipantDetails: true }, automaticRecallCache: new Map() }
+    episodeIndexes: new Map(), sharedStoryConfig: { shareParticipantDetails: true }, automaticRecallCache: new Map() }
   const focus = recallFocus(undefined, ['取餐'], ['取餐'])
   assert.equal(focus, '取餐')
   const first = await proto.recallHistory.call(host, 's', '', focus, [], new Set(), new Set(), 1)
@@ -215,7 +215,7 @@ test('P1 automatic recall is original-only, public-only without participant, and
 test('P1 incompatible known model vectors do not enter semantic ranking', async () => {
   const host: any = { ensureHistoryVectors: async () => {}, historyVectors: new Map([['s', new Map([[1, {
     ...entry(1, '完全无关的内容'), occurredAt: now.toISOString(), vector: [1, 0], embeddingIdentity: 'old',
-  }]])]]), sharedStoryConfig: { shareParticipantDetails: false }, embedder: { identity: () => 'new' } }
+  }]])]]), episodeIndexes: new Map(), sharedStoryConfig: { shareParticipantDetails: false }, embedder: { identity: () => 'new' } }
   assert.deepEqual(await proto.recallHistory.call(host, 's', 'alice', '取餐码', [1, 0], new Set()), [])
 })
 
@@ -225,7 +225,7 @@ test('P1 6000-entry recall benchmark (synthetic, no external requests)', async t
     occurredAt: now.toISOString(), frameId: `frame-${Math.floor(i / 20)}`,
   }]))
   const host: any = { ensureHistoryVectors: async () => {}, historyVectors: new Map([['s', rows]]),
-    sharedStoryConfig: { shareParticipantDetails: false } }
+    episodeIndexes: new Map(), sharedStoryConfig: { shareParticipantDetails: false } }
   const before = process.memoryUsage().heapUsed
   const cold = performance.now()
   const result = await proto.recallHistory.call(host, 's', 'alice', '取餐码8914', [], new Set())
@@ -241,4 +241,18 @@ test('P1 6000-entry recall benchmark (synthetic, no external requests)', async t
   assert.match(result[0].content, /取餐码8914/)
   t.diagnostic(`6000 rows: cold=${coldMs.toFixed(1)}ms warm=${warmMs.toFixed(1)}ms semantic1536=${semanticMs.toFixed(1)}ms heapDelta=${((process.memoryUsage().heapUsed - before) / 1048576).toFixed(1)}MiB`)
   assert.ok(warmMs < 3000, 'generous regression ceiling, not a production SLA')
+})
+
+test('P03 history vector backfill invalidates recall memo despite unchanged cache size', async () => {
+  const rows = [entry(1)]
+  const { host } = backfillHost(rows, 1)
+  const cached = { vector: [], content: rows[0].content }
+  host.historyVectors.set('s', new Map([[1, cached]]))
+  host.automaticRecallCache.set('s', { stale: true })
+  host.automaticRecallCache.set('unrelated', { retained: true })
+  await proto.backfillHistoryEmbeddings.call(host, 's')
+  assert.equal(host.historyVectors.get('s').size, 1)
+  assert.deepEqual(cached.vector, [1, 0])
+  assert.equal(host.automaticRecallCache.has('s'), false)
+  assert.equal(host.automaticRecallCache.has('unrelated'), true)
 })

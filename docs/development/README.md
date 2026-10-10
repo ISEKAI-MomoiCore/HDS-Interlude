@@ -1,12 +1,17 @@
 # 开发与维护资料
 
-当前发布候选为 `1.0.1-rc33`；代码构建、测试与 Yarn 4 包验收已完成，真实运行环境验收由维护者最后执行。当前行为以源码、[当前架构](../ARCHITECTURE.md)、[V2 实施表](../V2_IN_PLACE_REFACTOR_IMPLEMENTATION_FORM.md) 与[更新记录](../CHANGELOG.md)为准；以下 beta6/M10 文档用于追溯，不能覆盖当前实现。
+当前源码工作区版本为 `1.0.1-rc50`，汇总相对 rc48 的累计修复；全量回归与严格类型检查已通过，本次发布流程已构建 rc50 对应 `lib/` 并交付安装包，真实运行环境验收仍由维护者执行。当前行为以源码、[当前架构](../ARCHITECTURE.md)、[V2 实施表](../V2_IN_PLACE_REFACTOR_IMPLEMENTATION_FORM.md) 与[更新记录](../CHANGELOG.md)为准；以下 beta6/M10 文档用于追溯，不能覆盖当前实现。
 
 ## 当前发布与近期增量
 
+- [RELEASE_VERIFICATION_2026-10-11_RC50.md](RELEASE_VERIFICATION_2026-10-11_RC50.md)：rc50 构建打包、包内容、实际 bundle 冒烟与 Gitee 同步范围。
+
+- [FULL_CODE_REVIEW_FIXES_2026-10-11_RC48.md](FULL_CODE_REVIEW_FIXES_2026-10-11_RC48.md)：C01–C14、P01–P04 逐项源码修复、交互验收、性能基准与未实机验证边界。
+- [FULL_CODE_REVIEW_2026-10-10_RC48.md](FULL_CODE_REVIEW_2026-10-10_RC48.md)：本轮修复前的审查基线，缺陷描述不代表当前仍存在。
+
 - [FUNCTION_CONFLICT_AUDIT_2026-09-17.md](FUNCTION_CONFLICT_AUDIT_2026-09-17.md)：功能交接小修、日志证据与待决的大问题清单。
 
-- rc33 候选已完成源码构建、严格类型检查、全量测试与 Yarn 4 tgz 打包；详细门槛和剩余验收见 [PLUGIN_UPGRADE_EXECUTION_PLAN.md](PLUGIN_UPGRADE_EXECUTION_PLAN.md)。
+- **历史 rc33 验包记录**：rc33 候选曾完成源码构建、严格类型检查、全量测试与 Yarn 4 tgz 打包；详细门槛和剩余验收见 [PLUGIN_UPGRADE_EXECUTION_PLAN.md](PLUGIN_UPGRADE_EXECUTION_PLAN.md)。
 
 - [ANTHROPIC_MESSAGES_RC12.md](ANTHROPIC_MESSAGES_RC12.md)：rc12 协议选择、缓存与群音频接入边界。
 

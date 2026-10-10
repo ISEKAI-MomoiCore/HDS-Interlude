@@ -117,7 +117,8 @@ export function registerTables(ctx: Context) {
     summary: 'text', sceneCount: 'unsigned', createdAt: 'timestamp', updatedAt: 'timestamp',
   }, { primary: 'id', autoInc: true, indexes: ['storyId', 'status', 'updatedAt'] })
 
-  // 长期事实按重要度与置信度检索，并保留来源条目供审计或重建。
+  // 长期事实是全局叙事材料；participantId 仅为旧数据库兼容保留，
+  // 不再表达事实主体或可见性。来源条目仍供审计或重建。
   ctx.model.extend('interlude_fact', {
     knowledge: 'json',
     id: 'unsigned', storyId: 'string(255)', participantId: 'string(255)', scope: 'string(32)', content: 'text',

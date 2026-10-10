@@ -120,7 +120,7 @@ export function formatModelRouting(table: ModelRoutingTable) {
 
 function resolveRoute(task: Exclude<ModelTask, 'timeline' | 'stickers' | 'vision'>, providers: ProviderConfig[], target: ResolvedModelTarget, requireChatModel: boolean): ResolvedModelRoute {
   // Messages API has no embeddings endpoint. Keep vector traffic on its own compatible connection.
-  if (task === 'embedding') providers = providers.filter(provider => provider.protocol !== 'anthropic-messages')
+  if (task === 'embedding') providers = providers.filter(provider => provider.protocol !== 'anthropic-messages' && provider.protocol !== 'gemini-interactions')
   const assigned = providers.filter(provider => provider.enabled && provider.endpoint && provider.model && isAssignedTo(provider, task))
   if (assigned.length) return { task, target, providers: assigned, assigned: true, available: true, reason: 'assigned-provider' }
 
@@ -171,8 +171,11 @@ function enabledModelProfiles(config: ModelConfig): ModelProfile[] {
 function normalizeProvider(provider: ProviderConfig): ProviderConfig {
   const zhipuOfficial = provider.mode === 'zhipu-official'
   const deepseekOfficial = provider.mode === 'deepseek-official'
+  const geminiInteractions = provider.mode === 'gemini-interactions'
   const officialEndpoint = presetEndpoint(provider.mode, provider.dashscopeRegion)
-  const protocol = !officialEndpoint && provider.protocol === 'anthropic-messages' ? 'anthropic-messages' : 'chat-completions'
+  const protocol = geminiInteractions ? 'gemini-interactions'
+    : !officialEndpoint && provider.protocol === 'anthropic-messages' ? 'anthropic-messages'
+    : 'chat-completions'
   return {
     ...provider,
     id: provider.id?.trim() || `${provider.label?.trim() || 'provider'}:${provider.model?.trim() || ''}`,
@@ -181,6 +184,7 @@ function normalizeProvider(provider: ProviderConfig): ProviderConfig {
     anthropicCache: provider.anthropicCache === true,
     endpoint: officialEndpoint || normalizeProtocolEndpoint(provider.endpoint, protocol),
     apiKey: provider.apiKey ?? '', model: provider.model ?? '',
+    proxyAgent: provider.proxyAgent?.trim() || '',
     temperature: provider.temperature ?? (zhipuOfficial ? 1 : 0.8),
     topP: provider.topP ?? (zhipuOfficial ? 0.95 : 1),
     maxTokens: provider.maxTokens ?? 4096,
@@ -190,7 +194,9 @@ function normalizeProvider(provider: ProviderConfig): ProviderConfig {
     zhipuOfficial,
     reasoningEffort: provider.reasoningEffort ?? 'high',
     deepseekOfficial,
-    deepseekThinking: provider.deepseekThinking === 'enabled' ? 'enabled' : 'disabled',
+    deepseekThinking: deepseekOfficial
+      ? provider.deepseekThinking === 'enabled' ? 'enabled' : 'disabled'
+      : provider.deepseekThinking === 'enabled' || provider.deepseekThinking === 'disabled' ? provider.deepseekThinking : 'inherit',
     deepseekReasoningEffort: provider.deepseekReasoningEffort ?? 'low',
     useForMain: provider.useForMain === true,
     useForCompaction: provider.useForCompaction === true,
@@ -203,6 +209,7 @@ function normalizeProvider(provider: ProviderConfig): ProviderConfig {
 
 export function normalizeProtocolEndpoint(endpoint: string, protocol: ProviderConfig['protocol']) {
   const value = endpoint?.trim() || ''
+  if (protocol === 'gemini-interactions') return value.replace(/\/(?:openai\/)?chat\/completions(?=\?|$)/, '/interactions')
   if (protocol !== 'anthropic-messages') return value.replace(/\/messages(?=\?|$)/, '/chat/completions')
   return value.replace(/\/chat\/completions(?=\?|$)/, '/messages')
 }
@@ -215,6 +222,7 @@ function presetEndpoint(mode: ProviderMode | undefined, dashscopeRegion?: string
   if (mode === 'siliconflow-official') return 'https://api.siliconflow.cn/v1/chat/completions'
   if (mode === 'openrouter') return 'https://openrouter.ai/api/v1/chat/completions'
   if (mode === 'gemini-openai') return 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions'
+  if (mode === 'gemini-interactions') return 'https://generativelanguage.googleapis.com/v1beta/interactions'
   if (mode === 'dashscope-official') {
     if (dashscopeRegion === 'singapore') return 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions'
     if (dashscopeRegion === 'us') return 'https://dashscope-us.aliyuncs.com/compatible-mode/v1/chat/completions'

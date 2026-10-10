@@ -89,7 +89,7 @@ test('group-authored cross-conversation messages reach the shared delivery queue
     return { deliveredSegments: [], complete: false, segmentOutcomes: [] }
   }
   let sent = 0
-  service.sendOutgoingMessages = async (_story: any, messages: any[]) => {
+  service.deliverOutgoingMessages = async (_story: any, messages: any[]) => {
     sent++
     assert.equal(messages, outgoing)
   }

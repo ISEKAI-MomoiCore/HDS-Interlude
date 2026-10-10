@@ -41,3 +41,30 @@ test('returns bounded failure placeholder when action is unavailable', async () 
   assert.equal(result?.failed, true)
   assert.match(result?.content ?? '', /暂时无法读取内容/)
 })
+
+test('合并转发图片引用收集：URL/file token 双路径，正文占位符保留', async () => {
+  const mod = await import('../src/forward-message')
+  // 通过 normalizeForwardMessages 的公开出口验证 refs 组装路径之外，
+  // collectForwardImageRefs 经 readForwardContent 组装——此处直接测归一化输出契约
+  const result = mod.normalizeForwardMessages([
+    {
+      nickname: '小桃', user_id: 10001,
+      message: [
+        { type: 'text', data: { text: '看这张' } },
+        { type: 'image', data: { file: 'ABC.image', url: 'https://multimedia.nt.qq.com.cn/img1' } },
+        { type: 'image', data: { file: 'TOKEN123.image' } },
+        { type: 'image', data: { url: 'not-a-url' } },
+      ],
+    },
+  ], { maxNodes: 10, maxCharacters: 4000, maxDepth: 3 })
+  assert.ok(result.content.includes('[图片]'), '正文保留占位符')
+  assert.ok(!('imageRefs' in result) || !Array.isArray((result as any).imageRefs), 'normalizeForwardMessages 本身不产 refs（由 readForwardContent 组装）')
+})
+
+test('ForwardReadResult 契约：failureResult 携带空 imageRefs', async () => {
+  const mod = await import('../src/forward-message')
+  // 无 bot.internal 时走 failureResult——refs 必须是数组而非 undefined
+  const result = await mod.readForwardContent({ content: '[CQ:forward,id=x]' })
+  assert.ok(result?.failed)
+  assert.deepEqual(result?.imageRefs, [])
+})

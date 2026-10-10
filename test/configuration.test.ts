@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { Config, version } from '../src/index'
 import { hasRequiredNarrativeScript, normalizeGroupVisibleReply, normalizeInteraction, requiresVisibleReplyRecovery, resolveBlindModeConfig, visibleReplyMode } from '../src/service'
-import { configuredProviders, ZHIPU_FIRST_VISIBLE_TOKEN_TIMEOUT } from '../src/narrator'
+import { configuredProviders, withDeepSeekThinking, ZHIPU_FIRST_VISIBLE_TOKEN_TIMEOUT } from '../src/narrator'
 import { HDS_INTERLUDE_VERSION } from '../src/meta'
 
 const now = new Date('2026-09-09T12:00:00Z')
@@ -10,7 +10,7 @@ const now = new Date('2026-09-09T12:00:00Z')
 test('Console sections follow the documented setup order', () => {
   assert.deepEqual(Object.keys(Config.dict), [
     'storyDefaults', 'model', 'onebot', 'sharedStory', 'runtime', 'urge', 'schedulePreplan', 'timelineDirector', 'agency',
-    'chatActions', 'stickers', 'memory', 'alterSystem', 'browser', 'worldSeeder', 'longHorizon', 'qzone', 'blindMode', 'logging', 'mainPrompt', 'chatRhythm',
+    'chatActions', 'stickers', 'memory', 'alterSystem', 'browser', 'worldSeeder', 'longHorizon', 'qzone', 'presetSync', 'blindMode', 'logging', 'mainPrompt', 'chatRhythm',
   ])
   // 分类前缀让配置页按 必填→结构→节奏→表达→内在→扩展→维护 分组可读。
   const headers = Object.values(Config.dict).map((item: any) => String(item.meta?.description ?? ''))
@@ -23,8 +23,9 @@ test('Console sections follow the documented setup order', () => {
   assert.match(headers[14], /^【扩展 15】/)
   assert.match(headers[15], /^【扩展 16】/)
   assert.match(headers[16], /^【扩展 17】/)
-  assert.match(headers[17], /^【维护 15】/)
-  assert.match(headers[18], /^【维护 16】/)
+  assert.match(headers[17], /^【扩展 18】/)
+  assert.match(headers[18], /^【维护 19】/)
+  assert.match(headers[19], /^【维护 20】/)
 })
 
 test('chat actions are opt-in and platform-scoped', () => {
@@ -45,7 +46,7 @@ test('local sticker library is opt-in and requires an explicitly assigned visual
   assert.equal(stickers.descriptionResponseFormat.meta.default, 'json-object')
 })
 
-test('Blind Mode is the first Console section and defaults to a minimal ten-minute heartbeat', () => {
+test('Blind Mode defaults to a minimal ten-minute heartbeat', () => {
   const blindMode = Config.dict.blindMode.dict
   assert.equal(blindMode.enabled.meta.default, false)
   assert.equal(blindMode.healthReportMinutes.meta.default, 10)
@@ -62,7 +63,7 @@ test('ignored compatibility switches stay out of the active Console', () => {
 
 test('runtime and plugin exports share one version constant', () => {
   assert.equal(version, HDS_INTERLUDE_VERSION)
-  assert.equal(version, '1.0.1-rc36')
+  assert.equal(version, '1.0.1-rc50')
 })
 
 test('layered colored logs are the Console default and remain optional', () => {
@@ -128,6 +129,42 @@ test('DeepSeek official provider exposes independent thinking controls', () => {
   assert.equal(provider.deepseekOfficial, true)
   assert.equal(provider.deepseekThinking, 'disabled')
   assert.equal(provider.deepseekReasoningEffort, 'low')
+})
+
+test('OpenAI-compatible providers expose inherit thinking control by default', () => {
+  const [provider] = configuredProviders({ mode: 'openai-compatible', providers: [{
+    label: 'DeepSeek gateway', enabled: true, mode: 'openai-compatible', apiKey: 'x', model: 'deepseek-v4-pro', useForMain: true,
+  }] } as any)
+  assert.equal(provider.deepseekOfficial, false)
+  assert.equal(provider.deepseekThinking, 'inherit')
+  assert.equal(provider.deepseekReasoningEffort, 'low')
+  assert.deepEqual(withDeepSeekThinking(provider, { model: provider.model, thinking: { type: 'gateway-default' } }), {
+    model: provider.model, thinking: { type: 'gateway-default' },
+  })
+})
+
+test('Explicit compatible-provider thinking control overrides extraBody thinking', () => {
+  const base = {
+    model: 'deepseek-v4-pro',
+    thinking: { type: 'enabled' },
+    reasoning_effort: 'max',
+    messages: [],
+  }
+  const [disabled] = configuredProviders({ mode: 'openai-compatible', providers: [{
+    label: 'DeepSeek gateway', enabled: true, mode: 'openai-compatible', apiKey: 'x', model: base.model,
+    deepseekThinking: 'disabled', extraBody: JSON.stringify(base),
+  }] } as any)
+  assert.deepEqual(withDeepSeekThinking(disabled, base), {
+    model: base.model, thinking: { type: 'disabled' }, messages: [],
+  })
+
+  const [enabled] = configuredProviders({ mode: 'openai-compatible', providers: [{
+    label: 'DeepSeek gateway', enabled: true, mode: 'openai-compatible', apiKey: 'x', model: base.model,
+    deepseekThinking: 'enabled', deepseekReasoningEffort: 'high',
+  }] } as any)
+  assert.deepEqual(withDeepSeekThinking(enabled, base), {
+    model: base.model, thinking: { type: 'enabled' }, reasoning_effort: 'high', messages: [],
+  })
 })
 
 test('Agency Window exposes only the four bounded scheduling controls', () => {
@@ -255,3 +292,19 @@ test('delayed replies outside the allowed window still collapse to none regardle
     { seen: true, reply: { mode: 'none' } })
 })
 
+
+
+test('visible Console section numbers are unique and continuous', () => {
+  const numbers = Object.values(Config.dict).flatMap((item: any) => {
+    const match = String(item.meta?.description ?? '').match(/^【[^】]+ (\d+)】/)
+    return match ? [Number(match[1])] : []
+  })
+  assert.deepEqual(numbers, Array.from({ length: 20 }, (_, index) => index + 1))
+})
+
+test('candidate reveal description distinguishes inactive, vague and revealed candidates', () => {
+  const description = Config.dict.schedulePreplan.dict.candidateRevealMinutes.meta.description
+  assert.match(description, /未激活候选不显示/)
+  assert.match(description, /已激活候选.*之前.*可能的个人安排/)
+  assert.match(description, /进入揭示时间后显示具体内容/)
+})

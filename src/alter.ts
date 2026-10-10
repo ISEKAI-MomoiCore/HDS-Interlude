@@ -166,14 +166,18 @@ export function completeAlterAnalysis(
   now: Date,
   config: AlterSystemConfig,
   participantId = '',
+  analyzedValue?: number,
 ) {
   const sourceParticipantId = normalizeParticipantId(participantId)
   const scopes = normalizePendingScopes(state.pendingScopes)
   if (!scopes.length && Math.abs(state.alterValue) > 0) scopes.push({ participantId: '', alterValue: state.alterValue })
   const scope = ensurePendingScope({ ...state, pendingScopes: scopes }, sourceParticipantId)
-  const triggerValue = scope.alterValue
+  // The model analyzed a snapshot, not scores committed while it was in flight.
+  const triggerValue = analyzedValue ?? scope.alterValue
+  if (!Number.isFinite(triggerValue) || !triggerValue) return state
+  if (analyzedValue !== undefined && (Math.sign(scope.alterValue) !== Math.sign(triggerValue) || Math.abs(scope.alterValue) < threshold)) return state
   const direction = Math.sign(triggerValue) as -1 | 1
-  scope.alterValue = 0
+  scope.alterValue = clamp(scope.alterValue - triggerValue, -1_000, 1_000)
   scope.lastAnalysisAttemptAt = undefined
   return {
     ...state,
@@ -214,6 +218,15 @@ export function markAlterScopeAnalysisAttempt(state: AlterSystemState, participa
   return { ...state, pendingScopes: scopes }
 }
 
+/** A stale result consumed no evidence; allow the changed scope to be reviewed again. */
+export function clearAlterScopeAnalysisAttempt(state: AlterSystemState, participantId = '') {
+  const sourceParticipantId = normalizeParticipantId(participantId)
+  const scopes = normalizePendingScopes(state.pendingScopes)
+  const scope = findPendingScope(scopes, sourceParticipantId)
+  if (scope) scope.lastAnalysisAttemptAt = undefined
+  return { ...state, pendingScopes: scopes }
+}
+
 export function alterScopeValue(state: AlterSystemState, participantId = '') {
   return findPendingScope(state.pendingScopes, normalizeParticipantId(participantId))?.alterValue ?? 0
 }
@@ -237,7 +250,15 @@ function normalizePendingScopes(value: unknown): AlterPendingScope[] {
       ...(normalizedIso(item.lastAnalysisAttemptAt) ? { lastAnalysisAttemptAt: normalizedIso(item.lastAnalysisAttemptAt) } : {}),
     })
   }
-  return Array.from(byParticipant.values()).slice(0, 32)
+  const scopes = Array.from(byParticipant.values())
+  // 容量策略:活跃累计(非零)永不截断;零值 scope 只在 32 个名额有剩余时保留
+  // (丢弃零值 scope 仅丢失该 scope 的 5 分钟分析冷却信息——值为零本就不会触发)。
+  // 此前固定按首见顺序 slice(0,32):先到的 32 个零值 scope 永久占位,
+  // 之后新建的参与者/独立生活 scope 的累计被静默丢弃(饥饿)。
+  const active = scopes.filter(scope => scope.alterValue !== 0)
+  if (active.length >= 32) return active
+  const idle = scopes.filter(scope => scope.alterValue === 0)
+  return [...active, ...idle].slice(0, 32)
 }
 
 function normalizeParticipantId(value: unknown) {

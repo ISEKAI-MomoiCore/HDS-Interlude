@@ -1,6 +1,8 @@
 # HDS Interlude 配置指南
 
-适用版本：`1.0.1-rc36`
+适用版本：`1.0.1-rc50`
+
+当前文档已同步至 2026-10-11 的 rc50，累计变更以 rc48 为基线。发布流程现已执行源码构建，rc50 由本次生成的 `lib/` 与 `release/koishi-plugin-hds-interlude-1.0.1-rc50.tgz` 交付；旧 rc48 安装包不会自动获得这些修改，运行实例须安装并重载后才生效。验收与边界见 [发布验证报告](docs/development/RELEASE_VERIFICATION_2026-10-11_RC50.md)。
 
 第一次安装先看 `BEGINNER_GUIDE.md`。本文件按配置依赖关系组织字段；下方先列出当前 Console 的实际顺序，旧版本已经移除或隐藏的字段集中列在末尾，不再混入正常配置流程。
 
@@ -24,8 +26,12 @@
 | 【内在】 | 12 | `memory` | 记忆与连续性 |
 | 【内在】 | 13 | `alterSystem` | Alter 情绪 |
 | 【扩展】 | 14 | `browser` | 网页观察 |
-| 【维护】 | 15 | `blindMode` | 盲区模式 |
-| 【维护】 | 16 | `logging` | 日志 |
+| 【扩展】 | 15 | `worldSeeder` | 世界事件播种器 |
+| 【扩展】 | 16 | `longHorizon` | 长线叙事指导 |
+| 【扩展】 | 17 | `qzone` | QQ 空间通道 |
+| 【扩展】 | 18 | `presetSync` | 预设同步 |
+| 【维护】 | 19 | `blindMode` | 盲区模式 |
+| 【维护】 | 20 | `logging` | 日志 |
 
 首次测试先完成 `storyDefaults`、`model`、`onebot`、`sharedStory` 和 `runtime`；`blindMode` 保持关闭。Embedding、网页观察、主动联系和内容日志应在基础私聊稳定后逐项开启。
 
@@ -55,19 +61,19 @@
 
 ## 2. model：模型中心（【必填 2】）
 
-### 3.1 连接顺序
+### 2.1 连接顺序
 
 1. 将 `mode` 设为 `openai-compatible`。
 2. 先确认 `vision.enabled` 与 `vision.mode`：视觉主模型用 `native`；纯文本主模型可用 `sidecar` 并另配视觉连接。
 3. 在 `providers` 的每一行一次填完连接地址、API Key 和实际模型名。
-4. 勾选这行模型要承担的用途：主叙事、压缩、Alter、Embedding、表情包描述或侧端识图；每种用途保持一条即可。
+4. 勾选这行模型要承担的用途：主叙事、压缩、Alter、Embedding、表情包描述或侧端识图。初次部署每种用途配置一条即可；需要备用线路、分担负载或故障切换时，同一用途可以勾选多条连接。
 5. 在下方按任务分别调整温度、token、超时、提示词和 Embedding 参数。
 
-`fallback` 不调用远程模型，只适合验证插件、数据库和命令是否安装成功。
+`fallback` 是旧配置兼容/本地降级路径，不是当前 Console 中的完整运行模式。它只能帮助确认插件、数据库和命令已经加载，不能证明模型连接、视觉、音频、Embedding、压缩、世界播种或故障切换可用。
 
 ### 自定义提供商协议（rc12）
 
-自定义 `openai-compatible` 提供商在 rc12 可选择 `protocol=chat-completions`（默认）或 `anthropic-messages`，后者使用 `/v1/messages` 及 `x-api-key` 认证。`anthropicCache` 默认关闭；开启后添加服务端缓存标记，与 `mainPayloadOrder=cache-first` 可组合。完整配置、流式与音频限制见 [rc12 适配说明](docs/development/ANTHROPIC_MESSAGES_RC12.md)。以下官方预设仍采用各自原有协议。
+自定义 `openai-compatible` 提供商在 rc12 可选择 `protocol=chat-completions`（默认）或 `anthropic-messages`，后者使用 `/v1/messages` 及 `x-api-key` 认证。`anthropicCache` 默认关闭；开启后添加服务端缓存标记，与 `mainPayloadOrder=cache-first` 可组合。完整配置、流式与音频限制见 [rc12 适配说明](docs/development/ANTHROPIC_MESSAGES_RC12.md)。以下官方预设仍采用各自原有协议；其中 Gemini Interactions 使用独立的 Interactions API。若通过该模式接入 DeepSeek V4、方舟等支持 DeepSeek thinking 参数的端点，可将 `deepseekThinking` 设为 `disabled` 或 `enabled`；默认 `inherit`，不会向通用兼容端点主动添加该字段。
 
 ### 智谱官方提供商模式
 
@@ -77,31 +83,34 @@
 
 ### DeepSeek 官方提供商模式
 
-在任意一行 `providers` 中将 `mode` 设为 `deepseek-official`，保存并重载后会显示 DeepSeek 专属字段：API Key、模型代码、思考开关和思考强度。`deepseekThinking=disabled` 是默认值，适合需要快速、稳定结构化输出的主叙事、压缩与 Alter；开启后才会发送 `reasoning_effort`，可选 `low`、`high`、`max`。
+在任意一行 `providers` 中将 `mode` 设为 `deepseek-official`，保存并重载后会显示 DeepSeek 专属字段：API Key、模型代码、思考开关和思考强度。`deepseekThinking=disabled` 是默认值，适合需要快速、稳定结构化输出的主叙事、压缩与 Alter；开启后才会发送 `reasoning_effort`，可选 `low`、`high`、`max`。自定义 `openai-compatible` 行也提供同名控制，但默认值是 `inherit`，只有明确选择 `disabled` 或 `enabled` 时才会覆盖网关默认行为。
 
-### 其它官方提供商模式
+### 2.2.1 官方提供商模式
 
-每一行 `providers.mode` 都可以独立选择，保存并重载后显示该模式的字段。以下预设固定官方 Chat Completions endpoint，只需填写 API Key 与模型名：
+每一行 `providers.mode` 都可以独立选择，保存并重载后显示该模式的字段。官方模式会固定其 endpoint，通常只需填写 API Key 与模型名：
 
-| 模式 | 服务商 | 默认模型 | 说明 |
+| 模式 | 服务商 | 默认模型 | 协议与说明 |
 | --- | --- | --- | --- |
-| `openai-official` | OpenAI | `gpt-5-mini` | OpenAI 官方 Chat Completions。 |
-| `deepseek-official` | DeepSeek | `deepseek-chat` | 可独立开关思考并设置 `low` / `high` / `max` 强度。 |
-| `moonshot-official` | Kimi / Moonshot | `kimi-k2.5` | Kimi 官方 OpenAI-compatible 接口。 |
-| `dashscope-official` | 阿里云百炼 | `qwen-plus` | 可选择北京、新加坡或美国共享服务地域；工作空间专属地址使用自定义模式。 |
+| `openai-official` | OpenAI | `gpt-5-mini` | OpenAI Chat Completions。 |
+| `deepseek-official` | DeepSeek | `deepseek-chat` | Chat Completions；可独立开关思考并设置 `low` / `high` / `max` 强度。 |
+| `moonshot-official` | Kimi / Moonshot | `kimi-k2.5` | 官方 OpenAI-compatible 接口。 |
+| `dashscope-official` | 阿里云百炼 | `qwen-plus` | 官方 OpenAI-compatible 接口；可选择服务地域。 |
 | `siliconflow-official` | 硅基流动 | `Qwen/Qwen3-8B` | 官方 OpenAI-compatible 接口。 |
-| `openrouter` | OpenRouter | `openai/gpt-5-mini` | 使用 OpenRouter 模型 slug，例如 `anthropic/...` 或 `google/...`。 |
-| `gemini-openai` | Google Gemini | `gemini-2.5-flash` | Gemini 官方 OpenAI 兼容端点。 |
+| `openrouter` | OpenRouter | `openai/gpt-5-mini` | OpenRouter 接口，模型名使用 provider slug。 |
+| `gemini-openai` | Google Gemini | `gemini-2.5-flash` | Gemini OpenAI 兼容层；旧模式，部分密钥可能返回 403/404。 |
+| `gemini-interactions` | Google Gemini | `gemini-2.5-flash` | Gemini Interactions API（推荐）；使用 `POST /v1beta/interactions`，图片/音频以 `inline_data`/`file_data` 交给主模型。 |
 
-`openai-compatible` 始终保留给第三方中转站、工作空间专属域名和自定义网关。Anthropic 官方 Messages API 与 HDSI 当前 Chat Completions 请求结构不同，因此不作为“官方兼容预设”显示；可通过 OpenRouter，或使用支持 Chat Completions 的中转服务。
+所有连接均可填 `proxyAgent`（HTTP(S) 代理地址，留空直连）。Koishi 的请求层不读系统代理——Cherry Studio 等应用能通而 HDSI 报 `fetch failed` 时，把本机代理地址（如 `http://127.0.0.1:7890`）填到这里即可；只影响该连接的模型请求。
 
-### 3.2 providers
+`openai-compatible` 始终保留给第三方中转站、工作空间专属域名和自定义网关。它支持 `chat-completions` 和 `anthropic-messages` 两种协议；Anthropic Messages 不是独立的官方 Provider 模式，需在自定义连接中选择对应协议并填写 `/v1/messages` 地址。
+
+### 2.2 providers
 
 | 字段 | 说明 |
 | --- | --- |
 | `label` | 模型连接的显示名称，例如 GLM 4.7 Flash。 |
 | `enabled` | 是否启用这条模型连接。 |
-| `endpoint` | 完整 Chat Completions 地址。 |
+| `endpoint` | 自定义 `openai-compatible` 连接的完整地址；官方模式使用固定 endpoint，通常不显示此字段。 |
 | `apiKey` | 密钥；按密码处理，不要进入截图和日志。 |
 | `model` | 服务商实际模型名；只在这行填写一次。 |
 | `useForMain` | 用作主叙事模型。 |
@@ -111,11 +120,13 @@
 | `useForStickers` | 用作本地表情包描述模型；必须支持图片理解。 |
 | `useForVision` | 用作侧端识图模型；`vision.mode=sidecar` 时描述当前私聊图片，必须支持图片理解。 |
 | `priceInput` / `priceOutput` / `priceCachedInput` | 可选计费单价（每百万 tokens，币种与所填数值一致）。配置后每次模型调用会在日志中输出计费；缓存命中的输入按 `priceCachedInput` 计（未填时按输入单价），并单独报告"缓存节省"。全部为 0 时不输出计费段。 |
-| `extraHeaders` / `extraBody` | 服务商明确要求时填写 JSON 对象。 |
+| `deepseekThinking` | DeepSeek 兼容端点的思考控制：`inherit` 保持服务商/`extraBody` 原样，`disabled` 强制发送 `thinking.type=disabled`，`enabled` 强制开启并发送 `reasoning_effort`。非 DeepSeek 或不支持该字段的服务保持 `inherit`。 |
+| `deepseekReasoningEffort` | `deepseekThinking=enabled` 时的推理强度：`low`、`high` 或 `max`。 |
+| `extraHeaders` / `extraBody` | 服务商明确要求时填写 JSON 对象；显式的 `deepseekThinking` 设置优先于 `extraBody` 中同名思考字段。 |
 
 模型行既是连接配置，也是用途分配中心。无需填写或记忆 `providerId`、`modelId`、`mainModelId`；旧配置中的这些字段仍可兼容读取。
 
-### 3.3 主叙事调优
+### 2.3 主叙事调优
 
 主叙事模型由上方 `useForMain` 自动选择。这里仅调整它的生成行为：
 
@@ -135,7 +146,7 @@
 
 `mainStreamingMode=experimental` 只在 `json-object` 下尝试私聊首条提前投递。Chat Completions 要求标准 OpenAI SSE `choices[].delta.content`；rc12 的 Anthropic Messages 使用其原生 SSE text delta，thinking 不进入剧本。智谱官方 GLM 走已有 SSE 路径，其余兼容预设走实验性通用路径。未知中转站请先在低风险私聊测试，群聊仍等待完整结果。首条成功投递后，后续流式结果失败不会触发可见消息重试，而是只安排一次无 transport 的剧本补写，避免重复发言。
 
-### 3.4 failover 与提示词
+### 2.4 failover 与提示词
 
 `failover.enabled` 控制失败切换；`strategy` 可选按顺序或轮询；`maxAttemptsPerProvider` 控制单服务尝试次数；`cooldownMinutes` 控制失败后的临时跳过。
 
@@ -146,10 +157,10 @@
 - `fixedPrompt`：所有故事通用的长期约束。
 - `stylePrompt`：全局文风。
 
-### 3.5 vision、compaction、embedding
+### 2.5 vision、compaction、embedding
 
 - `vision.enabled`：位于模型区最前面；开启后处理当前私聊图片，图片二进制与识别结果都不会写入剧本数据库。
-- `vision.mode`：`native` 把图片作为原生多模态输入交给主叙事；`sidecar` 由 `useForVision` 视觉连接先生成一次事实观察，再交给纯文本主模型。不要依赖自动探测或失败后隐式回退，明确选择可避免重复请求。
+- `vision.mode`：`native` 把图片作为原生多模态输入交给 `useForMain` Provider，主叙事模型直接收图；`sidecar` 由 `useForVision` Provider 先生成一次事实观察，再把观察文本交给主叙事模型，主叙事模型不直接收图。sidecar 主要处理当前事件图片，不等于把历史群聊图片永久转换成文本记忆。不要依赖自动探测或失败后隐式回退，明确选择可避免重复请求。
 - `vision.detail`：`low` 更省 token，`high` 更适合细小文字，`auto` 交由服务商决定；对智谱官方接口会自动省略不兼容的 `detail` 字段。
 - `vision.maxImageDimension`：视觉输入图片的最长边（默认 `1024`，可选 `0/512/768/1024`）。native 和 sidecar 都会复用此降采样；通过可选 Puppeteer 服务重渲染，节省多模态 token 与上传时间，并顺带修正 EXIF 旋转；Puppeteer 不可用或图片本身较小（<150KB）时自动透传原图，`0` 表示关闭。
 - `compaction`：后台整理已发生剧本、事实和状态提案。模型由 `useForCompaction` 选择；这里配置温度、top-p、输出、超时、响应格式和压缩提示词。响应格式默认独立为 `json-object`，不会跟随主叙事的 `prompt-only`；同一未变化场景压缩失败后会短暂冷却，新增剧本条目或手动压缩可再次尝试。
@@ -163,7 +174,7 @@ Embedding 地址留空时，插件会尝试从标准 `/chat/completions` 地址�
 
 `onebot.enabled=true` 后采用显式白名单：`botAccounts` 或 `userAccounts` 为空都会拒绝对应账号。
 
-### 4.1 botAccounts 与 userAccounts
+### 3.1 botAccounts 与 userAccounts
 
 - `botAccounts`：机器人 QQ、备注、启用状态。
 - `userAccounts`：用户 QQ、主角称呼、稳定人物 ID、人物资料、初始关系、启用状态。
@@ -171,7 +182,7 @@ Embedding 地址留空时，插件会尝试从标准 `/chat/completions` 地址�
 
 同一现实人物的多个账号可复用 `personId`。不同人物必须分别填写资料和关系，不能把所有 QQ 当作同一关系分支。
 
-### 4.2 groupChats
+### 3.2 groupChats
 
 | 字段 | 说明 |
 | --- | --- |
@@ -184,11 +195,11 @@ Embedding 地址留空时，插件会尝试从标准 `/chat/completions` 地址�
 | `cooldownSeconds` | 主角群发言后的最短冷却。 |
 | `willingness` | 可选的纯算法群聊意愿：积累、半衰减、阈值概率与成功发言成本。 |
 
-群聊不再调用独立快速筛选模型。普通消息合并后仍经过意愿与冷却判断，再交给主叙事。rc12 对可提取的音频文件/语音跳过意愿、冷却与仅 @ 门槛，直接进入合并写作队列，携带本批原生音频；仍由主叙事决定是否输出 `groupReply`。群白名单、原生音频开关、数量及大小限制保留；音频读取失败会警告。Messages 连接需要音频兼容的 Chat Completions 故障转移连接。
+群聊不再调用独立快速筛选模型。普通消息合并后仍经过意愿与冷却判断，再交给主叙事。rc12 对可提取的音频文件/语音跳过意愿、冷却与仅 @ 门槛，直接进入合并写作队列，携带本批原生音频；仍由主叙事决定是否输出 `groupReply`。群白名单、原生音频开关、数量及大小限制保留；音频读取失败会警告。使用 Messages 协议时，还需要服务商真正支持音频输入；必要时应准备兼容的 Chat Completions 故障转移连接。
 
-对 `responseMode=always` 的活跃群，可开启 `willingness`。它完全在本地按算法运行：普通群消息累积意愿、按半衰期自然衰减、接近上限时增益递减、超过阈值后按概率决定是否进入主模型；主角成功群发言后会扣除意愿。关键词与引用机器人消息可增加意愿，@ 机器人始终绕过概率。它默认关闭，只作用于这个群，不影响私聊、Alter、Agency、自动推进或主提示词，也不产生额外模型调用。
+对 `responseMode=always` 的活跃群，可使用 `willingnessPreset` 选择 `quiet`、`reserved`、`normal`、`active`、`eager`、`auto` 或 `custom`。`off`（默认）只保留响应模式与冷却；`custom` 才使用下方旧数值对象。意愿门完全在本地运行，不增加模型调用。普通状态下 @ 通常绕过意愿概率；睡眠态例外，@ 不会立即直通，而交给后续主叙事自然处理。群音频仍独立绕过意愿和冷却门槛。关键词与引用机器人消息可增加意愿，主角成功群发言后会扣除意愿。该功能只作用于当前群，不影响私聊、Alter、Agency、自动推进或主提示词。
 
-### 4.3 voiceTranscription：SnowLuma 私聊语音转写
+### 3.3 voiceTranscription：SnowLuma 私聊语音转写
 
 | 字段 | 默认值 | 说明 |
 | --- | --- | --- |
@@ -197,7 +208,7 @@ Embedding 地址留空时，插件会尝试从标准 `/chat/completions` 地址�
 
 转写成功后，主模型收到的用户事件会带有 `[用户语音转写]` 标记，并和当前文本、图片一起构成同一个回合。该功能需要 SnowLuma 支持原始 OneBot `fetch_ptt_text` 动作；NapCat 或其它实现不支持时会安全降级。它不把音频文件或 base64 写入 HDSI 数据库。
 
-### 4.4 `model.audio`：原生音频理解
+### 3.4 `model.audio`：原生音频理解
 
 这条路径与 `voiceTranscription` 不同：不请求文字转写，而是由 SnowLuma 将 QQ SILK 语音转码后作为原生音频内容交给主模型。只有支持音频输入的主模型（例如 Gemini）才适用；它不会在模型不支持时自动回退为文字转写。
 
@@ -218,7 +229,7 @@ Embedding 地址留空时，插件会尝试从标准 `/chat/completions` 地址�
 | --- | --- |
 | `autoEnrollParticipants` | 白名单用户首次私聊时自动加入现有主剧本。 |
 | `allowCrossConversationMessages` | 允许一次写作向其它合法参与者产生消息。 |
-| `shareParticipantDetails` | 是否向模型提供其它关系分支的原始历史；默认关闭。 |
+| `shareParticipantDetails` | 是否向模型提供其它关系分支的原始历史；默认关闭。长期事实是全局叙事材料，不受此开关过滤。 |
 | `maxCrossConversationActions` | 单回合跨账号动作上限，建议保持 `1`。 |
 | `participantContextLimit` | 单次请求携带的其它参与者摘要数量。 |
 | `managerAccounts` | 有权执行全局管理命令的 QQ；空表表示所有已授权用户。 |
@@ -227,7 +238,7 @@ Embedding 地址留空时，插件会尝试从标准 `/chat/completions` 地址�
 
 ## 5. runtime：运行时与节奏（【节奏 5】）
 
-### 6.1 消息合并、回复和失败恢复
+### 5.1 消息合并、回复和失败恢复
 
 | 字段 | 说明 |
 | --- | --- |
@@ -236,7 +247,7 @@ Embedding 地址留空时，插件会尝试从标准 `/chat/completions` 地址�
 | `ignoreCommandMessages` | 防止管理命令进入剧本。 |
 | `userMessageDebounceSeconds` | 合并连续私聊的静默等待时间，默认 2 秒。 |
 
-### 6.2 QQ 合并转发读取
+### 5.2 QQ 合并转发读取
 
 `runtime.forwardMessage` 默认开启。收到 QQ `forward` segment 时，HDSI 会通过当前 SnowLuma/OneBot 账号调用 `get_forward_msg`，把转发节点中的文字、@、回复关系和媒体类型占位符并入同一条当前用户事件；普通文本、图片和语音消息不会额外发起请求。
 
@@ -253,15 +264,19 @@ Embedding 地址留空时，插件会尝试从标准 `/chat/completions` 地址�
 | `minimumDelayedReplySeconds` / `maximumDelayedReplyMinutes` | 模型允许计划的延迟范围。 |
 | `maxScriptCharacters` / `maxMessageCharacters` | 单回合剧本和单条可见消息的字符上限。 |
 
-### 6.2 分段消息
+### 5.3 分段消息
 
 `splitReplyMessages` 开启后，模型可以用 `messageSeparator`（默认 `<sep/>`）拆分聊天气泡。`typingBaseDelaySeconds`、`typingCharactersPerSecond` 和 `typingMaxDelaySeconds` 控制后续气泡的模拟输入时间；`typingJitterRatio` 默认 `0.3`，会在理论延迟上下约 30% 抖动，填 `0` 可恢复固定时长。
+
+后续气泡持久化为 `split-message` 意图，并按实际回执更新源剧本的分段账本；尚未送达的文字不是已确认的 `character-message`。同一参与者仍有 pending 分段（包括尚未到发送时间的分段）时，到期补写和对话后续写作先等待；全局生活推进（含手动推进）等待所有 pending 分段。其它参与者的独立到期任务、网页和 QQ 空间执行器不因此停机。新用户消息仍可打断未发送分段。
+
+重启恢复只补偿已落库、仍为 pending 的消息 segment，不重新运行主叙事。已有分段意图的气泡仍交给原打字执行器，恢复扫描不会绕过延迟抢发。已 delivered/cancelled 的 segment 不再自动发送。
 
 `convertNewlineToSeparator`（默认关闭）是小模型适配开关：模型没有按合约输出 `<sep/>` 而是用换行分条时，把每个换行自动视作一条消息的分隔再发送。内容里已有 `<sep/>` 时不做转换；`splitReplyMessages` 关闭时该开关无效。Gemma 等不遵守分句合约的小模型建议开启。
 
 主模型尚未提交第一条回复时，新消息会废弃旧请求，并把旧、新消息合并后重新写作，不再受固定秒数窗口限制。第一条回复已经提交后，新消息会取消剩余分段；未发送文字以 `interruptedOutgoingDrafts` 进入替代提示词，表示主角想发送但被新消息打断，不能视为已送达内容。
 
-### 6.3 自动生活和主动联系
+### 5.4 自动生活和主动联系
 
 | 字段 | 说明 |
 | --- | --- |
@@ -276,6 +291,12 @@ Embedding 地址留空时，插件会尝试从标准 `/chat/completions` 地址�
 | `contextEntryLimit` | 写入主叙事上下文的近期原始剧本条目数，默认 `35`。小模型可调小（如 `15`）——低于 35 的设置真实生效（旧版的 35 硬地板已移除）。 |
 | `contextTimeWindowMinutes` | 与条目数取并集的时间窗口，默认 `45` 分钟（窗口内条目全部并入，上限 500）；`0` 关闭。小模型收缩上下文时需与条数一起调小或关闭。 |
 | `memoryLimit` | 主叙事携带的长期事实数量。 |
+
+### 5.5 承诺回访的调度终止
+
+`follow-up-commitment` 每位参与者最多两项待处理承诺。到期写作没有明确可见结算时，通常 20 分钟后重查，但必须遵守 `expiresAt` 硬截止及最多 5 次未结算顺延；达到限制后不再调用模型，由宿主将意图退役为 `cancelled`。新承诺有效期最多 24 小时，旧记录缺失/无效截止时间时固定采用 `createdAt + 24h`，不会每次读取续命。等待分段只是调度等待，不增加顺延计数，也不延长截止时间；到期时优先退役。
+
+退役不等于角色履行了承诺，也不凭空生成“我取消了”的可见消息；历史剧本和审计原因保留。上述次数与旧记录期限是宿主边界，目前没有新增 Console 开关。
 
 ## 6. urge：弹性推进（【节奏 6】）
 
@@ -300,11 +321,13 @@ Schedule Preplan 每天在后台空闲整理时检查主角近期日程。它复
 | `horizonDays` | `14` | 后台保存和程序展开的未来天数；不会整批进入主提示词。 |
 | `variationLevel` | `stable` | `stable` 只保留稳定周规律；`contextual` 保留有来源的阶段与日期例外；`granular` 允许少量有来源的半透明候选变化。 |
 | `candidateActivationProbability` | `0.25` | 仅 granular 候选变化的稳定激活概率；同一故事、日期和候选块只计算一次。 |
-| `candidateRevealMinutes` | `120` | granular 候选变化距离开始多少分钟内才向主叙事显示具体内容；更早时只显示为“可能的个人安排”。 |
+| `candidateRevealMinutes` | `120` | 已激活的 granular 候选距离开始多少分钟内才显示具体内容；更早时只显示“可能的个人安排”，未激活候选完全不显示。 |
 | `reviewAfterLocalHour` | `3` | 每天主角本地时间达到该小时后，允许第一次空闲审查。 |
 | `anchorAutoAdvance` | `true` | 固定日程的开始/结束可提前普通随机推进，避免跨过关键节点。 |
 
 主叙事只接收从当前时刻起未来约 12 小时、最多八项日程块，并明确标记为“计划而非已发生事实”。候选变化不参与固定日程锚点，也不能单独制造生活事件、人物或消息。查看状态使用 `interlude.schedule`；需要重新审查时使用 `interlude.schedule.refresh`，`interlude.schedule.rebuild` 是兼容别名。完整规则见 `docs/SCHEDULE_PREPLAN.md`。
+
+- 候选显示：未激活候选完全不显示；已激活候选在揭示时间前只显示“可能的个人安排”，进入揭示时间后才显示具体内容。仅 granular 模式使用候选。
 
 ## 8. timelineDirector：时间导演（【节奏 8】）
 
@@ -340,7 +363,7 @@ Agency Window 包含 `activityLoad`、`privacy` 和 `deviceAccess`。自动生�
 
 ## 12. memory：记忆与连续性（【内在 12】）
 
-### 10.1 整理触发和预算
+### 12.1 整理触发和预算
 
 - `enabled`
 - `backgroundIntervalMinutes`
@@ -348,6 +371,7 @@ Agency Window 包含 `activityLoad`、`privacy` 和 `deviceAccess`。自动生�
 - `recentEntryLimit` / `factLimit`
 - `compactionEntryLimit` / `compactionCharacterLimit`
 - `sceneHookCharacters` / `sceneSummaryCharacters` / `arcSummaryCharacters`
+- `arcPromptCharacters`（弧摘要随每回合提示词携带的上限,超长保尾部;默认 6000,全量仍存库）
 - `previousSceneSummaries`：随主提示词附带几个紧邻已关闭场景的摘要（默认 `2`，每条裁剪至 2000 字符并带时间范围），填补原始窗口与弧线摘要之间的记忆缝隙；`0` 表示关闭。
 - `factContentCharacters`
 - `maxFactsPerStory` / `maxStoriesPerCompactionRun`
@@ -356,13 +380,15 @@ Agency Window 包含 `activityLoad`、`privacy` 和 `deviceAccess`。自动生�
 
 场景压缩同时维护两类记忆载体：`previousScenes`（紧邻已关闭场景的摘要，随主提示词稳定区注入）和 `workingDetails`（取餐码、代购、跑腿这类不够格成为长期事实的小型在途细节，存于故事状态、默认 6 小时内有效，过期自然淡出）。两者都由压缩模型从已发生条目中提取，主合约要求模型安静地将其作为背景使用、绝不逐条复述。
 
-### 10.2 事实排序
+### 12.2 事实排序
 
 `factImportanceWeight`、`factConfidenceWeight`、`factRecencyWeight`、`semanticWeight` 和 `unresolvedWeight` 共同决定旧事实进入主提示词的顺序。`unresolvedWeight` 只奖励仍未兑现的 promise；普通 event 不再因错误的 unresolved 标记长期占据前排。最终结果还固定保留少量最近已完成事件与未完成承诺。Embedding 可用时，语义分数参与排序；否则语义分数为零。
 
-Continuity 从 beta5 起只保存已经建立的 `current`、`recent` 和 `salient`。未来计划由 pending intent、Schedule Preplan 与到期事项动态提供，旧版快照中的自由文本 `next` 不再进入主提示词。承诺或开放事实被履行、取消时会标记 continuity 需要在下一次成功写作中提前刷新。
+当前主叙事不再实时生成 continuitySnapshot；旧 `current`、`recent`、`salient` 仅保留历史兼容，有原始剧本时不投影，旧自由文本 `next` 不进入主提示词。未来计划由 pending intent、Schedule Preplan 与到期事项动态提供，不能当作已经发生的事实。
 
-### 10.3 剧情余波
+长期事实来自同一个全局候选池，`scope=relationship` 是内容类别而不是收件人权限；旧数据库 `participantId` 列仅兼容保留，不参与事实可见性判断，也不额外进入主叙事事实投影。涉及人物时应在正文明确名字及关系，例如“小林说小林今天要出门”，不要只写“他说要出门”。管理员添加与模型提取均有明显指代不清的检查，但这不代替语义审查。模型按当前剧情决定是否对某位用户提及事实；事实排序和 `memoryLimit` 仍生效，并非每轮发送整个事实库。原始私聊、场景记忆和网页观察仍遵循各自的共享边界。
+
+### 12.3 剧情余波
 
 - `activeConsequencesEnabled`
 - `activeConsequencePromptLimit`
@@ -371,7 +397,7 @@ Continuity 从 beta5 起只保存已经建立的 `current`、`recent` 和 `salie
 
 余波保存已经发生事件的短期影响，保持具体、短期，并由后续事件自然收束。
 
-### 10.4 Overlay 演化与压缩
+### 12.4 Overlay 演化与压缩
 
 普通状态提案需满足置信度、至少三个独立剧本回合、至少两个日期以及同路径冷却。相关字段包括：
 
@@ -379,6 +405,7 @@ Continuity 从 beta5 起只保存已经建立的 `current`、`recent` 和 `salie
 - `majorStatePatchConfidenceThreshold`
 - `statePatchMinEvidence`
 - `statePatchMinTurns`
+- `statePatchMajorMinScenes`（重大变更自动应用所需最少独立场景数,默认 2）
 - `statePatchMinDays`
 - `statePatchCooldownHours`
 - `autoApplyStatePatches`
@@ -423,29 +450,7 @@ Alter 模型由上方 `useForAlter` 选择。`temperature`、`topP`、`maxTokens
 
 `allow-immediate` 会为少数私聊额外执行一次观察并重新请求主叙事，因此延迟和费用都更高。首次测试使用 `deferred-only`。
 
-## 15. blindMode：盲区模式（【维护 15】）
-
-开启 `blindMode.enabled` 后，HDSI 不注册自己的管理指令，并静默拦截当前 Koishi 实例中所有已经识别的指令；普通聊天仍会进入叙事。HDSI 的普通运行日志、错误详情和消息预览都会隐藏，只按 `healthReportMinutes` 输出一次不含故事或账户内容的运行状态心跳；其它插件仍遵循各自的日志配置。
-
-它适合追求高度沉浸感，并且模型、账号白名单和故事档案已经稳定正常的环境。关闭此模式需要在 Console 修改配置并重载插件；失明模式开启期间无法通过聊天指令恢复管理能力。旧 `blackBox` 配置仍可兼容读取，但 Console 只显示 `blindMode`。
-
-## 16. logging：日志（【维护 16】）
-
-| 字段 | 说明 |
-| --- | --- |
-| `level` | 错误级别阈值；日常使用 `info`。 |
-| `verbosity` | `summary`、`standard`、`diagnostic` 三档运行信息量。 |
-| `format` | 默认 `layered` 彩色任务时间线；也可使用 compact 或兼容旧版的 detailed。 |
-| `colors` | 为阶段、完成、Alter、警告和错误添加 ANSI 语义颜色。 |
-| `colorTheme` | `dark` 使用深色界面的柔亮调色板；`light` 使用明亮界面的深色高对比调色板。由用户按 Console 主题手动选择。 |
-| `kaomoji` | 使用固定颜文字；关闭后改用简洁符号。 |
-| `logScriptPreview` | 是否记录剧本正文预览。 |
-| `logMessageContent` | 是否记录用户和主角可见消息。 |
-| `previewLength` | 内容预览字符上限。 |
-
-标准档只保留直观业务事件；扫描、队列、计时器和 SQLite 临时重试进入诊断档。内容开关可能记录私聊和网页文本，排障结束后应关闭。
-
-## 17. worldSeeder：世界事件播种器（【扩展 15】）
+## 15. worldSeeder：世界事件播种器（【扩展 15】）
 
 后台低频生成与主角有关的外部事件（线下通道、NPC），到点以 `[世界事件]` 条目进入剧本。**模型选择在【必填 2】模型中心的连接上勾选"用于世界播种"**；未勾选任何连接时开关无效（视为关闭）。
 
@@ -462,11 +467,7 @@ Alter 模型由上方 `useForAlter` 选择。`temperature`、`topP`、`maxTokens
 
 机制要点：**每轮检查面向一个"世界切面"提问**（天象与环境/居所与近邻/生计与日常事务/亲近之人/途中与陌生人/小意外与际遇，按剧本+时间确定性轮换）——切面是世界的通用方面而非现代题材，异世界/古代世界观由各自 worldSetting 渲染具体面貌。已注入事件不进入播种器的灵感摘录（防自馈复读），自身产出仅作"近期已播"记忆。**多数检查应输出空**；这是正常形态，不是故障。详细设计见 `docs/WORLD_EVENT_SEEDER_DESIGN.md`。
 
-## 18. qzone：QQ 空间通道（【扩展 16】）
-
-以她本人身份发说说/评论/点赞（经 SnowLuma 的 qzone 扩展动作；需连接在线）。默认关闭；高频会被 Qzone 风控，保持保守上限。启用后可用 `interlude.qzone <内容>` 直接发说说；叙事侧（她何时自发发布/对好友动态的反应）由后续版本接入。键：`enabled`（false）、`dailyPostCap`（3）、`dailyCommentCap`（6）、`dailyLikeCap`（12）、`minIntervalMinutes`（90，跨类型共享）、`feedWindowMinutes`（120，好友动态只消费窗口内新鲜说说）。设计见 `docs/QZONE_FEED_DESIGN.md`。
-
-## 19. longHorizon：长线叙事指导（【扩展 17】）
+## 16. longHorizon：长线叙事指导（【扩展 16】）
 
 实验性叙事催化器（Narrative Attractor）：累计加权叙事证据后异步生成阶段性人物弧线方向，主叙事在自然场景中参考它渐进推进。**默认关闭**。
 
@@ -483,13 +484,54 @@ Alter 模型由上方 `useForAlter` 选择。`temperature`、`topP`、`maxTokens
 
 **模型路由**：长线指导模型复用 compaction 路由（在【必填 2】模型中心勾选"用于压缩整理"即可），温度自动钳制 ≤0.35，JSON mode 输出。
 
-**隐私边界**：`shareParticipantDetails=false` 时长线模型只看主参与者 + 全局条目；计分不受影响。
+**隐私边界**：`shareParticipantDetails=false` 时长线模型仍只看主参与者的原始历史，但 durable facts 会作为全局叙事材料传入；该开关不控制长期事实是否传递。计分不受影响。
 
 **与现有系统的关系**：指导 ≠ 事实——实际行为经现有证据流程后才更新事实/overlay。Agency/Urge 行动容量不受指导影响。设计详见 `docs/LONG_HORIZON_NARRATIVE_GUIDANCE_DESIGN.md`。
 
-## 20. onebot：群聊历史图片回流
+## 17. qzone：QQ 空间通道（【扩展 17】）
 
-群聊中用户发送的图片会持久化引用到 `metadata.groupImageRefs`。下一次真实进入群聊主叙事时，从同群历史条目中按新到旧选取图片作为视觉证据（低细节模式），当前回合图片与历史图片去重。
+以她本人身份发说说/评论/点赞（经 SnowLuma 的 qzone 扩展动作；需连接在线）。默认关闭；高频会被 Qzone 风控，保持保守上限。启用后可用 `interlude.qzone <内容>` 直接发说说；满足运行条件时，叙事会自动读取好友动态，并在限流内执行模型安排的发帖、评论和点赞意图。键：`enabled`（false）、`dailyPostCap`（3）、`dailyCommentCap`（6）、`dailyLikeCap`（12）、`minIntervalMinutes`（90，跨类型共享）、`feedWindowMinutes`（120，好友动态只消费窗口内新鲜说说）。设计见 `docs/QZONE_FEED_DESIGN.md`。
+
+## 18. presetSync：预设同步（【扩展 18】）
+
+从 typ0-site 分享站拉取并应用预设，默认关闭。分享码可在预设详情页获取；模型连接凭据不属于此同步分区。
+
+| 键 | 默认 | 说明 |
+| --- | --- | --- |
+| `enabled` | `false` | 启用预设同步，需填写分享码。 |
+| `baseUrl` | `https://typ0.space` | 分享站地址；自托管可填写自己的站点地址。 |
+| `shareCode` | 空 | 8 位分享码，支持大小写及连字符。 |
+| `autoUpdate` | `false` | 开启后在重载时检查远端 revision，有新版本才应用；关闭时由 `interlude.preset.sync` 手动触发。 |
+| `sections` | 空数组 | 留空同步预设中所有支持的分区；填写时只同步选定分区。 |
+| `applyToCurrentStory` | `false` | 是否把 storyDefaults 同时应用到正在运行的故事。 |
+
+同步可能改变当前配置；首次使用建议明确选择分区并保持 `applyToCurrentStory=false`。
+
+## 19. blindMode：盲区模式（【维护 19】）
+
+开启 `blindMode.enabled` 后，HDSI 不注册自己的管理指令，并静默拦截当前 Koishi 实例中所有已经识别的指令；普通聊天仍会进入叙事。HDSI 的普通运行日志、错误详情和消息预览都会隐藏，只按 `healthReportMinutes` 输出一次不含故事或账户内容的运行状态心跳；其它插件仍遵循各自的日志配置。
+
+它适合追求高度沉浸感，并且模型、账号白名单和故事档案已经稳定正常的环境。关闭此模式需要在 Console 修改配置并重载插件；失明模式开启期间无法通过聊天指令恢复管理能力。旧 `blackBox` 配置仍可兼容读取，但 Console 只显示 `blindMode`。
+
+## 20. logging：日志（【维护 20】）
+
+| 字段 | 说明 |
+| --- | --- |
+| `level` | 错误级别阈值；日常使用 `info`。 |
+| `verbosity` | `summary`、`standard`、`diagnostic` 三档运行信息量。 |
+| `format` | 默认 `layered` 彩色任务时间线；也可使用 compact 或兼容旧版的 detailed。 |
+| `colors` | 为阶段、完成、Alter、警告和错误添加 ANSI 语义颜色。 |
+| `colorTheme` | `dark` 使用深色界面的柔亮调色板；`light` 使用明亮界面的深色高对比调色板。由用户按 Console 主题手动选择。 |
+| `kaomoji` | 使用固定颜文字；关闭后改用简洁符号。 |
+| `logScriptPreview` | 是否记录剧本正文预览。 |
+| `logMessageContent` | 是否记录用户和主角可见消息。 |
+| `previewLength` | 内容预览字符上限。 |
+
+标准档只保留直观业务事件；扫描、队列、计时器和 SQLite 临时重试进入诊断档。内容开关可能记录私聊和网页文本，排障结束后应关闭。
+
+## 专题：onebot 群聊历史图片回流
+
+群聊中用户发送的图片会持久化引用到 `metadata.groupImageRefs`。下一次真实进入群聊主叙事时，从同群历史条目中按新到旧选取图片作为视觉证据（低细节模式），当前回合图片与历史图片去重。数据库只保存 URL 或 OneBot `file` 引用，不保存图片内容；QQ CDN URL 可能过期，OneBot `file` token 也可能无法跨会话再次解析。模型支持视觉不等于历史图片一定能成功回源：回源失败发生在模型请求前；图片成功回源后仍可能因多图 payload、MIME、网关协议或服务商图片格式限制返回 400。
 
 | 键 | 默认 | 说明 |
 |---|---|---|
@@ -498,6 +540,7 @@ Alter 模型由上方 `useForAlter` 选择。`temperature`、`topP`、`maxTokens
 - 历史图片是**视觉证据**，不是当前指令；加载失败不阻塞本回合
 - mention-only 模式下未 @ 机器人的图片会落库但不单独触发主叙事
 - 持久化层只保存 URL / OneBot file 引用，不保存 data URI
+- Puppeteer 不可用时，动态图片抽帧和图片降采样不会执行；动态图片通常会保留原图继续尝试
 - 私聊图片行为不变
 
 ## 隐藏的历史兼容字段
@@ -516,7 +559,7 @@ Alter 模型由上方 `useForAlter` 选择。`temperature`、`topP`、`maxTokens
 ## 推荐验证顺序
 
 1. `npm run typecheck`、`npm test` 和 `npm run build`。
-2. 使用 `fallback` 验证插件加载、数据库和命令。
+2. 使用 `interlude.doctor` 和 `interlude.story.start` 验证插件加载、数据库和命令；不要把 `fallback` 当作当前完整运行模式。
 3. 配置主模型，只测试一个白名单私聊。
 4. 测试连续消息、延迟回复取消和 `<sep/>` 分段。
 5. 开启自动推进和对话后续补写。

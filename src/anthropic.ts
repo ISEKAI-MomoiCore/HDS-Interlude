@@ -1,3 +1,4 @@
+import { withProviderStream } from './http-proxy'
 /** Messages transport adapter. Narrative JSON and delivery decisions remain protocol-independent. */
 export interface AnthropicOptions {
   apiKey: string
@@ -87,74 +88,76 @@ export function anthropicResponse(response: any) {
 }
 
 export async function requestAnthropicStreaming(endpoint: string, body: Record<string, unknown>, headers: Record<string, string>, timeout: number,
-  onText?: (text: string) => Promise<void>, collect?: (usage: unknown) => void) {
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), timeout)
-  // 首帧守卫：部分网关接受连接后长时间静默。总超时仍然兜底，但这里让
-  // "无任何响应"的失败在 timeout/3（至多 30s）内暴露，而不是耗满全程。
-  const firstFrameTimeout = Math.min(Math.floor(timeout / 3), 30_000)
-  let receivedAnyFrame = false
-  const firstFrameTimer = setTimeout(() => { if (!receivedAnyFrame) controller.abort() }, firstFrameTimeout)
-  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined
-  let usage: Record<string, unknown> = {}, hasUsage = false
-  try {
-    const response = await fetch(endpoint, { method: 'POST', headers, body: JSON.stringify({ ...body, stream: true }), signal: controller.signal })
-    if (!response.ok) throw new Error(`Anthropic streaming request failed (${response.status}): ${(await response.text()).slice(0, 500)}`)
-    if (/application\/json/i.test(response.headers.get('content-type') || '')) {
-      const result = anthropicResponse(await response.json())
-      collect?.(result.usage)
-      return result.choices[0].message.content
-    }
-    if (!response.body) throw new Error('Anthropic stream has no response body.')
-    reader = response.body.getReader()
-    const decoder = new TextDecoder()
-    let pending = '', text = '', stopped = false, stopReason = ''
-    const event = async (frame: string) => {
-      const data = frame.split(/\r?\n/).filter(line => line.startsWith('data:')).map(line => line.slice(5).trim()).join('\n')
-      if (!data) return
-      // 网关注入的 keep-alive/[DONE]/畸形帧不是 Anthropic 协议事件；同文件的
-      // 其他流解析器对坏帧容错，这里对齐——一帧垃圾不该废掉整个用户回合。
-      let value: any
-      try {
-        value = JSON.parse(data)
-      } catch {
-        return
+  onText?: (text: string) => Promise<void>, collect?: (usage: unknown) => void, proxyAgent?: string) {
+  return withProviderStream(proxyAgent, async request => {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), timeout)
+    // 首帧守卫：部分网关接受连接后长时间静默。总超时仍然兜底，但这里让
+    // "无任何响应"的失败在 timeout/3（至多 30s）内暴露，而不是耗满全程。
+    const firstFrameTimeout = Math.min(Math.floor(timeout / 3), 30_000)
+    let receivedAnyFrame = false
+    const firstFrameTimer = setTimeout(() => { if (!receivedAnyFrame) controller.abort() }, firstFrameTimeout)
+    let reader: ReadableStreamDefaultReader<Uint8Array> | undefined
+    let usage: Record<string, unknown> = {}, hasUsage = false
+    try {
+      const response = await request(endpoint, { method: 'POST', headers, body: JSON.stringify({ ...body, stream: true }), signal: controller.signal })
+      if (!response.ok) throw new Error(`Anthropic streaming request failed (${response.status}): ${(await response.text()).slice(0, 500)}`)
+      if (/application\/json/i.test(response.headers.get('content-type') || '')) {
+        const result = anthropicResponse(await response.json())
+        collect?.(result.usage)
+        return result.choices[0].message.content
       }
-      if (value.type === 'error') throw new Error(`Anthropic stream error: ${value.error?.type || 'unknown'} ${value.error?.message || ''}`)
-      if (value.type === 'message_start' && value.message?.usage) { usage = { ...usage, ...value.message.usage }; hasUsage = true }
-      if (value.type === 'message_delta') {
-        if (value.usage) { usage = { ...usage, ...value.usage }; hasUsage = true }
-        stopReason = value.delta?.stop_reason || stopReason
+      if (!response.body) throw new Error('Anthropic stream has no response body.')
+      reader = response.body.getReader()
+      const decoder = new TextDecoder()
+      let pending = '', text = '', stopped = false, stopReason = ''
+      const event = async (frame: string) => {
+        const data = frame.split(/\r?\n/).filter(line => line.startsWith('data:')).map(line => line.slice(5).trim()).join('\n')
+        if (!data) return
+        // 网关注入的 keep-alive/[DONE]/畸形帧不是 Anthropic 协议事件；同文件的
+        // 其他流解析器对坏帧容错，这里对齐——一帧垃圾不该废掉整个用户回合。
+        let value: any
+        try {
+          value = JSON.parse(data)
+        } catch {
+          return
+        }
+        if (value.type === 'error') throw new Error(`Anthropic stream error: ${value.error?.type || 'unknown'} ${value.error?.message || ''}`)
+        if (value.type === 'message_start' && value.message?.usage) { usage = { ...usage, ...value.message.usage }; hasUsage = true }
+        if (value.type === 'message_delta') {
+          if (value.usage) { usage = { ...usage, ...value.usage }; hasUsage = true }
+          stopReason = value.delta?.stop_reason || stopReason
+        }
+        let delta = ''
+        if (value.type === 'content_block_start' && value.content_block?.type === 'text') delta = value.content_block.text || ''
+        if (value.type === 'content_block_delta' && value.delta?.type === 'text_delta') delta = value.delta.text || ''
+        if (delta) { text += delta; await onText?.(text) }
+        if (value.type === 'message_stop') stopped = true
       }
-      let delta = ''
-      if (value.type === 'content_block_start' && value.content_block?.type === 'text') delta = value.content_block.text || ''
-      if (value.type === 'content_block_delta' && value.delta?.type === 'text_delta') delta = value.delta.text || ''
-      if (delta) { text += delta; await onText?.(text) }
-      if (value.type === 'message_stop') stopped = true
-    }
-    while (!stopped) {
-      const chunk = await reader.read()
-      if (chunk.value?.length || chunk.done) {
-        receivedAnyFrame = true
-        clearTimeout(firstFrameTimer)
+      while (!stopped) {
+        const chunk = await reader.read()
+        if (chunk.value?.length || chunk.done) {
+          receivedAnyFrame = true
+          clearTimeout(firstFrameTimer)
+        }
+        pending += decoder.decode(chunk.value, { stream: !chunk.done })
+        const frames = pending.split(/\r?\n\r?\n/)
+        pending = frames.pop() || ''
+        for (const frame of frames) await event(frame)
+        if (chunk.done) { if (pending.trim()) await event(pending); break }
       }
-      pending += decoder.decode(chunk.value, { stream: !chunk.done })
-      const frames = pending.split(/\r?\n\r?\n/)
-      pending = frames.pop() || ''
-      for (const frame of frames) await event(frame)
-      if (chunk.done) { if (pending.trim()) await event(pending); break }
+      if (!stopped) throw new Error('Anthropic stream ended before message_stop; response is incomplete.')
+      if (stopReason === 'max_tokens' || stopReason === 'refusal') throw new Error(`Anthropic stream stopped with ${stopReason}.`)
+      if (!text) throw new Error('Anthropic stream ended without visible text.')
+      return text
+    } catch (error) {
+      if (controller.signal.aborted) throw new Error(`Anthropic streaming request timed out after ${!receivedAnyFrame ? `first frame within ${firstFrameTimeout}ms` : `${timeout}ms`}.`)
+      throw error
+    } finally {
+      clearTimeout(timer)
+      clearTimeout(firstFrameTimer)
+      await reader?.cancel().catch(() => {})
+      if (hasUsage) collect?.(anthropicUsage(usage))
     }
-    if (!stopped) throw new Error('Anthropic stream ended before message_stop; response is incomplete.')
-    if (stopReason === 'max_tokens' || stopReason === 'refusal') throw new Error(`Anthropic stream stopped with ${stopReason}.`)
-    if (!text) throw new Error('Anthropic stream ended without visible text.')
-    return text
-  } catch (error) {
-    if (controller.signal.aborted) throw new Error(`Anthropic streaming request timed out after ${!receivedAnyFrame ? `first frame within ${firstFrameTimeout}ms` : `${timeout}ms`}.`)
-    throw error
-  } finally {
-    clearTimeout(timer)
-    clearTimeout(firstFrameTimer)
-    await reader?.cancel().catch(() => {})
-    if (hasUsage) collect?.(anthropicUsage(usage))
-  }
+  })
 }

@@ -72,25 +72,31 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
     const existing = wakeTimers.get(storyId)
     // Several <sep/> segments can be scheduled at once. Keep the earliest
     // wake-up; the next due segment schedules the following wake as needed.
-    if (existing && existing.dueAt <= dueAt) return undefined
+    if (existing && existing.dueAt <= dueAt && existing.dueAt !== Infinity) return undefined
     if (existing) existing.cancel()
+    const token: DueIntentWake = { cancel: () => {}, dueAt }
     const wake = () => {
-      wakeTimers.delete(storyId)
+      if (wakeTimers.get(storyId) !== token) return
+      token.dueAt = Infinity
       // A long narrative request can overlap the simulated typing delay. The
       // fire callback reports 'busy' and the scheduler retries shortly,
       // rather than waiting for the next normal sweep. The .then indirection
       // funnels synchronous throws into the same catch, like the async IIFE
       // it replaced.
       Promise.resolve().then(() => fire()).then(result => {
-        if (result !== 'busy') return
-        const retryAt = now() + deps.retryDelayMs
-        const retry = deps.setTimeout(wake, deps.retryDelayMs)
-        wakeTimers.set(storyId, { cancel: retry, dueAt: retryAt })
-      }).catch(error => deps.onWakeError(error))
+        if (wakeTimers.get(storyId) !== token) return
+        if (result !== 'busy') { wakeTimers.delete(storyId); return }
+        token.dueAt = now() + deps.retryDelayMs
+        token.cancel = deps.setTimeout(wake, deps.retryDelayMs)
+      }).catch(error => {
+        if (wakeTimers.get(storyId) === token) wakeTimers.delete(storyId)
+        deps.onWakeError(error)
+      })
     }
     const delay = Math.max(0, dueAt - now())
     const timer = deps.setTimeout(wake, delay)
-    wakeTimers.set(storyId, { cancel: timer, dueAt })
+    token.cancel = timer
+    wakeTimers.set(storyId, token)
     return delay
   }
 

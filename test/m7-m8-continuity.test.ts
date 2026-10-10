@@ -112,6 +112,8 @@ function learningHarness(rows: ScriptEntry[]) {
     dbCreate: async (_table: string, value: any) => { const item = { ...value, id: proposals.length + 1 }; proposals.push(item); return item },
     dbSet: async (_table: string, query: any, value: any) => { Object.assign(proposals.find(item => item.id === query.id), value) },
     reportOperation: () => {},
+    // persistStatePatch 应用后即重建 overlay;mock 桩无需真实重建,只需存在
+    rebuildLiveOverlayState: async () => {},
   }
   const call = (ids: number[], extras = {}) => (InterludeService.prototype as any).persistStatePatch.call(service,
     { id: 's', setting: { timezone: 'Asia/Shanghai' }, state: emptyStoryState() },
@@ -179,7 +181,7 @@ test('resolved working detail removes only the evidence-backed label', async () 
     activeArc: async () => ({ id: 1, title: '测试弧' }), getStory: async () => ({ id: 's', state }),
     dbSet: async (table: string, _query: any, value: any) => { if (table === 'interlude_story') patches.push(value) },
   }
-  await (InterludeService.prototype as any).persistCompaction.call(service, { id: 's' }, { id: 2, entryCount: 0 },
+  await (InterludeService.prototype as any).persistCompactionOutputs.call(service, { id: 's' }, { id: 2, entryCount: 0 },
     { scene: { summary: '归还完成' }, arc: { summary: '承诺已履行' }, workingDetails: [
       { label: '归还书本', value: '', resolved: true, sourceEntryIds: [1] },
       { label: '取餐', value: '', resolved: true, sourceEntryIds: [999] },

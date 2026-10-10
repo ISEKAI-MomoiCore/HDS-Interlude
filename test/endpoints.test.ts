@@ -3,7 +3,8 @@ import test from 'node:test'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, resolve } from 'node:path'
-import { InterludeService } from '../src/service'
+import { InterludeService, isBotOnlineStatus } from '../src/service'
+import { Universal } from 'koishi'
 import {
   channelContextMetadata, deriveGroupEndpoint, deriveParticipantUserEndpoint, deriveStoryRoleEndpoint,
   endpointUniqueKey, freshEndpointState, isEndpointDeliverable, isEndpointInitiateAllowed,
@@ -12,6 +13,40 @@ import {
 } from '../src/endpoints'
 
 const NOW = new Date('2026-09-29T12:00:00')
+
+test('bot status normalization accepts Koishi ONLINE and legacy online strings only', () => {
+  assert.equal(isBotOnlineStatus(Universal.Status.ONLINE), true)
+  assert.equal(isBotOnlineStatus(1), true)
+  assert.equal(isBotOnlineStatus('online'), true)
+  assert.equal(isBotOnlineStatus('active'), true)
+  assert.equal(isBotOnlineStatus('connected'), true)
+  assert.equal(isBotOnlineStatus(Universal.Status.OFFLINE), false)
+  assert.equal(isBotOnlineStatus(Universal.Status.CONNECT), false)
+  assert.equal(isBotOnlineStatus(Universal.Status.DISCONNECT), false)
+  assert.equal(isBotOnlineStatus(Universal.Status.RECONNECT), false)
+  assert.equal(isBotOnlineStatus(undefined), false)
+})
+
+test('startup bot snapshot synchronizes already-online endpoints after registry load', async () => {
+  const calls: Array<[string, boolean]> = []
+  const host = {
+    ctx: {
+      bots: [
+        { platform: 'onebot', selfId: '100', status: Universal.Status.ONLINE },
+        { platform: 'onebot', selfId: '200', status: Universal.Status.OFFLINE },
+        { platform: 'onebot', selfId: '300', status: Universal.Status.CONNECT },
+      ],
+    },
+    ensureEndpointRegistry: async () => undefined,
+    noteEndpointConnection: (accountKey: string, online: boolean) => calls.push([accountKey, online]),
+  }
+  await (InterludeService.prototype as any).syncCurrentBotConnections.call(host)
+  assert.deepEqual(calls, [
+    ['onebot:100', true],
+    ['onebot:200', false],
+    ['onebot:300', false],
+  ])
+})
 
 function row(partial: Partial<EndpointRow> & Pick<EndpointRow, 'ownerKind' | 'ownerId' | 'accountKey'>): EndpointRow {
   return {

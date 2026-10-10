@@ -37,4 +37,4 @@ export declare function anthropicResponse(response: any): {
         prompt_tokens?: any;
     };
 };
-export declare function requestAnthropicStreaming(endpoint: string, body: Record<string, unknown>, headers: Record<string, string>, timeout: number, onText?: (text: string) => Promise<void>, collect?: (usage: unknown) => void): Promise<any>;
+export declare function requestAnthropicStreaming(endpoint: string, body: Record<string, unknown>, headers: Record<string, string>, timeout: number, onText?: (text: string) => Promise<void>, collect?: (usage: unknown) => void, proxyAgent?: string): Promise<any>;

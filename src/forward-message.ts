@@ -16,6 +16,11 @@ export interface ForwardReadResult {
   cause?: string
   /** P2-7：嵌套合并转发读取失败次数（>0 时正文以占位符降级，调用方记 warn）。 */
   nestedFailed?: number
+  /** 合并转发节点内图片的可加载引用（http CDN URL → onebot-url: 前缀；
+   * 仅有 file token 时 → onebot-file: 前缀，由 fetchNativeImage 经
+   * bot.getImage 解析）。正文仍保留 [图片] 占位符——refs 进视觉管线，
+   * 占位符进文本事实，两者职责分离。有界，与视觉管线 slice(0,3) 对齐。 */
+  imageRefs: string[]
 }
 
 export async function readForwardContent(session: any, limits: Partial<ForwardReadLimits> = {}): Promise<ForwardReadResult | undefined> {
@@ -28,14 +33,60 @@ export async function readForwardContent(session: any, limits: Partial<ForwardRe
   try {
     const nodes = await fetchForwardNodes(internal, ids[0], budget, 0, state)
     const result = normalizeForwardMessages(nodes, budget)
-    return state.nestedFailed ? { ...result, nestedFailed: state.nestedFailed } : result
+    const imageRefs = collectForwardImageRefs(nodes, FORWARD_IMAGE_REF_LIMIT)
+    const withRefs = { ...result, imageRefs }
+    return state.nestedFailed ? { ...withRefs, nestedFailed: state.nestedFailed } : withRefs
   } catch (error) {
     return { ...failureResult(), cause: error instanceof Error ? error.message : String(error) }
   }
 }
 
+/** 合并转发图片引用收集上限：覆盖"转发里最多想看几张"，下游视觉管线另有
+ * slice(0,3) 的每回合预算；这里多收一些供群聊历史引用（groupImageRefs）留存。 */
+const FORWARD_IMAGE_REF_LIMIT = 6
+
+/** 从节点树收集图片可加载引用。URL 来自 OneBot 服务端（get_forward_msg 响应），
+ * 与 extractSessionImageSources 的 CQ 分支同信任级——用 onebot-url:/onebot-file:
+ * 前缀，跳过 fetchNativeImage 的受信主机检查并保留 file token 解析路径。 */
+function collectForwardImageRefs(nodes: unknown[], limit: number): string[] {
+  const refs: string[] = []
+  const seen = new Set<string>()
+  const push = (value: unknown, prefix: 'onebot-url:' | 'onebot-file:') => {
+    const source = String(value ?? '').trim()
+    if (!source || seen.has(source) || refs.length >= limit) return
+    seen.add(source)
+    refs.push(prefix + source)
+  }
+  const visitSegments = (segments: unknown[]) => {
+    for (const raw of segments) {
+      const segment = asRecord(raw)
+      if (String(segment.type ?? '').toLowerCase() !== 'image') continue
+      const data = asRecord(segment.data)
+      const url = String(data.url ?? data.cache_url ?? '').trim()
+      if (/^https?:\/\//i.test(url)) push(url, 'onebot-url:')
+      else push(String(data.file ?? '').trim(), 'onebot-file:')
+    }
+  }
+  const visitNodes = (list: unknown[], depth: number) => {
+    if (depth > 4) return
+    for (const raw of list) {
+      const node = asRecord(raw)
+      if (Array.isArray(node.message)) visitSegments(node.message)
+      if (Array.isArray(node.content)) {
+        for (const item of node.content) {
+          const contentNode = asRecord(item)
+          if (Array.isArray(contentNode.message)) visitSegments(contentNode.message)
+          if (Array.isArray(contentNode.content)) visitNodes(contentNode.content, depth + 1)
+        }
+      }
+    }
+  }
+  visitNodes(nodes, 0)
+  return refs
+}
+
 function failureResult(): ForwardReadResult {
-  return { content: '[收到一条合并转发消息，但暂时无法读取内容]', nodeCount: 0, forwardCount: 0, truncated: false, failed: true }
+  return { content: '[收到一条合并转发消息，但暂时无法读取内容]', nodeCount: 0, forwardCount: 0, truncated: false, failed: true, imageRefs: [] }
 }
 
 async function fetchForwardNodes(internal: any, id: string, limits: ForwardReadLimits, depth: number, state: { nestedFailed: number }): Promise<any[]> {
@@ -120,7 +171,7 @@ export function extractForwardIds(content: unknown): string[] {
   return ids
 }
 
-export function normalizeForwardMessages(messages: unknown[], limits: Partial<ForwardReadLimits> = {}, depth = 0): ForwardReadResult {
+export function normalizeForwardMessages(messages: unknown[], limits: Partial<ForwardReadLimits> = {}, depth = 0): ForwardNormalized {
   const budget = forwardReadLimits(limits)
   const lines: string[] = [`[合并转发内容｜节点数 ${messages.length}]`]
   let used = lines[0].length
@@ -155,6 +206,10 @@ export function normalizeForwardMessages(messages: unknown[], limits: Partial<Fo
   if (truncated) append('[合并转发内容已按安全预算截断]')
   return { content: lines.join('\n'), nodeCount, forwardCount, truncated, failed }
 }
+
+// normalizeForwardMessages 的返回类型不含 imageRefs（由 readForwardContent
+// 组装）；此别名只描述归一化输出的子集字段。
+export type ForwardNormalized = Omit<ForwardReadResult, 'imageRefs'>
 
 function normalizeForwardSegments(segments: unknown[], limits: ForwardReadLimits, depth: number) {
   const lines: string[] = []

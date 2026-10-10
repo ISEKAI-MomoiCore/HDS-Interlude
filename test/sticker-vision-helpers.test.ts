@@ -67,3 +67,13 @@ test('表情包投递 URL：HTTP 回源（OneBot 实现分容器时 file:// 必�
   assert.match(stickerDeliveryUrl('', '猫/笑'), /http:\/\/127\.0\.0\.1:5140\/hds-interlude\/sticker\//, '空基址回退本机默认')
   assert.ok(stickerDeliveryUrl('http://h:1', 'a b').includes(encodeURIComponent('a b')), 'assetId 编码')
 })
+
+test('贴纸投递基址配置经缓存 getter 透传（Docker 部署回归）', async () => {
+  // 直接构造 service 太重；验证解析链的关键环节——stickerDeliveryUrl 尊重传入基址，
+  // 且 StickerLibraryConfig 接口含 deliveryBaseUrl（编译期保证 getter 必须拷贝才能通过类型检查
+  // 的场景由源码评审覆盖；这里锁 URL 拼接不被默认值劫持）。
+  const { stickerDeliveryUrl } = await import('../src/service')
+  assert.equal(stickerDeliveryUrl('http://host.docker.internal:5140', 'st-abc'), 'http://host.docker.internal:5140/hds-interlude/sticker/st-abc', '配置基址必须原样进入 URL（Docker 回源）')
+  assert.equal(stickerDeliveryUrl('http://10.0.0.5:9000/', 'st x'), 'http://10.0.0.5:9000/hds-interlude/sticker/st%20x', '尾斜杠剔除 + assetId 编码')
+  assert.equal(stickerDeliveryUrl('', 'st-abc'), 'http://127.0.0.1:5140/hds-interlude/sticker/st-abc', '空基址回落本机默认（自动推导层 stickerDeliveryBase 此前因漏拷永远走这条）')
+})

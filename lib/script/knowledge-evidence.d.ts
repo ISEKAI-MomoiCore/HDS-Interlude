@@ -24,7 +24,6 @@ export declare function knowledgeClauses(knowledge: KnowledgeEvidence | undefine
 export declare function knowledgeRelatedIds(knowledge: KnowledgeEvidence | undefined): number[];
 export declare function factEvidenceForPrompt(fact: NarrativeFact): {
     id: number;
-    participantId: string;
     scope: "character" | "world" | "relationship" | "event" | "promise";
     content: string;
     unresolved: boolean;
@@ -49,7 +48,8 @@ export interface ContactEvidenceThread {
     originalEntryIds: number[];
     missingSourceEntryIds: number[];
 }
-/** Include original conditions and nearby replies. Scope is checked again here
- * even though the caller already filtered the candidate facts and source rows. */
+/** Include original conditions and nearby replies. Durable facts are global,
+ * but their original source entries still obey the caller's privacy boundary;
+ * a hidden source is represented as missing rather than reconstructed. */
 export declare function contactEvidenceThreads(facts: NarrativeFact[], entries: ScriptEntry[]): ContactEvidenceThread[];
 export declare const KNOWLEDGE_WRITING_FRAME = "EVIDENCE AND EXPECTATION: the original remains the life script. Her belief, wish and imagined explanation belong to her perspective; an observed action belongs to its actor. Derived records retain these roles and conditions. contactThreads supplies original proposals, conditions and replies, not a second plot: unfinished contact may motivate another question or private anticipation while confirmation and timing stay open. Elapsed silence can change her feelings without changing what the other person promised; platform delivery alone establishes neither reading nor agreement.";

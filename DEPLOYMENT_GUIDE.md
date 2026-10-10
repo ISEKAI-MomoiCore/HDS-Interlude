@@ -1,6 +1,8 @@
 # HDS Interlude 部署教程
 
-适用版本：`1.0.1-rc36`
+适用版本：`1.0.1-rc50`
+
+当前文档已同步至 2026-10-11 的 rc50，累计变更以 rc48 为基线。发布流程现已执行源码构建，rc50 由本次生成的 `lib/` 与 `release/koishi-plugin-hds-interlude-1.0.1-rc50.tgz` 交付；旧 rc48 安装包不会自动获得这些修改，运行实例须安装并重载后才生效。验收与边界见 [发布验证报告](docs/development/RELEASE_VERIFICATION_2026-10-11_RC50.md)。
 
 > 写给第一次把 HDSI 接到 QQ 上、并希望角色能长期生活下去的人。
 
@@ -47,7 +49,7 @@ Koishi 第一次启动会准备运行环境，耐心等待即可。
 
 ```powershell
 cd C:\Users\你的用户名\AppData\Roaming\Koishi\Desktop\data\instances\default
-node .yarn/releases/yarn-4.5.3.cjs add "koishi-plugin-hds-interlude@file:C:/路径/koishi-plugin-hds-interlude-1.0.1-rc36.tgz" --exact
+node .yarn/releases/yarn-4.5.3.cjs add "koishi-plugin-hds-interlude@file:C:/路径/koishi-plugin-hds-interlude-1.0.1-rc50.tgz" --exact
 ```
 
 安装完成后回到 Koishi Console，添加或启用 `hds-interlude`。
@@ -89,7 +91,7 @@ http://127.0.0.1:6099/webui/
 
 进入 `hds-interlude` 插件配置。HDSI 的模型配置只需要记住一件事：**一行模型连接，就是一个实际可调用的模型；在这一行勾选它承担什么用途。**
 
-在 `model.providers` 添加模型连接。只要存在一条启用、且模型名与连接信息完整的模型行，HDSI 就会自动启用远程主叙事；不需要再设置全局模型模式。
+在 `model.providers` 添加模型连接。至少需要一条 `enabled=true`、连接信息完整且勾选 `useForMain` 的可用模型行，HDSI 才会启用远程主叙事；只勾选视觉、Embedding、表情包或世界播种用途的连接不会承担主叙事。无需再设置全局模型模式。
 
 ### 普通 OpenAI-compatible 提供商
 
@@ -99,11 +101,11 @@ http://127.0.0.1:6099/webui/
 - Endpoint；
 - API Key；
 - 实际模型名；
-- 主叙事 / 压缩 / Alter / Embedding / 表情包描述用途开关。
+- 主叙事 / 压缩 / Alter / Embedding / 表情包描述用途开关；如果模型是 DeepSeek V4 等支持思考参数的兼容端点，可将 `deepseekThinking` 设为 `disabled`，避免服务端默认开启隐藏思考。
 
 例如，一个只负责主叙事的模型就只勾选“用作主叙事模型”。一个低成本模型可以只勾选“用作后台压缩模型”。Embedding 模型必须确实支持 `/embeddings`，不要把普通聊天模型误勾为 Embedding。
 
-常用官方模式还包括 `openai-official`、`deepseek-official`、`moonshot-official`、`dashscope-official`、`siliconflow-official`、`openrouter` 与 `gemini-openai`。每一种在提供商行选中后都会固定其官方 endpoint；DeepSeek 额外提供思考开关与强度，百炼会显示地域选项。它们可以和智谱、普通中转站行同时存在。
+常用官方模式还包括 `openai-official`、`deepseek-official`、`moonshot-official`、`dashscope-official`、`siliconflow-official`、`openrouter`、`gemini-openai` 与推荐的 `gemini-interactions`。每一种在提供商行选中后都会固定其 endpoint；DeepSeek 额外提供思考开关与强度，百炼会显示地域选项。它们可以和智谱、普通中转站行同时存在。`gemini-interactions` 使用 Gemini Interactions API，不是 Chat Completions。
 
 ### DeepSeek 官方提供商
 
@@ -218,6 +220,24 @@ C:\Users\你的用户名\AppData\Roaming\Koishi\Desktop\data\instances\default\d
 ### 看不到机器人回复
 
 依次检查：NapCat 是否在线、OneBot Adapter 是否连接、机器人 QQ 是否在 `botAccounts`、你的 QQ 是否在 `userAccounts`、`blindMode` 是否关闭，以及模型连接是否勾选了“用作主叙事模型”。
+
+### 分段回复重复、补写不停或重启后 pending
+
+此轮工作区修复让同一参与者的后台补写等待 pending 气泡，全局推进等待任意链；承诺回访有硬截止及五次未结算顺延上限。源剧本 pending 消息可经启动、端点上线或周期扫描补偿，有 split-message 时仍由原打字队列负责。这些修复已纳入本次构建的 rc50；旧 rc48 包不会自动变化，安装 rc50 并重载后生效。
+
+排查时临时开启 diagnostic/debug，核对 commitId、eventId、scriptEntryId、分段 index、意图状态与账本；不同 commit 的相同文本属于跨回合重复生成，不等同同一 segment 重投。不要把 done/completed 调度任务或剧本中的“发了消息”当作平台回执。分段等待、承诺退役和待投递补偿扫描均有独立诊断。平台已接受但回执丢失仍不能承诺零重复。
+
+### 传输在线但 HDSI 端点 offline
+
+当前源码识别数字 ONLINE，并在启动时同步现有 bot 和后续连接事件；通常不再需要手动发消息唤醒在线状态。但端点禁用、证据过期、冷却或渠道主动联系许可仍会阻止投递。分别核对平台、自身账号、端点注册及门控原因，不能仅凭 LAB 传输在线认定全部行动可用。
+
+### 历史群聊图片跳过，但模型确实支持图片
+
+先区分 `historical-image-fetch`（历史 URL/文件回源失败）、`current-image-fetch`（当前图片回源失败）和 `narrative-provider`（已组装请求的服务端失败）。模型能识图不保证旧图片地址仍有效；HTTP bad request 也不一定来自模型端。保留带阶段、来源和状态的日志再定位，不要仅凭“已跳过”直接更换模型。
+
+### DeepSeek 兼容端点响应很慢
+
+若端点明确支持 DeepSeek thinking 参数，在对应 openai-compatible 提供商行设置 `deepseekThinking=disabled`；默认 inherit 不发送覆盖字段，官方 DeepSeek 默认 disabled。显式设置优先于 extraBody，关闭时清除残留 reasoning_effort；不支持该字段的通用模型保持 inherit。具体耗时仍取决于服务商，不保证 issue 中的速度提升。
 
 ### 重载后无法用指令
 

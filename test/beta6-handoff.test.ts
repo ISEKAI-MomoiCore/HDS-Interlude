@@ -238,7 +238,7 @@ test('delayed background review cannot reopen a completed working detail', async
     dbGet: async () => [], dbSet: async (table: string, _q: any, patch: any) => { if (table === 'interlude_story') state = patch.state },
     getStory: async () => ({ id: 's', state }), activeArc: async () => ({ id: 1 }),
   }
-  const review = (id: number) => (InterludeService.prototype as any).persistCompaction.call(host, { id: 's' }, { id: 1, entryCount: 0 },
+  const review = (id: number) => (InterludeService.prototype as any).persistCompactionOutputs.call(host, { id: 's' }, { id: 1, entryCount: 0 },
     { scene: { summary: '生活继续' }, arc: { summary: '原剧情弧' }, workingDetails: [
       { label: '物理作业', value: '还有一道题', sourceEntryIds: [id, 999999] },
     ] }, [entry(id, '还有一道物理题。')], now)
@@ -253,7 +253,9 @@ test('new private life handoff still feeds Preplan without forwarding private pr
   row.metadata = { narrativeAuthority: 'original-v2', lifeHandoff: { activity: { value: '整理书包', quote: '整理书包' } },
     timelinePlan: { beats: [{ at: 1, kind: 'state', summary: '猜测用户在玩游戏' }] } }
   const host = { sharedStoryConfig: { shareParticipantDetails: false }, dbGet: async () => [row] }
-  const projected = await (InterludeService.prototype as any).schedulePreplanEvidence.call(host, 's', 0)
+  const batch = await (InterludeService.prototype as any).schedulePreplanEvidence.call(host, 's', 0)
+  const projected = batch.entries
+  assert.equal(batch.filteredThroughEntryId, 0, 'visible protagonist evidence must remain unreviewed')
   assert.equal(projected.length, 1)
   assert.match(projected[0].content, /整理书包/)
   assert.doesNotMatch(JSON.stringify(projected), /秘密|猜测用户|lifeHandoff|timelinePlan/)

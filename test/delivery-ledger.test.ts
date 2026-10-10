@@ -1,3 +1,4 @@
+import { deliveryHost } from './helpers/delivery-host'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { attachMessageEvent, prepareOutgoingDelivery, restoreMessageEvent, scriptEventPayload } from '../src/delivery'
@@ -27,7 +28,8 @@ test('ledger read and write failures do not interrupt confirmation or remaining 
       serial: async (_id: string, task: () => Promise<any>) => task(),
       getParticipant: async () => ({ id: 'alice' }),
       appendEntry: async () => ({ id: 99 }),
-      dbGet: async () => {
+      dbGet: async (table: string, query: any) => {
+        if (table === 'interlude_intent' || query.kind) return []
         if (failure === 'read') throw new Error('ledger read failed')
         return [{ id: 42, storyId: 'story:1', metadata: { commitId: value.commitId, deliveryActions: createScriptDeliveryActions(value) } }]
       },
@@ -40,6 +42,7 @@ test('ledger read and write failures do not interrupt confirmation or remaining 
       config: { chatRhythm: { enabled: false } },
       updateScriptDeliveryOutcome: (InterludeService.prototype as any).updateScriptDeliveryOutcome,
     }
+    deliveryHost(service)
     const message = prepareOutgoingDelivery(attachMessageEvent({ participantId: 'alice', content: event.content! }, event, 42), event.bubbles!)!
     await (InterludeService.prototype as any).confirmOutgoingDeliveries.call(service, { id: 'story:1' }, [message])
     assert.equal(intents.length, 1)

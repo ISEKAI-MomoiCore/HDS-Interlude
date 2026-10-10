@@ -1,6 +1,6 @@
 # HDS Interlude 文档索引
 
-当前发布候选为 `1.0.1-rc36`；正式运行环境验收仍由维护者最后执行。根目录 README、新手指南、配置指南和命令文档面向使用者；本目录保存当前架构、设计依据、发布增量与维护记录。判断当前行为优先阅读“当前实现”，历史报告只用于追溯，不覆盖源码与当前架构。
+当前发布候选为 `1.0.1-rc50`，包含相对 rc48 的累计修复；本次发布流程已构建对应 `lib/` 并交付 rc50 安装包，旧候选包不会自动变化；正式运行环境验收仍由维护者最后执行。根目录 README、新手指南、配置指南和命令文档面向使用者；本目录保存当前架构、设计依据、发布增量与维护记录。判断当前行为优先阅读“当前实现”，历史报告只用于追溯，不覆盖源码与当前架构。
 
 ## 当前实现
 
@@ -23,9 +23,14 @@
 
 ## 发布增量与维护记录
 
+- [rc50 发布验证（2026-10-11）](development/RELEASE_VERIFICATION_2026-10-11_RC50.md)：定向构建、严格类型检查、全量回归、包内容与实际 bundle 冒烟。
+
+- [全量源码审查修复与交互验证（2026-10-11）](development/FULL_CODE_REVIEW_FIXES_2026-10-11_RC48.md)：投递、整理事务、调度与性能逐项修复；报告记录的是当轮源码验收，本次发布另见 rc50 发布验证报告。
+- [全量源码审查基线（2026-10-10）](development/FULL_CODE_REVIEW_2026-10-10_RC48.md)：修复前的证据与范围，当前状态以修复报告为准。
+
 - [rc12 Anthropic Messages 适配](development/ANTHROPIC_MESSAGES_RC12.md)：双协议选择、cache-first、流式、群音频写作与兼容边界。
 
-- [CHANGELOG.md](CHANGELOG.md)：rc33 发布候选及此前版本记录。
+- [CHANGELOG.md](CHANGELOG.md)：rc50 相对 rc48 的累计变更与历史发布记录。
 - [EVENT_LED_SCRIPT_REPAIR.md](development/EVENT_LED_SCRIPT_REPAIR.md)：事件优先续写、Alter 收束与关系学习证据边界。
 
 - [URGE_SYSTEM_PROPOSAL.md](development/URGE_SYSTEM_PROPOSAL.md)：可选 Urge 自动推进设计；源码已实现，默认关闭。
@@ -46,5 +51,5 @@
 
 判断当前行为时只以 `src/`、根目录四份用户文档以及本目录的当前文档为准。`dustbin/` 中的内容都不是当前实现说明。
 
-> **仓库统一（2026-09-29）**：自本版起 `hds-interlude` 主仓为唯一操作目标——cev 独有功能（SharedWorks 共同作品 / 模型特化）已并入本仓（模块+表+测试就位，narrator 集成接线待后续版本），cev 仓转为只读存档。桌面壳以 typ0-cev 的 UI_DESIGN_SPEC_V2 实现为标准。
+> **仓库统一（2026-09-29）**：自本版起 `hds-interlude` 主仓为唯一操作目标。模型特化已经接入主叙事及相关侧端提示词，并提供 Console 配置；SharedWorks 的模块、数据类型、SQLite 表和测试已经迁入，但当前尚未接入 HDSI 的用户命令与完整运行闭环。cev 仓转为只读存档。桌面壳以 typ0-cev 的 UI_DESIGN_SPEC_V2 实现为标准。
 

@@ -1,3 +1,4 @@
+import { deliveryHost } from './helpers/delivery-host'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { systemPrompt, toPromptPayload } from '../src/narrator'
@@ -199,7 +200,7 @@ test('a failed segment makes group delivery incomplete, even when an earlier seg
 test('private visible messages are confirmed only after transport, while failed drafts stay system-owned', async () => {
   const entries: any[] = []
   const characterUpdates: string[] = []
-  const service = {
+  const service = deliveryHost({
     serial: async (_storyId: string, task: () => Promise<void>) => task(),
     getParticipant: async (id: string) => ({ id }),
     appendEntry: async (_storyId: string, entry: any) => { entries.push(entry) },
@@ -211,7 +212,7 @@ test('private visible messages are confirmed only after transport, while failed 
     endpointAddressSync: (legacy: unknown) => legacy,
     noteEndpointOutbound: () => {},
     config: { runtime: { maxMessageCharacters: 1_000 } },
-  }
+  })
   const confirm = (InterludeService.prototype as any).confirmOutgoingDeliveries
   const recordFailure = (InterludeService.prototype as any).recordOutgoingDeliveryFailure
   await confirm.call(service, transportStory, [{ participantId: 'user', content: '已经送达', interaction: { seen: true, reply: { mode: 'immediate', content: '已经送达' } } }])

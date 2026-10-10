@@ -47,6 +47,8 @@ export interface BufferedNarrativeTurn {
 export interface TurnEngineDeps {
   setTimeout: (fn: () => void, ms: number) => () => void
   userMessageDebounceSeconds: number
+  /** endFlush 为遗留消息补定时器用的统一触发入口(service 的 flushBufferedNarrative)。 */
+  scheduleTurnFlush: (key: string, revision: number) => void
   reportOperation: (level: string, kind: string, story: InterludeStory, phase: string, format: string, ...args: unknown[]) => void
 }
 
@@ -175,6 +177,15 @@ export function createTurnEngine(deps: TurnEngineDeps): TurnEngine {
     turn.obsoleteRequestIds.delete(requestId)
     turn.discardedRequestIds?.delete(requestId)
     if (!turn.messages.length && !turn.timer && !turn.inFlightRequestId) turns.delete(key)
+    // 回合结束时仍有未处理消息(暂停期被取消的定时器/obsolete 拦截放回的批次/
+    // in-flight 期间到达的新消息)却无人持有定时器 → 孤儿:有消息无定时器,要等
+    // 下一条用户消息才被救活,期间还阻塞后台推进。此处补一个定时器闭环:
+    // 运行态直接触发 flush;暂停态触发会被 flush 入口的 paused 检查拦下,
+    // 消息保留在 turn 里,由 resume 的 rescheduleTimers 接管。
+    else if (turn.messages.length && !turn.timer && !turn.inFlightRequestId) {
+      const revision = ++turn.nextRevision
+      turn.timer = deps.setTimeout(() => deps.scheduleTurnFlush(key, revision), Math.max(0, deps.userMessageDebounceSeconds) * 1000)
+    }
   }
 
   function rescheduleTimers(flushTrigger: (key: string, revision: number) => void) {

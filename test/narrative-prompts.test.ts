@@ -238,7 +238,8 @@ test('admin notes carry explicit semantic weight and are never truncated in the 
 test('DeepSeek 家族传输行按家族注入；standard 档协议本身与 full/lite 保持不变', () => {
   const ds = systemPrompt('user-message', '', '', '', '', '', false, false, false, false, false, undefined, false, undefined, false, false, false, false, undefined,
     { tier: 'standard', family: 'deepseek', source: 'auto', probe: 'deepseek-chat' })
-  assert.match(ds, /TRANSPORT IS PER-TURN: the interaction object is required on every live turn/)
+  assert.match(ds, /TRANSPORT IS PER-TURN: on every turn that can carry a reply/)
+  assert.match(ds, /advance turns carry no transport unless a message is genuinely sent/)
   assert.match(ds, /never copy its shape or treat the field as optional/)
   assert.match(ds, /interaction\.seen is a required boolean/)
   // 家族收窄：同为 standard 档的 GLM 不携带 DeepSeek 行（不为单一模型给全体弱注意力模型加料）

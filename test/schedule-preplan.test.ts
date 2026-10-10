@@ -31,8 +31,8 @@ test('Schedule Preplan expands recurring rules and applies dated exceptions dete
     date: '2026-08-31', mode: 'patch', reason: '停课', removeBlockIds: ['class'],
     blocks: [{ id: 'library', start: '15:00', end: '17:00', label: '图书馆', kind: 'flexible' }],
   }], '2026-08-31', 2)
-  assert.deepEqual(days[0].blocks.map(item => item.id), ['library', 'drawing'])
-  assert.deepEqual(days[1].blocks.map(item => item.id), ['morning-rest'])
+  assert.deepEqual(days[1].blocks.map(item => item.id), ['library', 'drawing'])
+  assert.deepEqual(days[2].blocks.map(item => item.id), ['morning-rest'])
 })
 
 test('life-stage boundaries switch from vacation to school without leaking the old weekly plan', () => {
@@ -42,8 +42,8 @@ test('life-stage boundaries switch from vacation to school without leaking the o
   }
   const vacation = { ...regime, to: '2026-08-31' }
   const days = materializeSchedulePreplan([vacation, school], [], '2026-08-31', 2)
-  assert.deepEqual(days[0].blocks.map(item => item.id), ['class', 'drawing'])
-  assert.deepEqual(days[1].blocks.map(item => item.id), ['at-school'])
+  assert.deepEqual(days[1].blocks.map(item => item.id), ['class', 'drawing'])
+  assert.deepEqual(days[2].blocks.map(item => item.id), ['at-school'])
 })
 
 test('main narration receives only the coming twelve hours, not the stored multi-day horizon', () => {
@@ -122,7 +122,9 @@ test('stable and contextual reviews reject model-proposed tentative blocks', () 
     regimes: [{ id: 'weekly', label: '日常', from: '2026-08-31', sourceEntryIds: [11], weekly: { monday: [{ id: 'maybe', start: '20:00', end: '21:00', label: '可能活动', kind: 'flexible', tentative: true, sourceEntryIds: [11] }] } }],
   }
   const stable = applySchedulePreplanProposal(undefined, proposal, evidence, '2026-08-31', 'Asia/Shanghai', DEFAULT_SCHEDULE_PREPLAN_CONFIG, new Date(), 'stable')!
-  assert.equal(stable.regimes[0].weekly.monday?.[0].tentative, undefined)
+  assert.deepEqual(stable.regimes[0].weekly.monday ?? [], [])
+  const contextual = applySchedulePreplanProposal(undefined, proposal, evidence, '2026-08-31', 'Asia/Shanghai', DEFAULT_SCHEDULE_PREPLAN_CONFIG, new Date(), 'contextual')!
+  assert.deepEqual(contextual.regimes[0].weekly.monday ?? [], [])
   const granular = applySchedulePreplanProposal(undefined, proposal, evidence, '2026-08-31', 'Asia/Shanghai', DEFAULT_SCHEDULE_PREPLAN_CONFIG, new Date(), 'granular')!
   assert.equal(granular.regimes[0].weekly.monday?.[0].tentative, true)
 })

@@ -156,7 +156,7 @@ triggerScore = 25.0
 计权规则只影响“何时拥有足够证据生成或复审指导”，不改变原始剧本的保存、不改变历史时间、不改变消息投递语义，也不把群聊中的每条消息复制进私聊关系事实。
 
 隐私边界：群聊半权重只是累计规则，不等于后台长线模型可以无条件读取所有参与者的私聊原文。
-当 `shareParticipantDetails = false` 时，长线模型可以接收当前故事主参与者（由故事的 `platform/selfId/userId` 确定）的剧本与事实，以及无 `participantId` 的全局剧本与事实；其它参与者的带 `participantId` 内容会被排除。私聊条目仍然按 `1.0` 计入进度，但不会因计分而绕过参与者可见性隔离。只有在需要跨参与者读取时，才必须显式开启 `shareParticipantDetails`。
+当 `shareParticipantDetails = false` 时，长线模型仍只接收当前故事主参与者（由故事的 `platform/selfId/userId` 确定）的原始剧本，以及无 `participantId` 的全局原始剧本；其它参与者的原始私聊内容会被排除。`interlude_fact` 是独立的全局叙事材料：无论旧事实行是否带有遗留 `participantId`，都会传给长线模型，模型只能依据事实 `content` 中明确写出的相关人物理解其对象。私聊条目仍然按 `1.0` 计入进度，但不会因计分而绕过原始剧本的参与者隐私边界。只有在需要跨参与者读取原始历史时，才必须显式开启 `shareParticipantDetails`。
 
 ### 4.3 通道来源解析
 

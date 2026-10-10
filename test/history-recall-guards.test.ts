@@ -34,7 +34,7 @@ test('a lexical anchor returns its contiguous original-script neighborhood', asy
     ensureHistoryVectors: async () => {},
     historyVectorsReady: new Set(['story']),
     historyVectors: new Map([['story', rows]]),
-    sharedStoryConfig: { shareParticipantDetails: false },
+    episodeIndexes: new Map(), sharedStoryConfig: { shareParticipantDetails: false },
   }
   const recalled = await (InterludeService.prototype as any).recallHistory.call(
     service, 'story', 'alice', '昨天奶茶的取餐码', [], new Set(),

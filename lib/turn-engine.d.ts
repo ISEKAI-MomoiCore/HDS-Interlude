@@ -50,6 +50,8 @@ export interface BufferedNarrativeTurn {
 export interface TurnEngineDeps {
     setTimeout: (fn: () => void, ms: number) => () => void;
     userMessageDebounceSeconds: number;
+    /** endFlush 为遗留消息补定时器用的统一触发入口(service 的 flushBufferedNarrative)。 */
+    scheduleTurnFlush: (key: string, revision: number) => void;
     reportOperation: (level: string, kind: string, story: InterludeStory, phase: string, format: string, ...args: unknown[]) => void;
 }
 export declare function shouldSupersedeRequest(inFlightRequestId: number | undefined, firstMessageCommittedRequestId: number | undefined, obsoleteRequestIds: ReadonlySet<number>): boolean;

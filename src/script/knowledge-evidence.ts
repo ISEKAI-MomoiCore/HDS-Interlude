@@ -61,7 +61,7 @@ export function factEvidenceForPrompt(fact: NarrativeFact) {
   const knowledge = fact.knowledge && Array.isArray(fact.knowledge.clauses) ? fact.knowledge
     : fact.knowledge && Array.isArray(fact.knowledge.relatedFactIds) ? { ...fact.knowledge, clauses: [] }
     : undefined
-  return { id: fact.id, participantId: fact.participantId, scope: fact.scope, content: fact.content,
+  return { id: fact.id, scope: fact.scope, content: fact.content,
     unresolved: fact.unresolved, status: fact.status, sourceEntryIds: fact.sourceEntryIds,
     authority: knowledge?.mode === 'belief' ? 'attributed-belief' : 'derived-record',
     knowledge: knowledge ?? { mode: 'unclassified', clauses: [], relatedFactIds: [] } }
@@ -86,14 +86,14 @@ export interface ContactEvidenceThread {
   missingSourceEntryIds: number[]
 }
 
-/** Include original conditions and nearby replies. Scope is checked again here
- * even though the caller already filtered the candidate facts and source rows. */
+/** Include original conditions and nearby replies. Durable facts are global,
+ * but their original source entries still obey the caller's privacy boundary;
+ * a hidden source is represented as missing rather than reconstructed. */
 export function contactEvidenceThreads(facts: NarrativeFact[], entries: ScriptEntry[]): ContactEvidenceThread[] {
   const emitted = new Set<number>()
   return facts.map(fact => {
     const ids = new Set([...fact.sourceEntryIds, ...knowledgeClauses(fact.knowledge).map(c => c.sourceEntryId)])
     const originals = entries.filter(entry => ['script', 'user-message', 'character-message', 'group-message', 'character-group-message'].includes(entry.kind)
-      && (!entry.participantId || entry.participantId === fact.participantId)
       && (ids.has(entry.id) || ['user-message', 'character-message'].includes(entry.kind)
         && [...ids].some(id => Math.abs(id - entry.id) <= 2)))
       .sort((a, b) => a.id - b.id)

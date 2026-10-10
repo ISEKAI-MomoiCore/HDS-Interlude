@@ -1,3 +1,4 @@
+import { deliveryHost } from './helpers/delivery-host'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { h } from 'koishi'
@@ -11,6 +12,7 @@ test('cross-group partial delivery records only accepted segments and preserves 
   const updates: any[] = [], entries: any[] = []
   const host = {
     config: { onebot: { groupChats: [{ groupId: '12345', enabled: true }] } },
+    dbGet: async (_table: string, query: any) => query.kind ? [] : [{ id: 7, storyId: 's', metadata: { commitId: 'c' } }],
     serial: async (_id: string, run: () => Promise<void>) => run(),
     sendGroupMessage: async () => ({ complete: false, deliveredSegments: ['first'], segmentOutcomes: [
       { index: 0, content: 'first', status: 'delivered' }, { index: 1, content: 'second', status: 'failed', reason: 'offline' },
@@ -18,7 +20,8 @@ test('cross-group partial delivery records only accepted segments and preserves 
     updateScriptDeliveryOutcome: async (...args: any[]) => updates.push(args),
     appendEntry: async (...args: any[]) => entries.push(args), report: () => {},
   }
-  await methods.sendCrossGroupMessage.call(host, { id: 's' }, { participantId: 'group:12345', content: 'first<sep/>second', scriptEvent: { eventId: 'e', segmentIndex: 0, scriptEntryId: 7 } })
+  deliveryHost(host)
+  await methods.sendCrossGroupMessage.call(host, { id: 's' }, { participantId: 'group:12345', content: 'first<sep/>second', scriptEvent: { commitId: 'c', eventId: 'e', segmentIndex: 0, scriptEntryId: 7 } })
   assert.deepEqual(updates.map(x => [x[1].eventId, x[1].segmentIndex, x[2]]), [['e', 0, 'delivered'], ['e', 1, 'failed']])
   assert.equal(entries[0][1].kind, 'character-group-message')
   assert.equal(entries[0][1].content, 'first')
@@ -28,12 +31,12 @@ test('cross-group partial delivery records only accepted segments and preserves 
 test('disabled cross-group target fails ledger without transport or invented speech', async () => {
   let sends = 0, entries = 0
   const statuses: string[] = []
-  await methods.sendCrossGroupMessage.call({
+  await methods.sendCrossGroupMessage.call(deliveryHost({
     config: { onebot: { groupChats: [] } }, splitOutgoingMessage: () => ['text'],
     serial: async (_id: string, run: () => Promise<void>) => run(),
     sendGroupMessage: async () => { sends++ }, appendEntry: async () => { entries++ },
     updateScriptDeliveryOutcome: async (_id: string, _ref: any, status: string) => { statuses.push(status) }, report: () => {},
-  }, { id: 's' }, { participantId: 'group:12345', content: 'text', scriptEvent: { eventId: 'e', segmentIndex: 0 } })
+  }), { id: 's' }, { participantId: 'group:12345', content: 'text', scriptEvent: { eventId: 'e', segmentIndex: 0 } })
   assert.equal(sends, 0); assert.equal(entries, 0); assert.deepEqual(statuses, ['failed'])
 })
 
@@ -215,7 +218,8 @@ test('split-message delivery restores the explicit endpoint onto the outgoing dr
     config: { runtime: { maxMessageCharacters: 1_000 } },
     serial: async (_id: string, run: () => Promise<void>) => run(),
     getStory: async () => ({ id: 's1' }),
-    dbGet: async (_table: string, query: any) => query?.notBefore ? [intent] : [],
+    dbGet: async (table: string, query: any) => table === 'interlude_script_entry' && !query.kind
+      ? [{ id: 7, storyId: 's1' }] : query?.notBefore ? [intent] : [],
     dbSet: async () => {},
     getParticipant: async () => ({ id: 'p1', status: 'active' }),
     interruptedTypingParticipants: new Set(),
@@ -225,7 +229,9 @@ test('split-message delivery restores the explicit endpoint onto the outgoing dr
     recordAutomaticDelivery: async () => {},
     recordCharacterMessage: async () => {},
     scheduleNextSplitWake: async () => {},
+    reconcileTerminalSplitIntent: methods.reconcileTerminalSplitIntent,
   }
+  deliveryHost(host)
   await methods.deliverDueSplitSegments.call(host, 's1')
   assert.equal(captured.length, 1)
   assert.equal(captured[0].endpointId, 'ep-explicit')

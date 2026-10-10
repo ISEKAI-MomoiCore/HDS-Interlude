@@ -4,12 +4,25 @@
  * It is enabled only inside a typ-0 worker. Regular Koishi/HDSI installations
  * keep their historical transport, scheduler and delivery behaviour unchanged.
  */
+import { desktopProcessingContext } from './processing-context'
 import { randomUUID } from 'node:crypto'
 import type { Session } from 'koishi'
 import type { DesktopTimelineRangeRequest, InterludeService } from './service'
 
 export type DesktopRuntimePhase = 'running' | 'muted' | 'paused'
 export type DesktopDeliveryStatus = 'sent' | 'retryable-failed' | 'permanent-failed'
+
+function isTraceId(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0 && value.length <= 128
+}
+
+function ensureTraceId(value: unknown) {
+  return isTraceId(value) ? value : `msg-${randomUUID()}`
+}
+
+function createProcessingId() {
+  return `proc-${randomUUID()}`
+}
 
 /** Stable capability names advertised by the typ-0 bridge. Protocol is the
  * envelope/schema version; optional behavior is negotiated independently. */
@@ -21,7 +34,7 @@ const DESKTOP_BRIDGE_CAPABILITIES = [
   // B1-3（W2/W3）：multi-account = worker 入站按端点注册表解析（第二账号事件
   // 直达既有剧本）；onebot-action = worker 认识动作代理协议（宿主可安全启用
   // handler，见 C 阶段）。旧桌面不识别这两个能力位，无副作用。
-  'multi-account', 'onebot-action',
+  'multi-account', 'onebot-action', 'processing-context',
 ] as const
 
 /** W3 桥接动作代理结果帧（宿主 → worker）。ambiguous 与插件 QzoneActionError 同族：
@@ -35,6 +48,8 @@ export interface DesktopOnebotActionResult {
 }
 
 export interface DesktopInboundEvent {
+  /** Host-owned business correlation ID; optional for older desktop hosts. */
+  traceId?: string
   transport: 'snowluma' | 'onebot-external' | 'sandbox'
   accountKey: string
   platform: string
@@ -75,6 +90,10 @@ interface PendingAction {
 }
 
 interface DesktopDeliveryRequest {
+  /** Inherited from the inbound message when this delivery belongs to a live processing round. */
+  traceId?: string
+  /** One Worker/HDSI processing round; optional for older hosts. */
+  processingId?: string
   deliveryId: string
   accountKey: string
   transport: DesktopInboundEvent['transport']
@@ -162,6 +181,8 @@ function desktopSession(event: DesktopInboundEvent, requestDelivery: (payload: O
 export function installDesktopBridge(service: InterludeService) {
   if (process.env.HDSI_DESKTOP_BRIDGE !== '1' || typeof process.send !== 'function') return undefined
 
+  // This context is intentionally limited to the current async processing chain.
+  // Delayed/background work must persist its own trace metadata separately.
   const pendingDeliveries = new Map<string, PendingDelivery>()
   const requestDelivery = (payload: Omit<DesktopDeliveryRequest, 'deliveryId' | 'occurredAt'>) => {
     const deliveryId = randomUUID()
@@ -171,7 +192,13 @@ export function installDesktopBridge(service: InterludeService) {
         reject(new Error('等待 typ-0 渠道投递确认超时。'))
       }, 45_000)
       pendingDeliveries.set(deliveryId, { resolve, reject, timeout })
-      sendToDesktop('delivery', { ...payload, deliveryId, occurredAt: new Date().toISOString() })
+      const context = desktopProcessingContext.getStore()
+      sendToDesktop('delivery', {
+        ...payload,
+        ...(context ? { traceId: context.traceId, processingId: context.processingId } : {}),
+        deliveryId,
+        occurredAt: new Date().toISOString(),
+      })
     })
   }
   const settleDelivery = (value: DesktopCommand['value']) => {
@@ -245,6 +272,8 @@ export function installDesktopBridge(service: InterludeService) {
       replyTo: delivery.quoteMessageId,
       content: delivery.content,
       occurredAt: new Date().toISOString(),
+      ...(delivery.traceId ? { traceId: delivery.traceId } : {}),
+      ...(delivery.processingId ? { processingId: delivery.processingId } : {}),
       ...(delivery.endpointId ? { endpointId: delivery.endpointId } : {}),
       ...(delivery.intentKey ? { intentKey: delivery.intentKey } : {}),
     })
@@ -260,18 +289,27 @@ export function installDesktopBridge(service: InterludeService) {
     const port = probe.ctx?.server?.port
     return Number.isInteger(port) && port > 0 ? port : undefined
   }
+  let portPoller: ReturnType<typeof setInterval> | undefined
+  let portPollerTimeout: ReturnType<typeof setTimeout> | undefined
+  const stopConsolePortPolling = () => {
+    if (portPoller) clearInterval(portPoller)
+    if (portPollerTimeout) clearTimeout(portPollerTimeout)
+    portPoller = undefined
+    portPollerTimeout = undefined
+  }
   const reportConsolePort = () => {
     const port = readServerPort()
     if (port) {
       sendToDesktop('console-port', { port, uiPath: '/console/' })
+      stopConsolePortPolling()
       return true
     }
     return false
   }
   // server 可能晚于本插件就绪：先立即探测，未就绪时短暂轮询。
   if (!reportConsolePort()) {
-    const portPoller = setInterval(() => { if (reportConsolePort()) clearInterval(portPoller) }, 1_000)
-    setTimeout(() => clearInterval(portPoller), 60_000)
+    portPoller = setInterval(() => { reportConsolePort() }, 1_000)
+    portPollerTimeout = setTimeout(stopConsolePortPolling, 60_000)
   }
 
   const handle = async (message: unknown) => {
@@ -290,9 +328,20 @@ export function installDesktopBridge(service: InterludeService) {
       }
       if (command.command === 'inbound') {
         if (!isRequestId(command.value?.requestId) || !isInboundEvent(command.value?.event)) throw new Error('无效 typ-0 入站事件。')
-        const accepted = service.getDesktopRuntimePhase() === 'running'
-          && await service.receiveDesktopEvent(command.value.event, desktopSession(command.value.event, requestDelivery))
-        sendToDesktop('inbound-result', { ok: true, requestId: command.value.requestId, accepted: !!accepted, error: accepted ? undefined : '当前剧本未接收该入站事件。' })
+        const event = { ...command.value.event, traceId: ensureTraceId(command.value.event.traceId) }
+        const processingId = createProcessingId()
+        const accepted = await desktopProcessingContext.run({ traceId: event.traceId, processingId }, async () => {
+          return service.getDesktopRuntimePhase() === 'running'
+            && await service.receiveDesktopEvent(event, desktopSession(event, requestDelivery))
+        })
+        sendToDesktop('inbound-result', {
+          ok: true,
+          requestId: command.value.requestId,
+          traceId: event.traceId,
+          processingId,
+          accepted: !!accepted,
+          error: accepted ? undefined : '当前剧本未接收该入站事件。',
+        })
         return
       }
       if (command.command === 'cursor-set') {
@@ -306,16 +355,20 @@ export function installDesktopBridge(service: InterludeService) {
       if (command.command === 'replay-inbox') {
         if (!isRequestId(command.value?.requestId)) throw new Error('回放请求缺少 requestId。')
         const records = Array.isArray(command.value.records) ? command.value.records : []
-        const results: Array<{ id: string, accepted: boolean, error?: string }> = []
+        const results: Array<{ id: string, traceId?: string, processingId?: string, accepted: boolean, error?: string }> = []
         for (const record of records) {
           if (!record?.id || !isInboundEvent(record.event)) {
             results.push({ id: String(record?.id || ''), accepted: false, error: '无效收件箱记录。' })
             continue
           }
           try {
-            const accepted = service.getDesktopRuntimePhase() === 'running'
-              && await service.receiveDesktopEvent(record.event, desktopSession(record.event, requestDelivery))
-            results.push({ id: record.id, accepted: !!accepted, error: accepted ? undefined : '当前剧本未接收该入站事件。' })
+            const event = { ...record.event, traceId: ensureTraceId(record.event.traceId) }
+            const processingId = createProcessingId()
+            const accepted = await desktopProcessingContext.run({ traceId: event.traceId, processingId }, async () => {
+              return service.getDesktopRuntimePhase() === 'running'
+                && await service.receiveDesktopEvent(event, desktopSession(event, requestDelivery))
+            })
+            results.push({ id: record.id, traceId: event.traceId, processingId, accepted: !!accepted, error: accepted ? undefined : '当前剧本未接收该入站事件。' })
           } catch (error) {
             results.push({ id: record.id, accepted: false, error: String(error) })
           }
@@ -383,6 +436,7 @@ export function installDesktopBridge(service: InterludeService) {
     }))
   return () => {
     clearInterval(heartbeat)
+    stopConsolePortPolling()
     service.setDesktopDeliveryHandler(undefined)
     service.setDesktopOnebotActionHandler(undefined)
     process.off('message', handle)
@@ -400,5 +454,7 @@ export function installDesktopBridge(service: InterludeService) {
     pendingActions.clear()
   }
 }
+
+
 
 

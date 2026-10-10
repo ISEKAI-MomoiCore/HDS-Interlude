@@ -1,6 +1,8 @@
 # HDS Interlude 新手引导
 
-适用版本：`1.0.1-rc36`
+适用版本：`1.0.1-rc50`
+
+当前文档已同步至 2026-10-11 的 rc50，累计变更以 rc48 为基线。发布流程现已执行源码构建，rc50 由本次生成的 `lib/` 与 `release/koishi-plugin-hds-interlude-1.0.1-rc50.tgz` 交付；旧 rc48 安装包不会自动获得这些修改，运行实例须安装并重载后才生效。验收与边界见 [发布验证报告](docs/development/RELEASE_VERIFICATION_2026-10-11_RC50.md)。
 
 HDS Interlude 是 Koishi 的持续叙事聊天插件。插件使用共享主剧本保存角色状态、关系分支、已发生事件、待处理计划和长期记忆。用户消息会进入当前活动场景；主模型在同一次请求中续写已经发生的生活，并决定是否发送、延迟发送或暂不发送消息。实时写作读取一条按时间排序的活动场景记录：最近剧本文字、真实用户消息和已经成功投递的角色消息在同一条线上。剧本引子、场景外近期事实和长期记忆负责更早的历史。
 
@@ -14,9 +16,9 @@ HDS Interlude 是 Koishi 的持续叙事聊天插件。插件使用共享主剧�
 ## 首次配置
 
 1. 在 Koishi Console 启用 `hds-interlude`。
-2. 在“模型与服务商”中添加一行模型连接，选择对应的 `mode`，填写该模式需要的连接信息，并勾选 `useForMain`。
+2. 在“模型与服务商”中添加一行模型连接，选择对应的 `mode`，填写该模式需要的连接信息，并勾选 `useForMain`。初次部署每种用途配置一条即可；需要备用线路或故障切换时，同一用途可以配置多条连接。
 3. 在“故事档案”中填写主角资料、默认关系、世界设定、地点、时区和叙事风格。
-4. 使用 OneBot/NapCat 时，在 `onebot.botAccounts` 填写机器人 QQ；在 `onebot.userAccounts` 逐项填写允许私聊的测试 QQ、人物资料和初始关系。
+4. 使用 OneBot/NapCat 时，先打开 `onebot.enabled`，再在 `onebot.botAccounts` 填写机器人 QQ；在 `onebot.userAccounts` 逐项填写允许私聊的测试 QQ、人物资料和初始关系。
 5. 保存配置后，在已授权私聊中执行：
 
 ```text
@@ -28,7 +30,7 @@ Console 配置页已按【必填→结构→节奏→表达→内在→扩展→
 
 6. 发送一条普通消息，确认模型调用、日志和消息投递正常。
 
-空的私聊用户白名单表示不允许任何 QQ 进入私聊剧本。
+`onebot.enabled=true` 时，空的私聊用户白名单表示不允许任何 QQ 进入私聊剧本；保持关闭时，白名单不会参与新的账号过滤。
 
 ## 建议测试顺序
 
@@ -255,6 +257,12 @@ logging.logMessageContent: false
 ```
 
 排查模型或计时器问题时，可以临时将 `logging.level` 改为 `debug`、`logging.verbosity` 改为 `diagnostic`；测试完成后建议恢复。深色 Console 选择 `logging.colorTheme=dark`，明亮/白色 Console 选择 `light`。若终端不支持颜色，关闭 `logging.colors`；不喜欢颜文字时关闭 `logging.kaomoji`，系统会自动换成 `←`、`✓`、`→` 等简洁符号。
+
+## 分段与重启时怎样判断消息是否送达
+
+看到 script 或 pending 意图，不代表 QQ 已收到；真正的角色消息需平台投递确认。分段回复未发完时，同一人的到期补写先等打字链；全局手动/自动推进也会等待。新用户消息可以打断剩余气泡。重启恢复已落库 pending 消息时仍尊重分段延迟，不重新让模型写一遍。
+
+承诺回访不再无限每 20 分钟唤醒：到硬截止或达到五次未结算顺延后停止调度。任务 cancelled 不表示角色已对用户履行或解释取消。可用 `interlude.memory.intents` 配合诊断日志检查，不建议为了催发手工改账本状态。
 
 ## 常用配置位置
 

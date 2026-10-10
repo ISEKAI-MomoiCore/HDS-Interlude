@@ -34,7 +34,7 @@ test('closing a reviewed scene retains the processed frontier despite later mess
     dbSet: async (table: string, query: any, patch: any) => { writes.push({ table, query, patch }) },
     ensureContinuity: async (_story: any, at: Date) => { nextAt = at },
   }
-  await (InterludeService.prototype as any).persistCompaction.call(service,
+  await (InterludeService.prototype as any).persistCompactionOutputs.call(service,
     { id: 's' }, { id: 8, entryCount: 0, startedAt: date },
     { scene: { summary: '下课离开', close: true, boundary: { reason: '已离开教室', sourceEntryIds: [3] } }, arc: { summary: '约定延续' } },
     entries, new Date(date.getTime() + 60_000))
@@ -49,7 +49,7 @@ test('failed arc persistence leaves the scene checkpoint untouched', async () =>
     memoryConfig: { arcSummaryCharacters: 1000 }, activeArc: async () => ({ id: 7, title: '旧弧' }),
     dbSet: async (table: string) => { writes.push(table); throw new Error('database unavailable') },
   }
-  await assert.rejects((InterludeService.prototype as any).persistCompaction.call(service,
+  await assert.rejects((InterludeService.prototype as any).persistCompactionOutputs.call(service,
     { id: 's' }, { id: 8 }, { scene: { summary: '下课' }, arc: { summary: '约定' } }, entries, date))
   assert.deepEqual(writes, ['interlude_arc'])
 })

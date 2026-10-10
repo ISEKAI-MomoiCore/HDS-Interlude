@@ -1,10 +1,10 @@
 # 世界事件播种器（World Event Seeder）设计实现文档
 
-适用版本：`1.0.1-rc24`（M1+M2 已随 rc23 发布；rc24 起模型选择改为用途勾选）
+适用版本：当前实现基线为 `1.0.1-rc50`。本文最初起草于 rc24，以下分期和开放决策保留作为设计演进记录；当前实现状态以本节和源码为准。
 
 ## 0. 状态
 
-M1（注入侧）与 M2（生成侧）已随 rc23 发布并通过双仓测试；M3（事件驱动推进回合、语义去重、桌面徽标）未实现。rc24 起提供商选择改为模型中心的用途勾选（useForWorldSeeding）。已定的开放决策：① 参与者**严格禁止**与事件相关（双层校验：提示词拉黑 + 宿主词面拦截）；② 密度默认每 24 小时 1~4 条、单次至多 2 条、高重要性每天至多 1 条（低多高少）；③ 注入条目使用**新增 `world-event` kind**（ownership 映射 system）；④ 模型选择复用**用途勾选**（连接行 `useForWorldSeeding`，无勾选即关闭）；⑤ 提示词全面开放：环境（时区/季节/世界设定/场景地点）、历史剧本（压缩摘录）、关系网（拉黑名单）、主角所为（workingDetails/场景/弧摘要）全部进入生成上下文。
+当前已实现：周期生成、事件校验、计划事件排期、语义去重、到期事件注入，以及 user-message / advance 回合按重要性排水。当前尚未实现的主要部分是桌面时间线专用世界事件状态徽标。rc24 起提供商选择改为模型中心的用途勾选（useForWorldSeeding）。历史设计决策包括：① 参与者**严格禁止**与事件相关（双层校验：提示词拉黑 + 宿主词面拦截）；② 密度默认每 24 小时 1~4 条、单次至多 2 条、高重要性每天至多 1 条（低多高少）；③ 注入条目使用**新增 `world-event` kind**（ownership 映射 system）；④ 模型选择复用**用途勾选**（连接行 `useForWorldSeeding`，无勾选即关闭）；⑤ 提示词全面开放：环境（时区/季节/世界设定/场景地点）、历史剧本（压缩摘录）、关系网（拉黑名单）、主角所为（workingDetails/场景/弧摘要）全部进入生成上下文。
 
 实现落点：`src/world-seeder.ts`（提示词/解析/校验闸/客户端）、`narrator.customSideTask`（独立配置块复用侧任务请求链）、表 `interlude_seeded_event`（cev 为 `cev_` 前缀）、`service.worldSeederSweep`（定时器+抖动+校验闸+入库+due 唤醒）、`service.drainDueSeededEvents`（`decide()` 顶部排水：user-message 回合仅 medium/high，其余回合含 low）、主提示词 WORLD EVENTS / LITE_WORLD_EVENTS 指令块。
 
@@ -160,7 +160,7 @@ OUTPUT: one JSON object {"events":[]} with 0–2 events. Do not wrap in
 Markdown fences.
 ```
 
-## 8. 事件驱动的推进回合（M3）
+## 8. 事件驱动的推进回合（已实现）
 
 `wakeEligible` 事件到点且无在途回合时，宿主直接调度一次 advance——没有任何用户输入，她的生活也继续了，因为世界发生了事。复用现有 advance 调度与节流；与 Urge 的加速互不抢占（先到先得，同 tick 只触发一次）。
 
@@ -204,7 +204,8 @@ worldSeeder: {
 
 - **M1（注入侧，无模型调用）**：表 + 排水 + 条目注入 + 提示词块 + 配置 + `interlude.seeded` 手动注入命令。验证注入半边管线与主模型反应。
 - **M2（生成侧）**：seeder 模型回路（提示词、schema、校验闸、频控、健康统计），stub 与 failover 复用现有件。
-- **M3（活性）**：wakeEligible 事件唤起推进、user-message 回合高重要性浮现、语义去重、桌面时间线徽标、重要事件自动落 fact。
+- **已实现**：wakeEligible 事件唤起推进、user-message 回合高重要性浮现、语义去重。
+- **尚未实现**：桌面时间线专用世界事件状态徽标；重要事件自动落 fact 仍不应视为 seeder 的默认自动行为。
 
 ## 13. 开放决策点
 

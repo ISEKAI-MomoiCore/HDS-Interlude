@@ -5,6 +5,8 @@ import { HealthMonitor } from './health';
 import { UrgeConfig } from './urge';
 import { ModelConfig } from './narrator';
 import { GroupWillingnessConfig } from './group-willingness';
+/** Koishi/Satori uses numeric Universal.Status values; keep legacy string adapters compatible. */
+export declare function isBotOnlineStatus(status: unknown): boolean;
 import { SchedulePreplanConfig } from './schedule-preplan';
 import { InterludeArc, InterludeScene, InterludeParticipant, InterludeStory, NarrativeDecision, NarrativeFact, NarrativeIntent, GroupContext, NarrativeInteraction, NarrativeProvider, NarrativeRequest, NarrativeCompactor, NarrativeEmbedder, OutgoingMessageDraft, ScriptEntry, StatePatchProposal, StorySetting, StoryState, OverlaySnapshot, AlterSystemConfig, ChatRhythmConfig, AgencyConfig, ScenePresenceState, ChatActionCapabilities, ChatReactionName, MessageReactionDraft, NativeFaceSemantic, QuotedMessageContext, SchedulePreplanRecord, TimelinePlan, UserReportedTime } from './types';
 import type { DesktopInboundEvent, DesktopRuntimePhase } from './desktop-bridge';
@@ -100,6 +102,15 @@ export interface Config {
     worldSeeder?: unknown;
     /** QQ 空间（说说）通道：SnowLuma qzone 扩展动作的限流与审计。 */
     qzone?: unknown;
+    /** 预设同步：从 typ0-site 分享站自动拉取配置。 */
+    presetSync?: {
+        enabled: boolean;
+        baseUrl: string;
+        shareCode: string;
+        autoUpdate: boolean;
+        sections: string[];
+        applyToCurrentStory: boolean;
+    };
     /** 顶层主提示词（Console 最底部）：非空时覆盖 model.mainPrompt。 */
     mainPrompt?: string;
     /** Optional OneBot/NapCat account gate. It only affects the onebot platform. */
@@ -200,6 +211,8 @@ export interface MemoryConfig {
     sceneHookCharacters: number;
     sceneSummaryCharacters: number;
     arcSummaryCharacters: number;
+    /** 弧摘要进 prompt 前的独立裁剪上限(存储仍保留全量);尾部最贴近当前剧情。 */
+    arcPromptCharacters?: number;
     /** How many immediately-preceding closed scene summaries join the prompt. */
     previousSceneSummaries: number;
     recentEntryLimit: number;
@@ -215,6 +228,8 @@ export interface MemoryConfig {
     statePatchMinEvidence: number;
     /** Minimum independent narrative turns for a minor overlay change. */
     statePatchMinTurns?: number;
+    /** major 提案自动应用所需的最少独立场景数;默认 2。 */
+    statePatchMajorMinScenes?: number;
     /** Minimum distinct calendar days represented by minor-patch evidence. */
     statePatchMinDays?: number;
     /** Cooldown between stable overlay changes on the same target/path. */
@@ -423,6 +438,7 @@ export declare class InterludeService extends Service {
      * 用内存 Map 按 platform:messageId 去重——进程生命周期内有效，重启后由
      * script_entry.metadata.messageId 的磁盘记录兜底（重放场景不会跨重启）。 */
     private seenIncomingMessages;
+    private episodeIndexes;
     private historyVectorsReady;
     private historyVectorLoads;
     private historyBackfills;
@@ -467,6 +483,8 @@ export declare class InterludeService extends Service {
     private scheduledAlterAnalyses;
     /** sql.js/SQLite has one writable connection; serialize writes globally. */
     private databaseWriteQueue;
+    private transactionScope;
+    private transactionRunning;
     /** The browser is bounded separately from narrative work so a burst of
      * deferred intents cannot spawn an uncontrolled number of Chromium pages. */
     private browserActive;
@@ -479,9 +497,19 @@ export declare class InterludeService extends Service {
      * pause, or a runtime reset. The token is in-memory and intentionally does
      * not become part of the story schema. */
     private runtimeGeneration;
+    private runtimePauseGeneration;
     private storyTaskGenerations;
     private sweepRunning;
     private compactionSweepRunning;
+    /** Startup/sweep compensation for durable pending script deliveries. The
+     * backoff is process-local; the delivery ledger remains the source of truth
+     * across restarts. */
+    private pendingDeliveryRecoveryRunning;
+    /** Same authored event has one executor through transport AND confirmation. */
+    private deliveryExecutors;
+    /** Known platform successes survive a local confirmation failure in this process. */
+    private acceptedDeliveries;
+    private pendingDeliveryRecoveryBackoff;
     private blindModeHealthIssue;
     /** Console reload creates a new service instance, so normalized config can
      * be cached safely for the lifetime of this instance. */
@@ -509,6 +537,8 @@ export declare class InterludeService extends Service {
     /** typ-0 uses this optional gate only inside a dedicated worker process. */
     private desktopRuntimePhase;
     private desktopEventSink?;
+    /** typ0 桌面桥安装标记：离线补拉仅独立 Koishi 部署有意义（桌面有宿主收件箱兜底）。 */
+    private desktopBridgeActive;
     /**
      * typ-0 后台投递出口：delayed/split/advance 路径没有实时 Session，普通 Koishi
      * 里由 findBotForParticipant 走 adapter；typ-0 worker 中 bot 不存在，所有后台
@@ -520,6 +550,15 @@ export declare class InterludeService extends Service {
     private desktopOnebotActionHandler?;
     constructor(ctx: Context, config: Config);
     private startBackgroundTasks;
+    /** Recover only the durable outgoing-message ledger. The narrative intent is
+     * deliberately not consulted here: an intent may already be completed while
+     * its transport action is still pending, and replaying the intent would run a
+     * second model turn. DeliveryActions are the outbox truth. */
+    private recoverPendingDeliveries;
+    private pendingOutgoingDeliveryCandidates;
+    private pendingDeliveryRecoveryKey;
+    private deferPendingDeliveryRecovery;
+    private recoverPendingDeliveryCandidate;
     setNarrator(provider: NarrativeProvider): void;
     getNarrator(): NarrativeProvider;
     setCompactor(provider: NarrativeCompactor): void;
@@ -804,7 +843,7 @@ export declare class InterludeService extends Service {
      * without immediately erasing everything said earlier in the same hour. */
     private recentEntriesForPrompt;
     memories(storyId: string, limit?: number, participantId?: string): Promise<any[]>;
-    /** Administrative view: includes global and participant-specific durable facts. */
+    /** Administrative view: global durable facts, including legacy rows with a participantId. */
     adminFacts(storyId: string, limit?: number): Promise<any[]>;
     adminPendingIntents(storyId: string, limit?: number): Promise<any[]>;
     adminStatePatches(storyId: string, limit?: number): Promise<any[]>;
@@ -816,6 +855,10 @@ export declare class InterludeService extends Service {
     forgetAdminFact(storyId: string, id: number): Promise<boolean>;
     cancelAdminIntent(storyId: string, id: number): Promise<boolean>;
     rejectAdminStatePatch(storyId: string, id: number): Promise<boolean>;
+    /** 手动批准一条 proposed 提案:管理员判断优先于证据阈值/autoApply 政策
+     * (否则关闭自动应用后提案没有任何出口)。批准后立即重建 overlay——
+     * 统一语义下 overlay=未压缩 applied 补丁的合并,效果即时可见。 */
+    applyAdminStatePatch(story: InterludeStory, id: number): Promise<boolean>;
     /** Clear only the evolving setting overlay; keep Canon, script and memories. */
     clearSettingOverlay(story: InterludeStory, target: 'character' | 'perspective' | 'relationship' | 'world' | 'all'): Promise<{
         participantCount: number;
@@ -911,6 +954,10 @@ export declare class InterludeService extends Service {
     /** Compact summaries of the scenes immediately before the active one. They
      * bridge the raw context window and the arc, where last-turn details used to
      * disappear from the prompt entirely. */
+    /** 弧摘要进 prompt 前的独立裁剪:存储侧保留全量(arcSummaryCharacters,默认 12k),
+     * prompt 侧默认只带尾部(arcPromptCharacters,默认 6k)——弧层与 previousScenes/
+     * 长线投影叠加时,12k 全量每回合在场会挤压 recentScript 预算,尾部最贴近当前。 */
+    private trimArcForPrompt;
     private previousSceneSummaries;
     /** Drop expired scratchpad entries and cap the list; details only ever carry
      * small in-flight facts, so silence is the correct treatment for expiry. */
@@ -957,6 +1004,8 @@ export declare class InterludeService extends Service {
      * after an administrator resets the story or clears HDSI tables. */
     private invalidateBufferedNarratives;
     private invalidateStoryTasks;
+    private rememberIncomingMessage;
+    private deliveryGeneration;
     private taskGeneration;
     private taskGenerationCurrent;
     /** True while a live or debounced conversation should take priority over background work. */
@@ -978,6 +1027,13 @@ export declare class InterludeService extends Service {
         snapshots: OverlaySnapshot[];
         participantOverlays: any[];
     }>;
+    /**
+     * 群消息离线补拉：插件停用期间到达的已启用群消息经 get_group_msg_history
+     * 补回，写为一条汇总事件（不注入逐条事件打扰上下文——YesImBot World
+     * offlineHistory 同款语义）。仅在 Koishi 原生部署有意义：typ0 桌面模式
+     * 的收件箱已由宿主兜底，此处跳过。
+     */
+    offlineGroupCatchup(): Promise<void>;
     sweep(): Promise<void>;
     private advanceUnlocked;
     private decide;
@@ -1016,7 +1072,9 @@ export declare class InterludeService extends Service {
      * semantic score of zero for this turn.
      */
     private contactThreads;
-    facts(storyId: string, limit?: number, query?: string, participantId?: string, turnQueryEmbedding?: number[]): Promise<NarrativeFact[]>;
+    /** Durable facts are global narrative evidence. The legacy participantId argument
+     * is retained for call-site compatibility but intentionally ignored. */
+    facts(storyId: string, limit?: number, query?: string, _participantId?: string, turnQueryEmbedding?: number[]): Promise<NarrativeFact[]>;
     /** Returns only observations that are safe for this narration branch. A
      * participant's browsing is not shown to another private participant unless
      * the owner has explicitly enabled shared relationship details. */
@@ -1064,11 +1122,17 @@ export declare class InterludeService extends Service {
     private scheduleDueIntentWake;
     /** 到期唤醒的执行体：分段消息直投；sweep 繁忙或前台回合未结束时返回 'busy'，由 scheduler 短候重排。 */
     private wakeDueIntents;
+    private reconcileTerminalSplitIntent;
+    private pendingSplitSegments;
+    /** Called in the story queue, after transport work and before any narration. */
+    private deferDueIntentsBehindPendingSplits;
     private scheduleNextSplitWake;
     /** Deliver already-decided <sep/> segments without invoking the narrator. */
     private deliverDueSplitSegments;
     /** Pending spoken promises are intentionally tiny and relationship-local. */
     private pendingFollowUpCommitments;
+    /** Expiration retires a scheduler task, not a fictional fulfilled promise. */
+    private retireExpiredFollowUps;
     private appendFollowUpCommitment;
     private applyFollowUpResolutions;
     private deferUnresolvedDueFollowUps;
@@ -1091,6 +1155,12 @@ export declare class InterludeService extends Service {
      * fills the transport envelope. Never invents words not in the script. */
     private synthesizeCrossActionFromScript;
     private sendCrossGroupMessage;
+    private deliveryExecutionKey;
+    private successfulDeliveryEntry;
+    /** No waiting for another executor inside story serial: its confirmation may
+     * need that same serial. A competing recovery/split simply tries later. */
+    private deliverOutgoingMessages;
+    private deliveryLedgerConfirmed;
     private sendOutgoingMessages;
     /** Confirm visible delivery only after the platform accepted the message.
      * Failed attempts become explicit system evidence rather than fictional
@@ -1098,6 +1168,10 @@ export declare class InterludeService extends Service {
      * when an adapter fails after it has already accepted a request. */
     private confirmOutgoingDeliveries;
     private recordOutgoingDeliveryFailure;
+    /** Agency/策略拦截补偿：未进入投递管线的私聊行动统一记为 cancelled，
+     * 并追加明确的"从未发送"历史条目。deliveryReality 会把 cancelled 标注为
+     * withdrawn，后续轮次的模型才能区分"想发"与"已发出"。 */
+    private recordWithdrawnOutgoingEvents;
     /** Update the M6.1 ledger stored beside the authoritative script. Callers
      * already hold the story queue, so this helper never opens a nested serial
      * section and cannot reorder platform delivery. */
@@ -1307,6 +1381,10 @@ export declare class InterludeService extends Service {
     private channelMetadataFor;
     /** 入站触达端点状态：连接在线 + 可投递 + 微信主动资格刷新（v3 §四）。 */
     private touchEndpointStateInbound;
+    /** 将当前 Koishi bot 快照同步到已加载的端点注册表。
+     * 这是重启后的实时连接证据，不会恢复历史快照中的 online 真值。
+     */
+    private syncCurrentBotConnections;
     /** 连接器在线状态回写（连接/断开事件；v3 §四 connection 维）。 */
     noteEndpointConnection(accountKey: string, online: boolean): void;
     private endpointDriftWarned;
@@ -1338,6 +1416,9 @@ export declare class InterludeService extends Service {
     private longHorizonSweepRunning;
     private longHorizonLastScore;
     private longHorizonGenerationRunning;
+    /** 生成失败/归一化拒绝后的冷却：无 active 指导时 first-trigger 恒为真，
+     *  不加冷却会每个 sweep 重打一次模型（错误刷屏与 token 浪费的放大器）。 */
+    private longHorizonGenerationCooldownUntil;
     /** Story ids whose active guidance row has already been loaded for this process. */
     private longHorizonGuidanceLoaded;
     private longHorizonSweep;
@@ -1378,7 +1459,9 @@ export declare class InterludeService extends Service {
      * the live (uncompacted) delta only. This is what actually reduces prompt
      * size; snapshots carry the older evolution separately. */
     private rebuildLiveOverlayState;
+    private prepareCompactionEmbeddings;
     private persistCompaction;
+    private persistCompactionOutputs;
     private persistFact;
     private embedText;
     private scheduleFactEmbeddingBackfill;
@@ -1403,6 +1486,9 @@ export declare class InterludeService extends Service {
     private reportBlindModeHealth;
     private allowsVerbosity;
     private getStory;
+    /** 当前异步调用链正在其中执行的故事串行域(用于嵌套写路径判断"已在队列内,勿再排队")。 */
+    private serialScope;
+    private inSerial;
     private serial;
     private dbWrite;
     /**

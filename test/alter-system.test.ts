@@ -109,3 +109,26 @@ test('Alter keeps relationship-local accumulation and analysis evidence in the s
   assert.equal(alterScopeValue(completed, 'bob'), 6)
   assert.equal(completed.alterValue, 6)
 })
+
+
+test('Alter does not lose the 33rd active source during normalization', () => {
+  const now = new Date('2026-10-08T04:00:00Z')
+  let state = createAlterSystemState(now)
+  for (let i = 0; i < 40; i++) state = advanceAlterSystem(state, 1, 'user-message', now, config, 'p' + i).state
+  const normalized = normalizeAlterSystemState(state)!
+  assert.equal(normalized.pendingScopes!.length, 40)
+  assert.equal(normalized.alterValue, 40)
+  for (let i = 0; i < 40; i++) assert.equal(alterScopeValue(normalized, 'p' + i), 1)
+})
+
+test('idle Alter scopes cannot evict a new participant or the protagonist life source', () => {
+  const now = new Date('2026-10-08T04:00:00Z')
+  const original = createAlterSystemState(now)
+  original.pendingScopes = Array.from({ length: 32 }, (_, i) => ({ participantId: 'idle-' + i, alterValue: 0 }))
+  const next = advanceAlterSystem(original, 5, 'user-message', now, config, 'new-participant').state
+  const life = advanceAlterSystem(next, -4, 'advance', now, config).state
+  const normalized = normalizeAlterSystemState(life)!
+  assert.equal(alterScopeValue(normalized, 'new-participant'), 5)
+  assert.equal(alterScopeValue(normalized), -4)
+  assert.equal(normalized.alterValue, 1)
+})
