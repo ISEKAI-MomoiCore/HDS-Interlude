@@ -2,7 +2,7 @@
 
 适用版本：`1.0.1-rc51`
 
-当前文档已同步至 2026-10-11 的 rc50，累计变更以 rc48 为基线。发布流程现已执行源码构建，rc50 由本次生成的 `lib/` 与 `release/koishi-plugin-hds-interlude-1.0.1-rc50.tgz` 交付；旧 rc48 安装包不会自动获得这些修改，运行实例须安装并重载后才生效。验收与边界见 [发布验证报告](docs/development/RELEASE_VERIFICATION_2026-10-11_RC50.md)。
+当前文档已同步至 2026-10-13 的 rc51，累计变更以 rc50 发布包为基线。发布流程已执行源码构建，rc51 由本次生成的 `lib/` 与 `release/koishi-plugin-hds-interlude-1.0.1-rc51.tgz` 交付；旧安装包不会自动获得这些修改，运行实例须安装并重载后才生效。
 
 第一次安装先看 `BEGINNER_GUIDE.md`。本文件按配置依赖关系组织字段；下方先列出当前 Console 的实际顺序，旧版本已经移除或隐藏的字段集中列在末尾，不再混入正常配置流程。
 
@@ -30,8 +30,9 @@
 | 【扩展】 | 16 | `longHorizon` | 长线叙事指导 |
 | 【扩展】 | 17 | `qzone` | QQ 空间通道 |
 | 【扩展】 | 18 | `presetSync` | 预设同步 |
-| 【维护】 | 19 | `blindMode` | 盲区模式 |
-| 【维护】 | 20 | `logging` | 日志 |
+| 【扩展】 | 19 | `weather` | 运行时天气 |
+| 【维护】 | 20 | `blindMode` | 盲区模式 |
+| 【维护】 | 21 | `logging` | 日志 |
 
 首次测试先完成 `storyDefaults`、`model`、`onebot`、`sharedStory` 和 `runtime`；`blindMode` 保持关闭。Embedding、网页观察、主动联系和内容日志应在基础私聊稳定后逐项开启。
 
@@ -137,6 +138,8 @@
 - `mainResponseFormat`：主叙事唯一的输出格式设置
 - `mainStreamingMode`：实验性流式首条回复，默认 `off`
 - `mainPayloadOrder`：主叙事 payload 字段顺序，默认 `cache-first`；遇到服务商兼容性或上下文质量问题时可切回 `legacy`
+- `specialization`：模型特化档位，默认 `off`（rc12 原始完整合约，行为与未特化一致）；可选 `lite`（flash 级小模型精简合约）/`standard`（content-only 协议标准合约）/`full`（完整合约），同时作用于主叙事与压缩/时间导演等侧端提示词，改配置后下回合生效
+- `specializationFamily`：特化家族，默认 `auto` 按模型名识别；中转自定义别名无法识别时可显式指定（gemini-flash/gemini/claude/gpt/glm/kimi/deepseek/grok/generic）
 
 `mainPayloadOrder=cache-first` 重排用户 payload：对话历史（recentScript）与低频记忆层（长期事实、记忆、Overlay、场景摘要；有原文时不注入旧连续性快照）前置，每轮变化的字段（时钟、当前事件、参与者状态、意图账本）后置。对支持自动前缀缓存的服务商（DeepSeek 官方、GLM 官方、Kimi/Moonshot、硅基流动等），连续对话轮命中稳定前缀后输入成本与 prefill 延迟显著下降；群聊回合与 advance 回合的历史视图不同，缓存命中率会低于私聊连续对话。payload 末尾附带 `recentExchange` 最近交换块（最多 3 条、1600 字符，排除当前消息本身），把最后几条交互重新锚定在生成点旁，避免历史前置稀释语境显著性；固定合约会同步告知模型该块是既定过去的强调而非新事件。默认 `legacy` 使用常规字段顺序，两种模式都使用 beta6 的原文与执行语义。开启后建议先在沙盒观察若干轮回复质量与日志中的`回复模式`分布，不适配随时切回。
 
@@ -204,18 +207,9 @@ Embedding 地址留空时，插件会尝试从标准 `/chat/completions` 地址�
 
 `willingnessPreset=auto` 时，若 `lifeStatus` 缺失、无效或超过 6 小时未刷新，按 **idle** 生活状态使用 `willingnessAuto.idle`（默认 `active`）；例如配置 `idle: eager` 就回退到 `eager`，不再固定回退 `normal`。这是本地门控回退，不会伪造或写回生活状态。有效的 busy/asleep 状态仍保留原行为；评估调用和成功发言后的意愿扣减使用相同档位。
 
-### 3.3 voiceTranscription：SnowLuma 私聊语音转写
+### 3.3 `model.audio`：原生音频理解（当前语音路径）
 
-| 字段 | 默认值 | 说明 |
-| --- | --- | --- |
-| `enabled` | `false` | 启用 SnowLuma `fetch_ptt_text`。仅处理当前私聊中的 QQ `record` 语音。 |
-| `timeoutMs` | `20000` | 转写最大等待时间；超时后仍保留语音事实并继续本轮。 |
-
-转写成功后，主模型收到的用户事件会带有 `[用户语音转写]` 标记，并和当前文本、图片一起构成同一个回合。该功能需要 SnowLuma 支持原始 OneBot `fetch_ptt_text` 动作；NapCat 或其它实现不支持时会安全降级。它不把音频文件或 base64 写入 HDSI 数据库。
-
-### 3.4 `model.audio`：原生音频理解
-
-这条路径与 `voiceTranscription` 不同：不请求文字转写，而是由 SnowLuma 将 QQ SILK 语音转码后作为原生音频内容交给主模型。只有支持音频输入的主模型（例如 Gemini）才适用；它不会在模型不支持时自动回退为文字转写。
+不请求文字转写，而是由 SnowLuma 将 QQ SILK 语音转码后作为原生音频内容交给主模型。只有支持音频输入的主模型（例如 Gemini）才适用；它不会在模型不支持时自动回退为文字转写。未开启时，语音在上下文中以 `[语音]` 占位记录。
 
 | 字段 | 默认值 | 说明 |
 | --- | --- | --- |
@@ -351,6 +345,10 @@ Agency Window 只描述角色能否采取外部联系行动的现实条件，不
 | `maxWindowMinutes` | `240` | 当前日程/隐私/设备判断最长有效时间，过期后必须重新生成。 |
 | `minimumProactiveIntervalMinutes` | `60` | 同一参与者普通主动联系的安全间隔；承诺型联系可绕过。 |
 | `maxCandidateHours` | `24` | 联系理由最长保留时间，过期后自然放下。 |
+| `contactMode` | `strict` | 联系温度三档：`strict`（沉默不是理由，阈值取运行时/Urge 有效值）；`natural`（想念、好奇近况等情感动机合法，阈值降为 `naturalWillingnessThreshold`，安全间隔取 `naturalMinimumIntervalMinutes`）；`balanced`（同 natural 但要求节制使用情感动机）。设备/隐私/负荷容量硬门三档均不放宽。 |
+| `naturalWillingnessThreshold` | `0.25` | natural/balanced 模式的意愿阈值。 |
+| `naturalMinimumIntervalMinutes` | `30` | natural/balanced 模式的安全间隔（仅当小于严格间隔时生效）。 |
+| `proactiveDailyCap` | `3` | 每参与者每 24 小时主动联系上限（`0` 不限），全模式生效；按**送达**计数——放行时预记、投递终态失败即作废，被拦截或失败的发送不消耗配额。 |
 
 Agency Window 包含 `activityLoad`、`privacy` 和 `deviceAccess`。自动生活剧本先完成，之后才允许产生由真实生活事件、承诺、实际安排或关系后续支撑的联系候选。候选可以立即联系、稍后重查或放下；稍后重查不会预写未来消息。
 
@@ -462,9 +460,9 @@ Alter 模型由上方 `useForAlter` 选择。`temperature`、`topP`、`maxTokens
 | 键 | 默认 | 说明 |
 |---|---|---|
 | `enabled` | `false` | 总开关（仍需模型中心勾选连接） |
-| `cadenceMinutes` | `45` | 生成检查间隔（分钟），含随机抖动 |
-| `maxPending` | `4` | 同时挂起的未注入事件上限 |
-| `dailyCap` | `4` | 每 24 小时注入上限（高重要性每天至多 1 条） |
+| `cadenceMinutes` | `30` | 生成检查间隔（分钟）；每轮约 10% 概率整轮跳过，多数检查输出空 |
+| `maxPending` | `6` | 同时挂起的未注入事件上限 |
+| `dailyCap` | `8` | 每 24 小时注入上限（高重要性每天至多 1 条） |
 | `maxHorizonHours` | `72` | 事件最远发生时限 |
 | `temperature` | `0.9` | 生成温度 |
 | `maxTokens` | `1000` | 单次输出预算 |
@@ -512,13 +510,26 @@ Alter 模型由上方 `useForAlter` 选择。`temperature`、`topP`、`maxTokens
 
 同步可能改变当前配置；首次使用建议明确选择分区并保持 `applyToCurrentStory=false`。
 
-## 19. blindMode：盲区模式（【维护 19】）
+## 19. weather：运行时天气（【扩展 19】）
+
+从 Open-Meteo（免费、无需 API Key）拉取真实天气，以 `[世界事件]` 剧本条目注入当前温度与天况，默认关闭。注入走世界事件管线：滚动替换（时间线上只保留最新一条天气事件）、内容不变不重复注入。
+
+| 键 | 默认 | 说明 |
+| --- | --- | --- |
+| `enabled` | `false` | 启用运行时天气注入。 |
+| `latitude` | `39.14` | 观测点纬度（手动模式，或自动解析失败时的回退）。 |
+| `longitude` | `117.18` | 观测点经度。 |
+| `autoFromLocation` | `true` | 从故事设定的地点（storySetting.location）自动解析观测点；解析失败回退手动经纬度。 |
+| `skipFantasyWorld` | `false` | 手动开关：架空世界（异世界/精灵/幻想设定）跳过天气注入。 |
+| `cadenceMinutes` | `30` | 拉取间隔（分钟）。注入为纯数据格式（如"环境：22°C 小毛毛雨。"），不带建议句。 |
+
+## 20. blindMode：盲区模式（【维护 20】）
 
 开启 `blindMode.enabled` 后，HDSI 不注册自己的管理指令，并静默拦截当前 Koishi 实例中所有已经识别的指令；普通聊天仍会进入叙事。HDSI 的普通运行日志、错误详情和消息预览都会隐藏，只按 `healthReportMinutes` 输出一次不含故事或账户内容的运行状态心跳；其它插件仍遵循各自的日志配置。
 
 它适合追求高度沉浸感，并且模型、账号白名单和故事档案已经稳定正常的环境。关闭此模式需要在 Console 修改配置并重载插件；失明模式开启期间无法通过聊天指令恢复管理能力。旧 `blackBox` 配置仍可兼容读取，但 Console 只显示 `blindMode`。
 
-## 20. logging：日志（【维护 20】）
+## 21. logging：日志（【维护 21】）
 
 | 字段 | 说明 |
 | --- | --- |
@@ -563,7 +574,7 @@ Alter 模型由上方 `useForAlter` 选择。`temperature`、`topP`、`maxTokens
 
 ## 推荐验证顺序
 
-1. `npm run typecheck`、`npm test` 和 `npm run build`。
+1. 插件目录 `npm run typecheck` 与 `npm test`；构建须在**工作区根目录**执行 `npx yakumo build`（插件包无独立 build 脚本）。
 2. 使用 `interlude.doctor` 和 `interlude.story.start` 验证插件加载、数据库和命令；不要把 `fallback` 当作当前完整运行模式。
 3. 配置主模型，只测试一个白名单私聊。
 4. 测试连续消息、延迟回复取消和 `<sep/>` 分段。

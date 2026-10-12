@@ -62,9 +62,8 @@
 | summary | text | 事件正文（不含前缀；中文，一句具体事实） |
 | importance | 'low' \| 'medium' \| 'high' | |
 | occursAt | timestamp | 模型给定的发生时间 |
-| expiresAt | timestamp? | 过期未注入即作废 |
-| status | 'scheduled' \| 'injected' \| 'expired' \| 'dropped' | dropped 保留审计痕迹 |
-| wakeEligible | boolean | M3：可唤起推进回合 |
+| expiresAt | timestamp? | 过期未注入即作废；宿主兜底：有效窗至少为 occursAt 后 2 小时（模型给的更短过期会被抬高） |
+| status | 'scheduled' \| 'injecting' \| 'injected' \| 'expired' | injecting 为 claim-then-append 的注入中态；dropped 从未写入（拒绝发生在入库前） |
 | subjects | json | 涉及的 NPC 名单（审计与拉黑校验） |
 | sourcePayload | json | rationale、生成时上下文指纹 |
 | injectedEntryId | unsigned? | 回链剧本条目 |
@@ -83,8 +82,8 @@
 
 ### 触发
 
-- 每故事低频定时器 `cadenceMinutes`（默认 45，随机抖动 ±30% 避免节律感）。
-- 每次 advance 提交后的 piggyback 检查（距上次生成超过阈值半数时）。
+- 每故事低频定时器 `cadenceMinutes`（默认 30；每轮约 10% 概率整轮跳过以避免节律感）。
+- （原设计的 advance 提交后 piggyback 检查未实现，调度仅由定时器驱动。）
 - **大多数运行输出空**——稀疏才是真实感，这是提示词明确教的。
 
 ### 输入上下文（全部摘要级，不给原始剧本）
@@ -108,11 +107,11 @@
 ### 宿主校验闸（入库前；宁可错杀，不重试）
 
 1. `occursAt ∈ (now, now + maxHorizonHours]`。
-2. Preplan 冲突：事件命名的地点/活动与 occursAt 所在 preplan 块关键词冲突 → 弃。
+2. Preplan 冲突：仅提示词层建议避开日程；宿主校验闸不做 preplan 关键词比对。
 3. 参与者拉黑：subjects 或 summary 命中参与者名字/ID → 弃（见 §9 第 1 条）。
-4. 去重：与近 14 天已注入事件 summary 词面重叠（bigram Jaccard > 0.6）→ 弃。
+4. 去重（四维任一命中即弃）：① summary bigram Jaccard > 0.6；② subjects 与既有事件重叠；③ 摘要正文包含既有事件的主题词；④ occursAt 与既有事件相差 < 6 小时且关键词重叠 ≥ 2。
 5. 频控：pending ≥ `maxPending` 或当日 ≥ `dailyCap` → 全部弃。
-6. high 事件 occursAt 落在故事时区深夜（0:00–6:00）→ 弃，除非 preplan 表明清醒。
+6. high 事件 occursAt 落在故事时区深夜（0:00–6:00）→ 弃（无豁免分支）。
 
 校验失败的丢弃并记日志，不重试——生成是廉价的。
 
@@ -160,9 +159,9 @@ OUTPUT: one JSON object {"events":[]} with 0–2 events. Do not wrap in
 Markdown fences.
 ```
 
-## 8. 事件驱动的推进回合（已实现）
+## 8. 事件驱动的推进回合（未实现）
 
-`wakeEligible` 事件到点且无在途回合时，宿主直接调度一次 advance——没有任何用户输入，她的生活也继续了，因为世界发生了事。复用现有 advance 调度与节流；与 Urge 的加速互不抢占（先到先得，同 tick 只触发一次）。
+原设计：`wakeEligible` 事件到点且无在途回合时直接调度一次 advance。当前实现没有该字段与专用唤起：事件入库后按 `occursAt` 排水，由既有的 due sweep / 下一次自然推进携带进剧本。
 
 ## 9. 安全栏
 
@@ -170,7 +169,7 @@ Markdown fences.
 2. **绝不生成任何平台的来信/通知形态**——"某人给你发了消息"仍是永不虚构教条的领地；电话、当面、纸条等线下通道合法，且以事实而非消息内容的形式表述。
 3. **频控**：默认每天 2–4 条（低中为主）、pending 上限、同主题窗口期去重。
 4. **Kill switch**：全局 + per-story 开关；关闭后 seeder 定时器拆除，SilentNarrator 式 stub 保证零成本。
-5. **审计**：每次生成（含空输出）、每次校验拒绝都有 standard 级日志；管理员命令 `interlude.seeded` 查询/清除 pending 事件。
+5. **审计**：排期与注入为 standard 级日志；空输出与校验拒绝为 diagnostic 级。`interlude.seeded` 命令未实现，清除走故事重置/清库路径。
 
 ## 10. 配置面（Console schema 草案）
 
@@ -195,16 +194,16 @@ worldSeeder: {
 | `src/service.ts` | drainDueSeededEvents（private，serial 内） | 到点排水、启动定时器、advance piggyback、频控状态 |
 | `src/database.ts` | 表定义与迁移 | `interlude_seeded_event` |
 | `src/narrator.ts` / `src/specialization.ts` | 指令块 | WORLD EVENTS / LITE_WORLD_EVENTS |
-| `src/index.ts` | Console schema | worldSeeder 配置 + `interlude.seeded` 命令 |
+| `src/index.ts` | Console schema | worldSeeder 配置 |
 | 复用件 | — | `scheduleDueIntentWake`、useForCompaction 提供商池、health 侧任务统计、failover |
 
 测试计划：校验闸单测（六条各一例）、排水与状态机单测（due/补排/过期）、注入条目经 `validateScriptCommit` 无冲突、拉黑与去重命中、LITE/full 提示词块渲染；生成侧用 mock narrator（Silent 模式）测空输出与 schema 解析。
 
 ## 12. 分期落地
 
-- **M1（注入侧，无模型调用）**：表 + 排水 + 条目注入 + 提示词块 + 配置 + `interlude.seeded` 手动注入命令。验证注入半边管线与主模型反应。
+- **M1（注入侧，无模型调用）**：表 + 排水 + 条目注入 + 提示词块 + 配置。验证注入半边管线与主模型反应。（`interlude.seeded` 手动命令未随 M1 落地。）
 - **M2（生成侧）**：seeder 模型回路（提示词、schema、校验闸、频控、健康统计），stub 与 failover 复用现有件。
-- **已实现**：wakeEligible 事件唤起推进、user-message 回合高重要性浮现、语义去重。
+- **已实现**：user-message 回合高重要性浮现、四维语义去重。（wakeEligible 唤起推进未实现，见 §8。）
 - **尚未实现**：桌面时间线专用世界事件状态徽标；重要事件自动落 fact 仍不应视为 seeder 的默认自动行为。
 
 ## 13. 开放决策点
@@ -228,5 +227,5 @@ worldSeeder: {
 - **反馈环切断**：`buildWorldSeederPayload` 的生活摘录排除 `kind === 'world-event'` 的条目——播种器的灵感来源是她本人的生活；自己的产出只出现在 `recentlySeededEvents` 清单（模型自身记忆）。
 - **切面轮换**：`WORLD_SEED_DOMAINS` 六个**通用切面**（天象与环境/居所与近邻/生计与日常事务/亲近之人/途中与陌生人/小意外与际遇）——切面是任意居住世界都成立的"世界的一个方面"，不是现代地球专属题材；具体面貌由各剧本自己的 worldSetting 渲染（宿舍楼或商队旅店、集市或公会），提示词明令"不得把现实世界特有建制硬塞进没有它的世界"，异世界/古代/近未来世界观同等适用。`seedDomainForRun(storyId, now, cadence)` 按 (剧本哈希 + 时间槽) 确定性轮换——相邻两轮必然不同切面、一个周期覆盖全部、跨剧本相位错开，零新增持久状态。
 - **记忆完整性**：去重视野（提示词清单 + 校验闸）并入排期中（scheduled）事件——此前只看已注入，事件到点前连跑数轮时模型拿到的是空清单。
-- **单轮至多一事件**（原 2）：同批次互为换皮对失去存在条件。
+- **单轮至多一事件**（原 2；提示词层要求至多 1，解析上限仍为 2 作防御）：同批次互为换皮对失去存在条件。
 - Jaccard 0.6 安全网保持原样——架构修复后它只处理真正的近重复。

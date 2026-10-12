@@ -109,7 +109,7 @@ Perspective 是独立于 Canon 的外壳人格层，基础文本与 overlay 分�
 
 Schedule Preplan 使用独立的单行表，避免频繁故事状态写入覆盖日程。它与场景压缩共用模型；没有新证据且覆盖充足时由程序直接完成每日检查。
 
-实时 recentScript 使用“条目下限 + 时间窗口”并集。默认至少读取 35 条，同时保留最近 45 分钟内的真实收发消息；较长 narrator prose 仍受字符预算约束。Fact 检索为最近 resolved event 与 unresolved promise 分别保留固定通道，防止开放事项把刚完成的重要事件挤出上下文。
+实时 recentScript 使用“条目数 + 时间窗口”并集。默认读取 35 条（可配置），同时保留最近 45 分钟内的真实收发消息；较长 narrator prose 仍受字符预算约束。Fact 检索为最近 resolved event 与 unresolved promise 分别保留固定通道，防止开放事项把刚完成的重要事件挤出上下文。
 
 
 ## 投递与调度边界（2026-10-10 工作区更新）

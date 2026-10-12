@@ -11,7 +11,7 @@
   <a href="LICENSE"><img src="docs/assets/readme/license.png" alt="许可证 AGPL-3.0" width="170" height="30"></a>
 </p>
 
-**[快速开始](BEGINNER_GUIDE.md) · [一条龙向导](新人上手一条龙配置服务v1.0.1-rc50.html) · [下载发行版](https://gitee.com/MomoiCore/HDS-Interlude/releases) · [更新记录](docs/CHANGELOG.md)**
+**[快速开始](BEGINNER_GUIDE.md) · [一条龙向导](新人上手一条龙配置服务v1.0.1-rc51.html) · [下载发行版](https://gitee.com/MomoiCore/HDS-Interlude/releases) · [更新记录](docs/CHANGELOG.md)**
 
 交流群：421430402，群主24小时解答，欢迎来玩！
 
@@ -286,7 +286,7 @@ OneBot 模式采用显式白名单：启用后，绑定的机器人 QQ 账号和
 
 群聊与私聊分开配置。群聊需要单独列入群白名单并填写群用途、主角在群中的身份和发言模式；符合白名单和调度条件的群聊消息直接进入主叙事模型，不再额外调用快速判断模型。群聊请求开始后，后续群消息会进入下一批，不会作废已经生成的群回复；私聊仍保留首条消息提交前的新消息替代写作机制。
 
-对 `responseMode=always` 的活跃群，可按群开启纯算法 `willingness`：本地意愿分数会随消息、关键词和引用累积，按半衰期衰减，并在超过阈值后以概率决定是否值得调用主模型。@ 机器人始终可以立即通过，主角成功发言后会消耗意愿。这个层只减少不必要的群聊主模型调用，不参与私聊、Alter 或 Agency。
+对 `responseMode=always` 的活跃群，可按群开启纯算法 `willingness`：本地意愿分数会随消息、关键词和引用累积，按半衰期衰减，并在超过阈值后以概率决定是否值得调用主模型。@ 机器人可以立即通过（主角睡眠态除外：此时 @ 直通关闭且意愿按 20% 计），主角成功发言后会消耗意愿。这个层只减少不必要的群聊主模型调用，不参与私聊、Alter 或 Agency。
 
 ## 图片与网页观察
 
@@ -294,15 +294,11 @@ OneBot 模式采用显式白名单：启用后，绑定的机器人 QQ 账号和
 
 开启 `vision.enabled` 后，可在 `vision.mode` 选择两种方式。`native` 适合支持图片输入的主叙事模型：图片作为 `image_url` 内容块和当前用户文本一起发送。`sidecar` 适合纯文本主模型：选择一条勾选 `useForVision` 的视觉连接，插件先生成当前图片的事实观察，再把该观察与用户文字交给主叙事。支持 OneBot CQ 图片码、URL、`file`、`cache_url` 与机器人 `get_image` 路径，兼容电脑端 JPG 和常见手机端图片来源。
 
-动态 GIF、动态 WebP 与 APNG 可在 Puppeteer 可用时抽取代表帧后发送；安全读取条件不足时会跳过该图片。图片二进制与 sidecar 观察都保持在剧本、记忆与数据库之外；侧端识图失败时，插件继续处理当前文字而不猜测图片内容。
-
-### QQ 语音转写（SnowLuma）
-
-开启 `onebot.voiceTranscription.enabled` 后，SnowLuma 的私聊 `record` 语音会先通过 `fetch_ptt_text` 转为文字，再与同一条消息中的文字、图片合并为一个用户事件。转写失败、语音未进入 SnowLuma 缓存或当前 OneBot 实现不支持该动作时，插件仍会记录“收到未转写语音”的事实并继续处理；音频二进制与转写请求不会写入 HDSI 数据库。
+动态 GIF、动态 WebP 与 APNG 可在 Puppeteer 可用时抽取代表帧后发送；安全读取条件不足时会跳过该图片。图片二进制与 sidecar 观察都保持在剧本、记忆与数据库之外；侧端识图失败时，插件继续处理当前文字而不猜测图片内容。QQ CDN 的过期图片链接会被进程内缓存并跳过重复回源，群上下文中保留 `[图片]` 文本占位。
 
 ### 原生音频理解
 
-`model.audio.enabled` 是另一条路径：它不做文字转写，而是让 SnowLuma 将 QQ SILK 语音转码后作为原生音频输入交给支持音频的主模型（例如 Gemini）。可通过 `model.audio.outFormat`、`maxFileSizeMB` 和 `maxPerMessage` 限制转码格式、单文件大小和单条消息附件数。模型不支持音频、转码失败或超过限制时，插件保留“收到语音/音频”的事实并继续处理其它内容。两条路径可按模型能力二选一，原生音频理解不会自动回退为文字转写。
+`model.audio.enabled` 是当前的语音路径：它不做文字转写，而是让 SnowLuma 将 QQ SILK 语音转码后作为原生音频输入交给支持音频的主模型（例如 Gemini）。可通过 `model.audio.outFormat`、`maxFileSizeMB` 和 `maxPerMessage` 限制转码格式、单文件大小和单条消息附件数。模型不支持音频、转码失败或超过限制时，插件保留“收到语音/音频”的事实并继续处理其它内容；未开启原生音频时，语音在上下文中以 `[语音]` 占位记录。
 
 ### 网页观察
 

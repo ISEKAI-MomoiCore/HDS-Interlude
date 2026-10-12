@@ -168,7 +168,6 @@ sharedStory.participantContextLimit: 6
 ```yaml
 runtime.captureDirectMessages: true
 runtime.autoCreate: true
-onebot.voiceTranscription.enabled: false # 使用 SnowLuma 私聊语音转写时改为 true
 runtime.ignoreCommandMessages: true
 runtime.userMessageDebounceSeconds: 2
 runtime.forwardMessage.enabled: true # 读取 QQ 合并转发正文；需要时可关闭

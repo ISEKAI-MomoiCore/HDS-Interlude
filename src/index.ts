@@ -545,9 +545,9 @@ export const Config: Schema<InterludeConfig> = Schema.object({
   browser: Browser.description('【扩展 14】网页观察：Puppeteer 只读浏览与安全边界。'),
   worldSeeder: Schema.object({
     enabled: Schema.boolean().default(false).description('启用世界事件播种器：后台低频生成与她有关的外部事件（线下通道、NPC），到点以 [世界事件] 条目进入剧本。模型在【必填 2】模型中心的连接上勾选“用于世界播种”选择；未勾选任何连接时本开关无效。'),
-    cadenceMinutes: Schema.natural().min(5).max(1_440).default(45).description('生成检查间隔（分钟）；含随机抖动，多数检查输出空。'),
-    maxPending: Schema.natural().min(1).max(20).default(4).description('同时挂起的未注入事件上限。'),
-    dailyCap: Schema.natural().min(1).max(20).default(4).description('每 24 小时注入上限（推荐 1~4；高重要性每天至多 1 条）。'),
+    cadenceMinutes: Schema.natural().min(5).max(1_440).default(30).description('生成检查间隔（分钟）；偶发跳过整轮检查，多数检查输出空。'),
+    maxPending: Schema.natural().min(1).max(20).default(6).description('同时挂起的未注入事件上限。'),
+    dailyCap: Schema.natural().min(1).max(20).default(8).description('每 24 小时注入上限（高重要性每天至多 1 条）。'),
     maxHorizonHours: Schema.natural().min(1).max(336).default(72).description('事件最远发生时限（小时）。'),
     temperature: Schema.number().min(0).max(2).default(0.9).description('生成温度。'),
     maxTokens: Schema.natural().min(256).max(8_192).default(1_000).description('单次输出预算（tokens）。'),

@@ -646,7 +646,7 @@ export declare class InterludeService extends Service {
         }[];
         facts: {
             id: number;
-            scope: "promise" | "character" | "world" | "relationship" | "event";
+            scope: "character" | "world" | "relationship" | "event" | "promise";
             content: string;
             importance: number;
             confidence: number;
@@ -742,7 +742,7 @@ export declare class InterludeService extends Service {
         }[];
         facts: {
             id: number;
-            scope: "promise" | "character" | "world" | "relationship" | "event";
+            scope: "character" | "world" | "relationship" | "event" | "promise";
             content: string;
             importance: number;
             confidence: number;
@@ -760,7 +760,7 @@ export declare class InterludeService extends Service {
             value: number;
             alterWeight: number;
             emotionalOffset: {
-                direction: "relaxed" | "serious";
+                direction: "serious" | "relaxed";
                 intensity: number;
                 description: string;
             };

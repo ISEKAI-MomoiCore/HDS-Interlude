@@ -2,7 +2,7 @@
 
 适用版本：`1.0.1-rc51`
 
-当前文档已同步至 2026-10-11 的 rc50，累计变更以 rc48 为基线。发布流程现已执行源码构建，rc50 由本次生成的 `lib/` 与 `release/koishi-plugin-hds-interlude-1.0.1-rc51.tgz` 交付；旧 rc48 安装包不会自动获得这些修改，运行实例须安装并重载后才生效。验收与边界见 [发布验证报告](docs/development/RELEASE_VERIFICATION_2026-10-11_RC50.md)。
+当前文档已同步至 2026-10-13 的 rc51，累计变更以 rc50 发布包为基线。发布流程已执行源码构建，rc51 由本次生成的 `lib/` 与 `release/koishi-plugin-hds-interlude-1.0.1-rc51.tgz` 交付；旧安装包不会自动获得这些修改，运行实例须安装并重载后才生效。
 
 > 写给第一次把 HDSI 接到 QQ 上、并希望角色能长期生活下去的人。
 
@@ -223,7 +223,7 @@ C:\Users\你的用户名\AppData\Roaming\Koishi\Desktop\data\instances\default\d
 
 ### 分段回复重复、补写不停或重启后 pending
 
-此轮工作区修复让同一参与者的后台补写等待 pending 气泡，全局推进等待任意链；承诺回访有硬截止及五次未结算顺延上限。源剧本 pending 消息可经启动、端点上线或周期扫描补偿，有 split-message 时仍由原打字队列负责。这些修复已纳入本次构建的 rc50；旧 rc48 包不会自动变化，安装 rc50 并重载后生效。
+此轮工作区修复让同一参与者的后台补写等待 pending 气泡，全局推进等待任意链；承诺回访有硬截止及五次未结算顺延上限。源剧本 pending 消息可经启动、端点上线或周期扫描补偿，有 split-message 时仍由原打字队列负责。这些修复已纳入本次构建的 rc51；旧包不会自动变化，安装 rc51 并重载后生效。
 
 排查时临时开启 diagnostic/debug，核对 commitId、eventId、scriptEntryId、分段 index、意图状态与账本；不同 commit 的相同文本属于跨回合重复生成，不等同同一 segment 重投。不要把 done/completed 调度任务或剧本中的“发了消息”当作平台回执。分段等待、承诺退役和待投递补偿扫描均有独立诊断。平台已接受但回执丢失仍不能承诺零重复。
 
