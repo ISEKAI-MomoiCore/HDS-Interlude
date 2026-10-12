@@ -1,6 +1,6 @@
 # 群聊发言意愿档位（Willingness Tiers）与 auto 档
 
-适用版本：`1.0.1-rc23` 起；当前实现基线为 `1.0.1-rc50`。本文记录设计来源，当前配置入口和行为以 `CONFIGURATION_GUIDE.md` 与源码为准。
+适用版本：`1.0.1-rc23` 起；当前实现基线为 `1.0.1-rc51`。本文记录设计来源，当前配置入口和行为以 `CONFIGURATION_GUIDE.md` 与源码为准。
 
 ## 定位
 
@@ -32,7 +32,7 @@ willingnessAuto:   { busy: quiet(默认), idle: active(默认), asleep: quiet(�
 ```
 
 - **off**：仅响应模式（mention-only/always）与冷却生效，与旧默认一致。
-- **auto**：按 `StoryState.lifeStatus` 切档——`busy→配置档`、`idle→配置档`、`asleep→配置档`；状态缺失或超过 6 小时未刷新时回退 `normal`。
+- **auto**：按 `StoryState.lifeStatus` 切档——`busy→配置档`、`idle→配置档`、`asleep→配置档`；状态缺失、无效或超过 6 小时未刷新时按 **idle** 映射回退（默认 `active`；用户配置 `idle: eager` 时使用 `eager`），不写回生活状态。
 - **custom**：沿用旧数值对象。
 - **存量兼容**：preset 未设置（或为 off）但旧数值门 `enabled=true` 时，自动按 `custom` 处理，存量行为字节级不变。要真正关掉旧门，把旧对象 `enabled` 设为 false 或把档位切到其他值。
 
@@ -55,11 +55,13 @@ willingnessAuto:   { busy: quiet(默认), idle: active(默认), asleep: quiet(�
 ## 日志
 
 - 未触发：`群聊意愿未触发模型调用 群=%s 分数=%s 概率=%s 原因=%s 档位=%s`
-- 触发：`群聊消息准备进入主叙事 群=%s 模式=%s 意愿=%s 档位=%s`；auto 档显示 `auto(idle→active)` / `auto(过期→normal)` 形态。
+- 触发：`群聊消息准备进入主叙事 群=%s 模式=%s 意愿=%s 档位=%s`；auto 档显示 `auto(idle→active)` / `auto(无状态→idle→active)` / `auto(过期→idle→active)` 形态。
 - 状态更新：`生活状态已更新 状态=%s`（diagnostic 级）。
 
 ## 验证
 
-- `test/group-willingness-tiers.test.ts` 8 用例：五档校准区间、off、存量 custom 兼容、auto 三态映射与自定义、asleep @ 阻断与 ×0.2、过期回退、归一函数、档位单调性。
-- 双仓全绿（主仓 394 通过 / cev 385 通过），typecheck 零错误。
-- 未打包部署（按计划）；桌面 MIXER 面板如需暴露 preset 下拉，随下一版本处理。
+- `test/group-willingness-tiers.test.ts`：五档校准区间、off、存量 custom 兼容、auto 三态映射与自定义、asleep @ 阻断与 ×0.2、缺失/无效/过期按 idle 映射回退、过期边界、回退扣减一致性、诊断日志、归一函数、档位单调性。
+- `test/group-assignee.test.ts`：Console 字段兼容性、真实 SQLite 受理人变更与新群创建、真实 Koishi attach 门控对两名普通群成员放行、保留频道/用户忽略标记、白名单与失败隔离。
+- 历史实现验证：主仓 394 通过 / cev 385 通过，typecheck 零错误。该计数为初次实现记录，不代表当前回归规模。
+- 2026-10-11 受理人与 idle 回退修正：主仓全量 826 项，822 通过、4 跳过、0 失败；严格 typecheck 与 Yarn 4 Yakumo 构建通过。详见 `development/GROUP_ASSIGNEE_IDLE_FALLBACK_2026-10-11.md`。
+- 本次未打包部署；桌面 MIXER 面板如需暴露 preset 下拉，随下一版本处理。

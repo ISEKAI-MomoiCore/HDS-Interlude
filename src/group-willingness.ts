@@ -127,7 +127,7 @@ export const DEFAULT_AUTO_WILLINGNESS: AutoWillingnessConfig = { busy: 'quiet', 
 /** 睡眠态安全余量：概率乘数（对压缩器状态过期/误判的兜底）。 */
 export const ASLEEP_PROBABILITY_MULTIPLIER = 0.2
 
-/** lifeStatus 超过该时长未刷新时，auto 档回退 normal。 */
+/** lifeStatus 超过该时长未刷新时，auto 档按 idle 映射回退。 */
 export const LIFE_STATUS_STALE_MS = 6 * 60 * 60 * 1_000
 
 export function normalizeLifeStatusDraft(value: unknown): LifeStatusValue | undefined {
@@ -150,10 +150,11 @@ export function resolveAutoWillingness(value: unknown): AutoWillingnessConfig {
 export interface WillingnessGateDiagnosis {
   preset: WillingnessPreset
   tier?: WillingnessTier
-  /** auto 档命中的生活状态；缺失或过期回退 normal 时无。 */
+  /** auto 档有效生活状态；回退时为 idle，不写回剧本状态。 */
   lifeStatus?: LifeStatusValue
-  /** lifeStatus 存在但已过期或无效（已回退 normal）。 */
+  /** lifeStatus 存在但已过期或无效。 */
   stale?: boolean
+  fallback?: 'missing' | 'invalid' | 'stale'
   asleep: boolean
 }
 
@@ -188,7 +189,9 @@ function resolveWillingnessLayers(
     const status = lifeStatus ? normalizeLifeStatusDraft(lifeStatus.status) : undefined
     const updatedAt = lifeStatus ? Date.parse(lifeStatus.updatedAt) : Number.NaN
     if (!status || !Number.isFinite(updatedAt) || now - updatedAt > LIFE_STATUS_STALE_MS) {
-      tier = 'normal'
+      tier = resolveAutoWillingness(autoInput).idle
+      diagnosis.lifeStatus = 'idle'
+      diagnosis.fallback = !lifeStatus ? 'missing' : !status || !Number.isFinite(updatedAt) ? 'invalid' : 'stale'
       if (lifeStatus) diagnosis.stale = true
     } else {
       tier = resolveAutoWillingness(autoInput)[status]
@@ -200,6 +203,15 @@ function resolveWillingnessLayers(
   }
   diagnosis.tier = tier
   return { preset: resolved, config: { ...WILLINGNESS_TIERS[tier], keywords: legacyInput?.keywords ?? [] }, diagnosis }
+}
+
+/** Both successful calls and skipped turns use the same fallback explanation. */
+export function formatWillingnessGateDiagnosis(diagnosis: WillingnessGateDiagnosis): string {
+  if (diagnosis.preset !== 'auto') return diagnosis.tier ?? diagnosis.preset
+  const fallback = diagnosis.fallback === 'missing' ? '无状态→'
+    : diagnosis.fallback === 'invalid' ? '无效→'
+      : diagnosis.fallback === 'stale' ? '过期→' : ''
+  return `auto(${fallback}${diagnosis.lifeStatus ?? 'idle'}→${diagnosis.tier}${diagnosis.asleep ? '×0.2' : ''})`
 }
 
 export interface WillingnessGateDecision extends GroupWillingnessDecision {

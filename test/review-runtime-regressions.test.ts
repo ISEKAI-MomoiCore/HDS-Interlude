@@ -18,6 +18,8 @@ function runtimeHost(extra: Record<string, any> = {}) {
     queues: new Map(), serialScope: new AsyncLocalStorage(), runtimeGeneration: 0,
     storyTaskGenerations: new Map(), databaseResetting: false, desktopRuntimePhase: 'running',
     report: () => {}, reportOperation: () => {}, reportStandaloneOperation: () => {},
+    interruptedTypingParticipants: new Set<string>(),
+    expiredImageSources: new Map(), disposed: false,
   }, extra)
 }
 
@@ -203,6 +205,41 @@ test('P01 valid tail images after many failed sources remain reachable without a
   assert.equal(calls, 10); assert.equal(peak, 3); assert.equal(active, 0)
 })
 
+test('expired QQ CDN sources are skipped without network or warn spam', async () => {
+  const calls: string[] = []
+  const host = runtimeHost({
+    config: { model: { vision: { enabled: true } } },
+    expiredImageSources: new Map([['https://local.invalid/dead', true]]),
+    fetchNativeImage: async (url: string) => { calls.push(url); return { dataUrl: 'data:image/png;base64,a' } },
+  })
+  const refs = [
+    { source: 'https://local.invalid/dead', sourceEntryId: 1, occurredAt: new Date(), senderId: 'alice' },
+    { source: 'https://local.invalid/alive', sourceEntryId: 2, occurredAt: new Date(), senderId: 'alice' },
+  ]
+  const images = await host.loadHistoricalGroupImages({ id: 's' }, refs, 6)
+  assert.deepEqual(calls, ['https://local.invalid/alive'])
+  assert.deepEqual(images.map((image: any) => image.sourceEntryId), [2])
+})
+
+test('disposed-context errors abort narrative retries without provider cooldown or scheduled retry', async () => {
+  const host = runtimeHost({
+    disposed: true,
+    config: { runtime: { narrativeRetryDelaySeconds: 60, narrativeRetryMaxAttempts: 6 } },
+    reportStandalone: () => { throw Error('must not log after dispose') },
+    dbGet: async () => { throw Error('db must not be touched after dispose') },
+  })
+  const scheduled = await host.scheduleNarrativeRetry('s', 'p', new Date())
+  assert.equal(scheduled, false)
+})
+
+test('isContextDisposedError matches both cordis shutdown signatures', async () => {
+  const { isContextDisposedError } = await import('../src/narrator')
+  assert.equal(isContextDisposedError(new Error('context disposed')), true)
+  assert.equal(isContextDisposedError(new Error('cannot create effect on inactive context')), true)
+  assert.equal(isContextDisposedError(new Error('HTTP 503 Service Unavailable')), false)
+  assert.equal(isContextDisposedError(undefined), false)
+})
+
 test('P02 recovery pages only scripts, scans old candidates and loads split owners once', async () => {
   const scripts = Array.from({ length: 600 }, (_, i) => ({ id: i + 1, storyId: 's', kind: 'script' }))
   const queries: any[] = [], attempts: number[] = []
@@ -214,7 +251,7 @@ test('P02 recovery pages only scripts, scans old candidates and loads split owne
       assert.equal(q.kind, 'script'); assert.equal(options.limit, 256)
       return scripts.filter(row => row.id > q.id.$gt).slice(0, options.limit)
     },
-    pendingOutgoingDeliveryCandidates: (row: any) => [1, 599].includes(row.id) ? [{ scriptEntryId: row.id }] : [],
+    pendingOutgoingDeliveryCandidates: (row: any) => [1, 599].includes(row.id) ? [{ scriptEntryId: row.id, commitId: 'c', eventId: 'e', segmentIndex: 0, event: { occurredAt: new Date() } }] : [],
     recoverPendingDeliveryCandidate: async (_s: any, candidate: any) => { attempts.push(candidate.scriptEntryId); return 'delivered' },
   })
   await host.recoverPendingDeliveries(true, 's')

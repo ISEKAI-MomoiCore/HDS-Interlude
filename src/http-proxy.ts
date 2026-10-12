@@ -1,7 +1,10 @@
 /** Keep a provider's proxy alive until the streaming body has been consumed. */
 export async function withProviderStream<T>(proxyAgent: string | undefined, task: (request: typeof fetch) => Promise<T>): Promise<T> {
   if (!proxyAgent) return task(fetch)
-  const undici: typeof import('undici') = require('undici')
+  let undici: typeof import('undici')
+  try { undici = require('undici') } catch {
+    throw new Error('proxyAgent 已配置但未安装 undici——请在 Koishi 工作区执行 corepack yarn add undici 后重启。')
+  }
   const agent = new undici.ProxyAgent(proxyAgent)
   try {
     return await task(((url: any, init: any) => undici.fetch(url, { ...init, dispatcher: agent })) as typeof fetch)

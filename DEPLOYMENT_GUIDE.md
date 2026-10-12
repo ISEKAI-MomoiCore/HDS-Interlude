@@ -1,8 +1,8 @@
 # HDS Interlude 部署教程
 
-适用版本：`1.0.1-rc50`
+适用版本：`1.0.1-rc51`
 
-当前文档已同步至 2026-10-11 的 rc50，累计变更以 rc48 为基线。发布流程现已执行源码构建，rc50 由本次生成的 `lib/` 与 `release/koishi-plugin-hds-interlude-1.0.1-rc50.tgz` 交付；旧 rc48 安装包不会自动获得这些修改，运行实例须安装并重载后才生效。验收与边界见 [发布验证报告](docs/development/RELEASE_VERIFICATION_2026-10-11_RC50.md)。
+当前文档已同步至 2026-10-11 的 rc50，累计变更以 rc48 为基线。发布流程现已执行源码构建，rc50 由本次生成的 `lib/` 与 `release/koishi-plugin-hds-interlude-1.0.1-rc51.tgz` 交付；旧 rc48 安装包不会自动获得这些修改，运行实例须安装并重载后才生效。验收与边界见 [发布验证报告](docs/development/RELEASE_VERIFICATION_2026-10-11_RC50.md)。
 
 > 写给第一次把 HDSI 接到 QQ 上、并希望角色能长期生活下去的人。
 
@@ -49,7 +49,7 @@ Koishi 第一次启动会准备运行环境，耐心等待即可。
 
 ```powershell
 cd C:\Users\你的用户名\AppData\Roaming\Koishi\Desktop\data\instances\default
-node .yarn/releases/yarn-4.5.3.cjs add "koishi-plugin-hds-interlude@file:C:/路径/koishi-plugin-hds-interlude-1.0.1-rc50.tgz" --exact
+node .yarn/releases/yarn-4.5.3.cjs add "koishi-plugin-hds-interlude@file:C:/路径/koishi-plugin-hds-interlude-1.0.1-rc51.tgz" --exact
 ```
 
 安装完成后回到 Koishi Console，添加或启用 `hds-interlude`。

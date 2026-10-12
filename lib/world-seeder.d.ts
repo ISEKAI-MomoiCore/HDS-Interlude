@@ -55,6 +55,10 @@ export interface SeedValidationInput {
     maxHorizonHours: number;
     blockedNames: string[];
     recentSummaries: string[];
+    /** 已排期/已注入事件的 subjects 列表——用于 NPC/道具级去重(bigram 抓不到换皮) */
+    recentSubjects?: string[][];
+    /** 已排期/已注入事件的 occursAt——时间窗重叠也判重复 */
+    recentOccursAt?: Date[];
 }
 export declare function summaryJaccard(left: string, right: string): number;
 export type SeedRejection = 'invalid-shape' | 'empty-summary' | 'invalid-importance' | 'invalid-time' | 'blocked-name' | 'night-high' | 'duplicate';

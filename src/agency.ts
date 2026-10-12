@@ -6,7 +6,7 @@ const MINUTE = 60_000
 const HOUR = 60 * MINUTE
 
 export const DEFAULT_AGENCY_CONFIG: AgencyConfig = {
-  enabled: true,
+  enabled: false,
   maxWindowMinutes: 240,
   minimumProactiveIntervalMinutes: 60,
   maxCandidateHours: 24,

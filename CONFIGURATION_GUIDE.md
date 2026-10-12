@@ -1,6 +1,6 @@
 # HDS Interlude 配置指南
 
-适用版本：`1.0.1-rc50`
+适用版本：`1.0.1-rc51`
 
 当前文档已同步至 2026-10-11 的 rc50，累计变更以 rc48 为基线。发布流程现已执行源码构建，rc50 由本次生成的 `lib/` 与 `release/koishi-plugin-hds-interlude-1.0.1-rc50.tgz` 交付；旧 rc48 安装包不会自动获得这些修改，运行实例须安装并重载后才生效。验收与边界见 [发布验证报告](docs/development/RELEASE_VERIFICATION_2026-10-11_RC50.md)。
 
@@ -187,6 +187,7 @@ Embedding 地址留空时，插件会尝试从标准 `/chat/completions` 地址�
 | 字段 | 说明 |
 | --- | --- |
 | `groupId` / `label` / `enabled` | 群号、备注和启用状态。 |
+| `assignee` | 群受理人（机器人 QQ），默认留空不修改。填写后在启动/配置重载时同步到 Koishi 的 `channel.assignee`；须属于已启用的 `botAccounts`。 |
 | `purpose` | 群的用途和背景。 |
 | `characterRole` | 主角在群中的身份和说话位置。 |
 | `responseMode` | `mention-only` 只在被 @ 时进入主叙事；`always` 处理所有消息。 |
@@ -195,9 +196,13 @@ Embedding 地址留空时，插件会尝试从标准 `/chat/completions` 地址�
 | `cooldownSeconds` | 主角群发言后的最短冷却。 |
 | `willingness` | 可选的纯算法群聊意愿：积累、半衰减、阈值概率与成功发言成本。 |
 
+**先确认 Koishi 频道受理人**：受理人不等于当前机器人时，未 @ 的消息会在 Koishi 核心层被拦截，HDSI 无法落库或把它们加入上下文；这与私聊用户白名单无关，群友不需要加入 `userAccounts`。换机器人账号后，可在 Console → HDSI → QQ 接入 → 群聊白名单中，为目标群填写 `assignee` 并保存。这里只修改已启用且明确配置的 OneBot 群，不解除频道/用户忽略标记；留空、停用或删除配置不会撤销已经写入的受理人。一个频道只有一个受理人，多机器人实例不要为同一群配置冲突值。
+
 群聊不再调用独立快速筛选模型。普通消息合并后仍经过意愿与冷却判断，再交给主叙事。rc12 对可提取的音频文件/语音跳过意愿、冷却与仅 @ 门槛，直接进入合并写作队列，携带本批原生音频；仍由主叙事决定是否输出 `groupReply`。群白名单、原生音频开关、数量及大小限制保留；音频读取失败会警告。使用 Messages 协议时，还需要服务商真正支持音频输入；必要时应准备兼容的 Chat Completions 故障转移连接。
 
 对 `responseMode=always` 的活跃群，可使用 `willingnessPreset` 选择 `quiet`、`reserved`、`normal`、`active`、`eager`、`auto` 或 `custom`。`off`（默认）只保留响应模式与冷却；`custom` 才使用下方旧数值对象。意愿门完全在本地运行，不增加模型调用。普通状态下 @ 通常绕过意愿概率；睡眠态例外，@ 不会立即直通，而交给后续主叙事自然处理。群音频仍独立绕过意愿和冷却门槛。关键词与引用机器人消息可增加意愿，主角成功群发言后会扣除意愿。该功能只作用于当前群，不影响私聊、Alter、Agency、自动推进或主提示词。
+
+`willingnessPreset=auto` 时，若 `lifeStatus` 缺失、无效或超过 6 小时未刷新，按 **idle** 生活状态使用 `willingnessAuto.idle`（默认 `active`）；例如配置 `idle: eager` 就回退到 `eager`，不再固定回退 `normal`。这是本地门控回退，不会伪造或写回生活状态。有效的 busy/asleep 状态仍保留原行为；评估调用和成功发言后的意愿扣减使用相同档位。
 
 ### 3.3 voiceTranscription：SnowLuma 私聊语音转写
 
@@ -342,7 +347,7 @@ Agency Window 只描述角色能否采取外部联系行动的现实条件，不
 
 | 字段 | 默认值 | 说明 |
 | --- | --- | --- |
-| `enabled` | `true` | 启用生活来源的联系候选、容量判断和 `proactive-check` 重查。 |
+| `enabled` | `false` | 默认关闭；显式开启后启用生活来源的联系候选、容量判断和 `proactive-check` 重查。已有显式 `true` 配置保持开启。 |
 | `maxWindowMinutes` | `240` | 当前日程/隐私/设备判断最长有效时间，过期后必须重新生成。 |
 | `minimumProactiveIntervalMinutes` | `60` | 同一参与者普通主动联系的安全间隔；承诺型联系可绕过。 |
 | `maxCandidateHours` | `24` | 联系理由最长保留时间，过期后自然放下。 |

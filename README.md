@@ -5,7 +5,7 @@
 > 聊天在幕前发生，生活在幕间继续。
 
 <p>
-  <a href="https://gitee.com/MomoiCore/HDS-Interlude/releases"><img src="docs/assets/readme/version.png" alt="当前版本 1.0.1-rc50" width="176" height="30"></a>
+  <a href="https://gitee.com/MomoiCore/HDS-Interlude/releases"><img src="docs/assets/readme/version.png" alt="当前版本 1.0.1-rc51" width="176" height="30"></a>
   <a href="https://koishi.chat/"><img src="docs/assets/readme/koishi.png" alt="适用于 Koishi 4" width="122" height="30"></a>
   <a href="https://www.typescriptlang.org/"><img src="docs/assets/readme/typescript.png" alt="使用 TypeScript 编写" width="152" height="30"></a>
   <a href="LICENSE"><img src="docs/assets/readme/license.png" alt="许可证 AGPL-3.0" width="170" height="30"></a>
@@ -17,11 +17,11 @@
 
 HDS Interlude 是一个面向 Koishi 一对一与多参与者场景的持续叙事聊天框架。它让用户消息、角色的沉默、延迟回复、主动联系和自动推进，都成为同一段生活剧本中自然可见的部分，并由一次主叙事写作连贯地决定。
 
-当前版本：`1.0.1-rc50`。
+当前版本：`1.0.1-rc51`。
 
-当前文档已同步至 2026-10-11 的 rc50，累计变更以 rc48 为基线。发布流程现已执行源码构建，rc50 由本次生成的 `lib/` 与 `release/koishi-plugin-hds-interlude-1.0.1-rc50.tgz` 交付；旧 rc48 安装包不会自动获得这些修改，运行实例须安装并重载后才生效。验收与边界见 [发布验证报告](docs/development/RELEASE_VERIFICATION_2026-10-11_RC50.md)。
+当前文档已同步至 2026-10-13 的 rc51，累计变更以 rc50 发布包为基线（含 rc50 后工作区未发布修复）。发布流程已执行源码构建，rc51 由本次生成的 `lib/` 与 `release/koishi-plugin-hds-interlude-1.0.1-rc51.tgz` 交付；旧 rc50 安装包不会自动获得这些修改，运行实例须安装并重载后才生效。
 
-rc50 相对 rc48 汇总：端点在线状态与 pending 投递恢复、统一投递确认、分段气泡与到期补写互斥、承诺回访退役、全局事实正文明确人物、后台记忆整理输入与来源修复、兼容端点 DeepSeek thinking 控制，以及调度、模型路由和等价性能优化。详见 [更新记录](docs/CHANGELOG.md) 和 [投递与调度边界](docs/ARCHITECTURE.md#投递与调度边界2026-10-10-工作区更新)。
+rc51 相对 rc50 汇总：端点在线状态启动竞态回查与 sweep 重同步、解析层主动行动丢弃留痕（关闭幻影发送缝隙）、冷却豁免用户回复、Agency 每日上限改为送达计数、历史图片过期链接缓存、停机/重载竞态中止、群受理人配置与 auto 意愿回退等 rc50 后续修复一并交付。详见 [更新记录](docs/CHANGELOG.md) 和 [投递与调度边界](docs/ARCHITECTURE.md#投递与调度边界2026-10-10-工作区更新)。
 
 沿用 rc48 及此前能力：分享码同步会将 `storyDefaults` 同步写入配置模板；清库重建或新故事不会回退到旧人设；`interlude.preset.sync` 可强制重新应用预设；`database clear` 会重置同步状态；群音频可以直接触发携带原生音频的写作；跨会话投递能力继续保留。
 
@@ -29,8 +29,6 @@ rc50 相对 rc48 汇总：端点在线状态与 pending 投递恢复、统一投
 
 ## 文档导航
 
-- 一条龙网页向导（最新版）：[新人上手一条龙配置服务v1.0.1-rc50.html](新人上手一条龙配置服务v1.0.1-rc50.html)
-- 历史一条龙向导：[归档索引](docs/archive/deployment-guides/README.md)
 - 第一次安装和测试：[BEGINNER_GUIDE.md](BEGINNER_GUIDE.md)
 - 从零部署 QQ 角色：[DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md)
 - 逐项配置说明：[CONFIGURATION_GUIDE.md](CONFIGURATION_GUIDE.md)
@@ -202,6 +200,8 @@ interlude.overlay.clear world
 
 ## 主体行动窗口（Agency Window）
 
+Agency 默认关闭（`agency.enabled=false`），需要时可显式开启；已有显式开启的配置不会被覆盖。关闭 Agency 不等同于关闭主动消息，后者仍由 `runtime.allowProactiveMessages` 等既有开关控制。
+
 Agency Window 让主动联系先来自主角自己的生活，再经过现实条件判断。它沉淀当前日程负荷、隐私空间和设备可用性三类行动条件，并与 Alter 的情绪氛围层保持清晰分工。
 
 自动生活回合完成剧本后，主模型可以提出一个由真实剧本、承诺、实际安排或关系后续支撑的联系候选：
@@ -306,29 +306,29 @@ OneBot 模式采用显式白名单：启用后，绑定的机器人 QQ 账号和
 ```bash
 npm install koishi-plugin-hds-interlude@beta
 # 或使用 corepack yarn（Koishi 官方推荐）：
-corepack yarn add "koishi-plugin-hds-interlude@file:./koishi-plugin-hds-interlude-1.0.1-rc50.tgz" --exact
+corepack yarn add "koishi-plugin-hds-interlude@file:./koishi-plugin-hds-interlude-1.0.1-rc51.tgz" --exact
 ```
 
 稳定版发布后可省略 `@beta`。然后在 Koishi Console 添加 `hds-interlude` 插件并完成配置。
 
 ### 本地 tgz 安装
 
-rc50 安装包由本次发布流程生成；安装前请确认实际 tgz 路径，必要时核对同目录的 SHA-256 校验文件。使用本地预发布包时，Koishi Desktop 实例必须使用 Yarn 4 更新 package.json 与 yarn.lock；不要用 npm 安装：
+rc51 安装包由本次发布流程生成；安装前请确认实际 tgz 路径，必要时核对同目录的 SHA-256 校验文件。使用本地预发布包时，Koishi Desktop 实例必须使用 Yarn 4 更新 package.json 与 yarn.lock；不要用 npm 安装：
 
 ```bash
-node .yarn/releases/yarn-4.12.0.cjs add "koishi-plugin-hds-interlude@file:C:/absolute/path/to/koishi-plugin-hds-interlude-1.0.1-rc50.tgz" --exact
+node .yarn/releases/yarn-4.12.0.cjs add "koishi-plugin-hds-interlude@file:C:/absolute/path/to/koishi-plugin-hds-interlude-1.0.1-rc51.tgz" --exact
 ```
 
 Windows 示例：
 
 ```powershell
-node .yarn/releases/yarn-4.12.0.cjs add "koishi-plugin-hds-interlude@file:C:/dev/HDS-Interlude/plugins/hds-interlude/release/koishi-plugin-hds-interlude-1.0.1-rc50.tgz" --exact
+node .yarn/releases/yarn-4.12.0.cjs add "koishi-plugin-hds-interlude@file:C:/dev/HDS-Interlude/plugins/hds-interlude/release/koishi-plugin-hds-interlude-1.0.1-rc51.tgz" --exact
 ```
 
 Koishi Desktop 的实例使用 Yarn 4。请在实例目录执行以下命令，并在完成后重载插件或重启 Desktop：
 
 ```powershell
-node .yarn/releases/yarn-4.12.0.cjs add "koishi-plugin-hds-interlude@file:C:/dev/HDS-Interlude/plugins/hds-interlude/release/koishi-plugin-hds-interlude-1.0.1-rc50.tgz" --exact
+node .yarn/releases/yarn-4.12.0.cjs add "koishi-plugin-hds-interlude@file:C:/dev/HDS-Interlude/plugins/hds-interlude/release/koishi-plugin-hds-interlude-1.0.1-rc51.tgz" --exact
 ```
 
 安装后重新加载 Koishi，再在 Console 启用插件。
@@ -443,3 +443,35 @@ npm test
 构建产物位于 `plugins/hds-interlude/lib`。发布前建议运行构建、测试和 `npm pack --dry-run`，确认包内包含 `lib` 与需要分发的文档。
 
 
+
+## 开发与测试环境
+
+### 独立克隆(本目录)也能跑
+
+本插件 tsconfig.json 已自包含(不再 extends workspace 根的 tsconfig.base.json),测试所需的全部依赖已声明在 devDependencies。
+
+```bash
+# 在插件目录下
+corepack yarn install   # 或 npm install
+npm test                 # node --import tsx --test test/*.test.ts
+npm run typecheck       # tsc -p tsconfig.json --noEmit
+```
+
+### 在 yakumo workspace 中(开发主路径)
+
+```bash
+# workspace 根(含 tsconfig.base.json / koishi 本体 / 其它插件)
+corepack yarn install
+cd plugins/hds-interlude
+npm test
+```
+
+两种方式等价。构建(npm run build / yakumo build)仍需 workspace 环境。
+
+### Windows SQLite 测试注意
+
+test/review-sqlite-regressions.test.ts 和 test/works-sqlite.test.ts 使用 @minatojs/driver-sqlite 的内存模式创建真实 Koishi 实例。Windows 下首次运行可能因 better-sqlite3 原生编译慢而看起来挂起——耐心等待编译完成即可;若超过 2 分钟无输出,尝试 `corepack yarn rebuild better-sqlite3`。
+
+### 跳过外部模型测试
+
+4 个标记为 skip 的测试需要真实模型 API,本地不跑(默认已跳过)。

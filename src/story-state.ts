@@ -234,10 +234,13 @@ export function normalizeProactiveContactLog(value: unknown): NonNullable<StoryS
       && typeof (item as Record<string, unknown>).at === 'string' && !Number.isNaN(Date.parse((item as Record<string, unknown>).at as string)))
     .map(item => ({ participantId: item.participantId, at: item.at,
       ...((item as Record<string, unknown>).endpointId ? { endpointId: String((item as Record<string, unknown>).endpointId) } : {}),
-      ...((item as Record<string, unknown>).channelReason ? { channelReason: String((item as Record<string, unknown>).channelReason).slice(0, 100) } : {}) }))
+      ...((item as Record<string, unknown>).channelReason ? { channelReason: String((item as Record<string, unknown>).channelReason).slice(0, 100) } : {}),
+      ...((item as Record<string, unknown>).ref ? { ref: String((item as Record<string, unknown>).ref).slice(0, 120) } : {}),
+      ...((item as Record<string, unknown>).voided === true ? { voided: true } : {}) }))
     .slice(-20)
 }
 
+/** 作废条目不再计入每日上限：一次被端点/传输拦下的主动联系不该烧掉配额。 */
 export function countProactiveContactsInWindow(
   log: StoryState['proactiveContactLog'] | undefined,
   participantId: string,
@@ -245,6 +248,7 @@ export function countProactiveContactsInWindow(
   windowMs = 86_400_000,
 ): number {
   return (log ?? []).filter(entry => entry.participantId === participantId
+    && !entry.voided
     && now.getTime() - Date.parse(entry.at) < windowMs).length
 }
 
@@ -253,8 +257,9 @@ export function appendProactiveContact(
   participantId: string,
   at: Date,
   endpointId?: string,
+  ref?: string,
 ): NonNullable<StoryState['proactiveContactLog']> {
-  return [...(log ?? []), { participantId, at: at.toISOString(), ...(endpointId ? { endpointId } : {}) }].slice(-20)
+  return [...(log ?? []), { participantId, at: at.toISOString(), ...(endpointId ? { endpointId } : {}), ...(ref ? { ref } : {}) }].slice(-20)
 }
 
 export function normalizeLifeStatus(value: unknown): StoryState['lifeStatus'] {

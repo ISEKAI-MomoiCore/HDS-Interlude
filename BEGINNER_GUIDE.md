@@ -1,8 +1,8 @@
 # HDS Interlude 新手引导
 
-适用版本：`1.0.1-rc50`
+适用版本：`1.0.1-rc51`
 
-当前文档已同步至 2026-10-11 的 rc50，累计变更以 rc48 为基线。发布流程现已执行源码构建，rc50 由本次生成的 `lib/` 与 `release/koishi-plugin-hds-interlude-1.0.1-rc50.tgz` 交付；旧 rc48 安装包不会自动获得这些修改，运行实例须安装并重载后才生效。验收与边界见 [发布验证报告](docs/development/RELEASE_VERIFICATION_2026-10-11_RC50.md)。
+当前文档已同步至 2026-10-13 的 rc51，累计变更以 rc50 发布包为基线。发布流程已执行源码构建，rc51 由本次生成的 `lib/` 与 `release/koishi-plugin-hds-interlude-1.0.1-rc51.tgz` 交付；旧安装包不会自动获得这些修改，运行实例须安装并重载后才生效。
 
 HDS Interlude 是 Koishi 的持续叙事聊天插件。插件使用共享主剧本保存角色状态、关系分支、已发生事件、待处理计划和长期记忆。用户消息会进入当前活动场景；主模型在同一次请求中续写已经发生的生活，并决定是否发送、延迟发送或暂不发送消息。实时写作读取一条按时间排序的活动场景记录：最近剧本文字、真实用户消息和已经成功投递的角色消息在同一条线上。剧本引子、场景外近期事实和长期记忆负责更早的历史。
 
@@ -201,7 +201,7 @@ runtime.conversationFollowUpJitterMinutes: 1
 runtime.allowProactiveMessages: false
 runtime.proactiveWillingnessThreshold: 0.65
 
-agency.enabled: true
+agency.enabled: false
 agency.maxWindowMinutes: 240
 agency.minimumProactiveIntervalMinutes: 60
 agency.maxCandidateHours: 24

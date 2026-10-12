@@ -8,7 +8,7 @@ import { GroupWillingnessConfig } from './group-willingness';
 /** Koishi/Satori uses numeric Universal.Status values; keep legacy string adapters compatible. */
 export declare function isBotOnlineStatus(status: unknown): boolean;
 import { SchedulePreplanConfig } from './schedule-preplan';
-import { InterludeArc, InterludeScene, InterludeParticipant, InterludeStory, NarrativeDecision, NarrativeFact, NarrativeIntent, GroupContext, NarrativeInteraction, NarrativeProvider, NarrativeRequest, NarrativeCompactor, NarrativeEmbedder, OutgoingMessageDraft, ScriptEntry, StatePatchProposal, StorySetting, StoryState, OverlaySnapshot, AlterSystemConfig, ChatRhythmConfig, AgencyConfig, ScenePresenceState, ChatActionCapabilities, ChatReactionName, MessageReactionDraft, NativeFaceSemantic, QuotedMessageContext, SchedulePreplanRecord, TimelinePlan, UserReportedTime } from './types';
+import { InterludeArc, InterludeScene, InterludeParticipant, InterludeStory, NarrativeDecision, NarrativeFact, NarrativeIntent, GroupContext, NarrativeInteraction, NarrativeProvider, NarrativeRequest, NarrativeCompactor, NarrativeEmbedder, OutgoingMessageDraft, ParticipantState, ScriptEntry, StatePatchProposal, StorySetting, StoryState, BrowserIntentDraft, OverlaySnapshot, AlterSystemConfig, ChatRhythmConfig, AgencyConfig, AgencyWindowState, ProactiveContactDraft, ScenePresenceState, ChatActionCapabilities, ChatReactionName, FollowUpCommitmentDraft, FollowUpResolutionDraft, MessageReactionDraft, NativeFaceSemantic, QuotedMessageContext, SchedulePreplanRecord, TimelinePlan, UserReportedTime } from './types';
 import type { DesktopInboundEvent, DesktopRuntimePhase } from './desktop-bridge';
 export type DesktopTimelineTrack = 'script' | 'messages' | 'system' | 'scenes' | 'facts' | 'preplan' | 'alter' | 'compaction';
 export interface DesktopTimelineRangeRequest {
@@ -184,6 +184,8 @@ export interface GroupChatRule {
     enabled: boolean;
     purpose: string;
     characterRole: string;
+    /** Explicit Koishi channel assignee. Empty/omitted preserves native routing. */
+    assignee?: string;
     responseMode: 'mention-only' | 'always';
     contextLimit: number;
     debounceSeconds: number;
@@ -425,6 +427,9 @@ export declare class InterludeService extends Service {
     private compactor;
     private worldSeeder;
     private worldSeederRuntime;
+    private weatherConfig;
+    private weatherTimer;
+    private lastWeatherText;
     private qzoneRuntime;
     private embedder;
     private stickerDescriber;
@@ -549,6 +554,9 @@ export declare class InterludeService extends Service {
      * qzoneCaller 与 sendSticker 桌面模式经此调用宿主代调上游 OneBot 动作。 */
     private desktopOnebotActionHandler?;
     constructor(ctx: Context, config: Config);
+    /** Apply explicit Console routing choices before normal group middleware runs.
+     * Do not prepend receiveGroup: that would bypass Koishi's ignore/user gates. */
+    private syncGroupAssignees;
     private startBackgroundTasks;
     /** Recover only the durable outgoing-message ledger. The narrative intent is
      * deliberately not consulted here: an intent may already be completed while
@@ -568,6 +576,15 @@ export declare class InterludeService extends Service {
     setDesktopEventSink(sink?: (event: string, payload: unknown) => void): void;
     /** P2-4：Puppeteer 缺失提示进程内只打一次。 */
     private puppeteerHintLogged;
+    /** HMR 重载/停机守卫：stop() 置位后，失败源于插件卸载而非提供商故障，
+     * 不再排持久化的叙事重试（重试意图存活于数据库，会在新实例上投递一条
+     * 过期回复），也不再以 warn/error 刷屏。 */
+    private disposed;
+    /** QQ CDN 下载链接过期（retcode -5503007）是永久性的：同一条历史图片
+     * 引用之后每次回源都必然再 400。缓存已知过期的原始 source 串（含
+     * onebot-url:/onebot-file: 前缀形态），命中即跳过网络请求与重复告警；
+     * FIFO 有界，防止长进程内存无上限增长。 */
+    private expiredImageSources;
     /** typ-0 bridge 在安装时注册后台投递通道；卸载时传 undefined 复原。 */
     setDesktopDeliveryHandler(handler?: InterludeService['desktopDeliveryHandler']): void;
     setDesktopOnebotActionHandler(handler?: InterludeService['desktopOnebotActionHandler']): void;
@@ -586,7 +603,7 @@ export declare class InterludeService extends Service {
     /**
      * Endpoint health is deliberately projected by the worker.  This keeps the
      * desktop read-only and, more importantly, makes all availability decisions
-     * use the same conservative TTL/cooldown rules as delivery itself.
+     * use the same channel-aware TTL/cooldown rules as delivery itself.
      */
     desktopEndpointHealthSnapshot(): Promise<{
         protocol: number;
@@ -629,7 +646,7 @@ export declare class InterludeService extends Service {
         }[];
         facts: {
             id: number;
-            scope: "character" | "world" | "relationship" | "event" | "promise";
+            scope: "promise" | "character" | "world" | "relationship" | "event";
             content: string;
             importance: number;
             confidence: number;
@@ -725,7 +742,7 @@ export declare class InterludeService extends Service {
         }[];
         facts: {
             id: number;
-            scope: "character" | "world" | "relationship" | "event" | "promise";
+            scope: "promise" | "character" | "world" | "relationship" | "event";
             content: string;
             importance: number;
             confidence: number;
@@ -743,7 +760,7 @@ export declare class InterludeService extends Service {
             value: number;
             alterWeight: number;
             emotionalOffset: {
-                direction: "serious" | "relaxed";
+                direction: "relaxed" | "serious";
                 intensity: number;
                 description: string;
             };
@@ -988,7 +1005,10 @@ export declare class InterludeService extends Service {
     /** Sidecar vision mirrors native image acquisition, but sends only its
      * factual result into the text narrator's current event. */
     private describeCurrentImages;
+    isExpiredImageSource(source: string): boolean;
+    private rememberExpiredImageSource;
     private fetchNativeImage;
+    private fetchNativeImageUncached;
     /** Convert adapter/fetched bytes into one bounded native-vision attachment.
      * Animated stickers are rendered to a representative PNG frame when the
      * optional Puppeteer service is available; otherwise the original image is
@@ -1284,6 +1304,8 @@ export declare class InterludeService extends Service {
     private persistEndpointState;
     private setEndpointState;
     private endpointGateReason;
+    /** 端点行在 ctx.bots 里的实时在线对应物（按平台隔离账号键匹配）。 */
+    private liveBotForEndpoint;
     /**
      * Agency uses the normal delivery gate plus the optional channel-specific
      * initiation gate.  EndpointState.initiate is intentionally optional: QQ
@@ -1398,6 +1420,8 @@ export declare class InterludeService extends Service {
     /** 出站结果回写端点状态（v3 §四 deliverable 维；内存无副作用）。
      * P2-11：提供 address 时只更新地址匹配的端点——多端点下不串刷兄弟端点。 */
     private noteEndpointOutbound;
+    stop(): Promise<void>;
+    private weatherSweep;
     private worldSeederSweepRunning;
     private worldSeederSweep;
     /** 上下文 payload：环境（时区/季节/世界设定）、历史剧本（压缩摘录）、
@@ -1443,6 +1467,9 @@ export declare class InterludeService extends Service {
      * the missing life script. It must never create a second transport message. */
     private scheduleStreamScriptRecovery;
     private persistStreamScriptRecovery;
+    /** 手动/强制压缩的三阶段入口:Phase1 队列内快照,Phase2 队列外模型+embedding,
+     * Phase3 队列内轻量落库——与后台调度器路径同构,不阻塞直播回合。 */
+    private compactThreePhase;
     private compactUnlocked;
     /** Everything up to the expensive compactor call: cheap reads plus the due
      * checks. Runs inside the story serial queue, but the model call itself must
@@ -1626,7 +1653,73 @@ export declare function resolveBlindModeConfig(value?: Partial<BlindModeConfig>)
  * evidence. This keeps named supporting cast available without treating them
  * as automatically present. */
 export declare function normalizeScenePresenceDrafts(value: unknown, entries: ScriptEntry[], now?: Date): ScenePresenceState[];
+export declare function normalizeDecision(raw: NarrativeDecision, from: Date, now: Date, permitMessages: boolean, runtime: RuntimeConfig, shared: SharedStoryConfig, currentParticipantId: string, permittedParticipantIds: Set<string>, permittedGroupIds: Set<string>, phase?: NarrativeRequest['phase'], memory?: MemoryConfig, refreshContinuity?: boolean): {
+    droppedProactiveActions?: {
+        participantId: string;
+        mode: "immediate" | "delayed";
+        content: string;
+        reason: string;
+    }[];
+    script: string;
+    authoredActions: import("./script/authored-actions").AuthoredAction[];
+    lifeHandoff: import("./script/life-handoff").LifeHandoff;
+    alter: number;
+    agencyWindow: Partial<AgencyWindowState>;
+    proactiveContact: ProactiveContactDraft & Record<string, unknown>;
+    interaction: NarrativeInteraction;
+    automaticDeliverySummary: string;
+    followUpCommitment: FollowUpCommitmentDraft;
+    followUpResolutions: FollowUpResolutionDraft[];
+    continuity: import("./types").ContinuitySnapshot;
+    memories: {
+        participantId: string;
+        category: string;
+        content: string;
+        importance?: number;
+    }[];
+    intents: {
+        participantId: string;
+        type: string;
+        summary: string;
+        notBefore: string;
+        payload?: Record<string, unknown>;
+    }[];
+    intentUpdates: NormalizedIntentUpdate[];
+    browserIntents: BrowserIntentDraft[];
+    statePatch: Partial<ParticipantState>;
+    crossConversationActions: NonNullable<{
+        reason?: string;
+        willingness?: number;
+        endpointId?: string;
+        participantId: string;
+        mode: string;
+        content: string;
+    } | {
+        reason?: string;
+        willingness?: number;
+        endpointId?: string;
+        participantId: string;
+        mode: string;
+        content: string;
+        sendAt: string;
+    }>[];
+};
 export declare function normalizeInteraction(value: unknown, now: Date, runtime: RuntimeConfig): NarrativeInteraction | undefined;
+type NormalizedIntentUpdate = {
+    id: number;
+    status: 'completed' | 'cancelled';
+    resolution?: string;
+};
+/** 解析层被意愿门丢弃的合法主动行动的信息（供 withdrawn 账本补偿记录）。
+ * 只捕获"目标在白名单、内容非空、仅因 willingness 缺失/低于阈值或 delayed
+ * 时间越界被丢"的行动；目标不合法/内容为空的丢弃与历史行为一致保持静默
+ * （没有可记账的收件人，也不该把未过白名单的内容写进历史）。 */
+export declare function droppedProactiveActionInfo(value: unknown, runtime: RuntimeConfig, permittedParticipantIds: Set<string>, currentParticipantId: string): {
+    participantId: string;
+    mode: "immediate" | "delayed";
+    content: string;
+    reason: string;
+};
 /** Keeps a single due-turn private to one relationship while ensuring that
  * every plan that was already due at the start of the sweep gets a chance to
  * be judged before the next sweep interval. */
@@ -1651,3 +1744,4 @@ export declare function rankStickerCatalog<T extends {
  * tiny images would not shrink further and animated ones have their own path. */
 export declare function shouldDownscaleImage(mimeType: string, dataUri: string): boolean;
 export declare function detectLiveScriptTimeOverflow(script: unknown, phase: NarrativeRequest['phase'], from: Date, now: Date, timezone: string, endorsedClocks?: ReadonlySet<number>): string;
+export {};

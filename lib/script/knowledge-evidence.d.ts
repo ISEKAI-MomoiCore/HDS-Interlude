@@ -24,7 +24,7 @@ export declare function knowledgeClauses(knowledge: KnowledgeEvidence | undefine
 export declare function knowledgeRelatedIds(knowledge: KnowledgeEvidence | undefined): number[];
 export declare function factEvidenceForPrompt(fact: NarrativeFact): {
     id: number;
-    scope: "character" | "world" | "relationship" | "event" | "promise";
+    scope: "promise" | "character" | "world" | "relationship" | "event";
     content: string;
     unresolved: boolean;
     status: "active" | "superseded";

@@ -34,7 +34,7 @@ export interface WorldSeederRuntime {
 }
 
 export const DEFAULT_WORLD_SEEDER_RUNTIME: WorldSeederRuntime = {
-  enabled: false, cadenceMinutes: 45, maxPending: 4, dailyCap: 4,
+  enabled: false, cadenceMinutes: 30, maxPending: 6, dailyCap: 8,
   maxHorizonHours: 72, temperature: 0.9, maxTokens: 1_000, timeout: 60_000,
 }
 
@@ -91,18 +91,20 @@ export function seedDomainForRun(storyId: string, slotStart: Date, cadenceMinute
 
 export function worldSeederSystemPrompt(domain?: WorldSeedDomain) {
   return [
-    'You are the world seeder for HDS Interlude. Your only job is to occasionally originate small external events in the protagonist’s world.',
+    'You are the world seeder for HDS Interlude. Your job is to keep the protagonist’s offline world alive with small external events that feel connected to her life.',
     'You will receive: current local time and season, the story’s world setting, current scene and arc summaries, a bounded excerpt of her recent established life, her in-flight working details, her relationship network listed as BLOCKED NAMES, and recently seeded events to avoid repeating.',
     'Rules:',
     '- External facts only: things that happen TO her world — environment, neighborhood, offline social world, NPCs she knows, minor mishaps, small opportunities. Never her own decisions, feelings or actions.',
     '- Offline channels only: phone calls, in-person encounters, notices, deliveries, weather, public events. Never any chat message, platform notification or online conversation content.',
     '- NEVER generate events about BLOCKED NAMES or the user. Family, classmates, shopkeepers and strangers who exist only in her offline life are fine.',
+    '- CONNECT TO HER LIFE: use her supporting cast (NPCs named in worldSetting.supportingCast), her location, and her working details as anchors. Events involving named NPCs she knows or places she frequents are far more valuable than generic ambient noise.',
     '- Fit the environment: season, weather, the canon setting’s texture (city or village, era, neighborhood), and her daily circumstances.',
     '- Fit her established life: events must be plausible next to the recent script, her working details and the current arc; never contradict what has already happened.',
     ...(domain ? [`- THIS RUN'S SLICE OF THE WORLD: ${domain.label} — ${domain.brief}. A slice is an aspect of the world, not a genre: render it through this world's own places, people and vocabulary — the supplied worldSetting is authoritative, and you must never import real-world institutions into a world that does not have them. Originate this run's event from this slice only; other slices belong to other runs. If nothing genuine fits the slice right now, return an empty array.`] : []),
     '- Place events at concrete future times within the allowed horizon, expressed in the story timezone. Ordinary gaps in her day are the best slots.',
-    '- Importance: low = texture she may barely notice; medium = a small practical change; high = relationship-relevant or disruptive. Low must be most of your output; high is rare.',
-    'Real life is mostly uneventful. MOST RUNS MUST RETURN an empty events array. Output at most 1 event.',
+    '- Variety: avoid repeating the same NPC + same object + same time-of-day pattern across events. If a similar scenario was already seeded, shift to a different NPC, a different place, or a different time entirely.',
+    '- Importance: low = texture she may barely notice; medium = a small practical change; high = relationship-relevant or disruptive. Prefer medium for events involving named NPCs; reserve high for genuinely disruptive moments.',
+    'Real life is mostly uneventful, but a good world still stirs sometimes. Most runs should produce 0-2 events; when the world has something to say, say it.',
     'Output one JSON object only: {"events":[{"summary":"one concrete Chinese sentence stating what happened","importance":"low|medium|high","occursAt":"ISO-8601 with offset","expiresAt":"optional ISO-8601","subjects":["names of offline people involved, empty when none"],"rationale":"short reason this fits now"}]}',
   ].join('\n')
 }
@@ -115,6 +117,10 @@ export interface SeedValidationInput {
   maxHorizonHours: number
   blockedNames: string[]
   recentSummaries: string[]
+  /** 已排期/已注入事件的 subjects 列表——用于 NPC/道具级去重(bigram 抓不到换皮) */
+  recentSubjects?: string[][]
+  /** 已排期/已注入事件的 occursAt——时间窗重叠也判重复 */
+  recentOccursAt?: Date[]
 }
 
 function bigrams(text: string): Set<string> {
@@ -157,10 +163,47 @@ export function validateSeedEvent(draft: WorldSeedEventDraft, input: SeedValidat
     const hour = localHourIn(draft.occursAt, input.timezone)
     if (hour >= 0 && hour < 6) return 'night-high'
   }
+  // ── 多维度去重 ──
+  // ① 字符 bigram(措辞级相似)
   for (const recent of input.recentSummaries) {
     if (summaryJaccard(draft.summary, recent) > 0.6) return 'duplicate'
   }
+  // ② subjects 重叠:同一 NPC/道具重复出现在不同措辞的事件里(bigram ≈ 0.2 抓不到)
+  const recentSubjects = input.recentSubjects ?? []
+  for (const subjects of recentSubjects) {
+    const overlap = draft.subjects.filter(s => subjects.some(r => s === r || (s.length >= 2 && r.includes(s)) || (r.length >= 2 && s.includes(r))))
+    if (overlap.length >= 1) {
+      // subjects 重叠且时间窗接近(24h) → 换皮改写
+      return 'duplicate'
+    }
+  }
+  // ③ 摘要文本包含已排期事件的 subjects(NPC 名直接出现在新事件里)
+  for (const subjects of recentSubjects) {
+    for (const subject of subjects) {
+      if (subject.length >= 2 && draft.summary.includes(subject)) return 'duplicate'
+    }
+  }
+  // ④ 时间窗 + 关键词交集:两条事件 occursAt 差 < 6h 且共享 ≥2 个关键词 → 同一场景换皮
+  const recentOccurs = input.recentOccursAt ?? []
+  const inputSummaries = input.recentSummaries
+  for (let i = 0; i < inputSummaries.length && i < recentOccurs.length; i++) {
+    if (Math.abs(draft.occursAt.getTime() - recentOccurs[i].getTime()) < 6 * 3_600_000) {
+      const shared = keywordOverlap(draft.summary, inputSummaries[i])
+      if (shared >= 2) return 'duplicate'
+    }
+  }
   return undefined
+}
+
+/** 两条中文摘要共享的实义词(≥2 字)数量——Jaccard 对换皮失效,但"辣椒+抽油烟机"这类核心词会保留 */
+function keywordOverlap(left: string, right: string): number {
+  const extract = (text: string) => new Set(
+    text.replace(/[\p{P}\p{S}\s]+/gu, '').match(/[一-龥]{2,4}/g) ?? []
+  )
+  const a = extract(left), b = extract(right)
+  let shared = 0
+  for (const word of a) if (b.has(word)) shared++
+  return shared
 }
 
 /** 防御解析模型输出：字段裁剪、时间解析、subjects/rationale 归一；坏项丢弃。 */

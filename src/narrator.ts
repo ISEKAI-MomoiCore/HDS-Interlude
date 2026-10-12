@@ -29,6 +29,15 @@ export {
   ZHIPU_OFFICIAL_CHAT_ENDPOINT,
 } from './model-routing'
 
+/** 插件作用域已销毁（HMR 重载/停机）时的失败签名：在途 ctx.http 请求被
+ * "context disposed" 中止；此后新建 effect 抛 "cannot create effect on
+ * inactive context"。这类失败与提供商和服务质量无关——重试必然失败、
+ * 冷却与告警都是噪音。调用方应立即放弃本轮并静默退出。 */
+export function isContextDisposedError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error ?? '')
+  return message.includes('context disposed') || message.includes('inactive context')
+}
+
 export { storyLocalTimeContext } from './time'
 
 export type ProviderResponseFormat = 'json-object' | 'prompt-only'
@@ -415,6 +424,8 @@ export class OpenAICompatibleNarrator implements NarrativeProvider {
             this.cooldownUntil.delete(providerKey(provider))
             return decision
           } catch (error) {
+            // 停机/重载（HMR）期间重试必然失败且污染冷却表：立即中止整条链路。
+            if (isContextDisposedError(error)) throw error
             const detail = describeHttpError(error)
             if (earlyReplyCommitted) throw new Error(`Narrative stream failed after an early visible reply: ${detail}`)
             // 思考型网关把 reasoning 计入输出预算:小 cap 下推理吃满,残句 JSON
@@ -761,6 +772,8 @@ export class OpenAICompatibleNarrator implements NarrativeProvider {
             this.cooldownUntil.delete(providerKey(provider))
             return { description }
           } catch (error) {
+            // 停机/重载（HMR）期间重试必然失败且污染冷却表：立即中止整条链路。
+            if (isContextDisposedError(error)) throw error
             const detail = error instanceof Error ? error.message : String(error)
             failures.push(`${provider.label || provider.id} (attempt ${attempt}): ${detail}`)
             this.logger?.debug('Alter System 分析模型失败：%s；尝试=%s', provider.label || provider.id, detail)
@@ -850,6 +863,8 @@ export class OpenAICompatibleNarrator implements NarrativeProvider {
             if (text) return [text]
             failures.push(`${provider.label} attempt ${attempt}: empty response`)
           } catch (error) {
+            // 停机/重载（HMR）期间重试必然失败：立即中止，不再遍历后续提供商。
+            if (isContextDisposedError(error)) throw error
             const detail = describeHttpError(error)
             failures.push(`${provider.label} attempt ${attempt}: ${detail}`)
             this.logger?.debug(
@@ -1000,7 +1015,7 @@ export class OpenAICompatibleNarrator implements NarrativeProvider {
           reasoning_effort: provider.reasoningEffort ?? 'high',
         }, headers, onStreamText, collect, undefined, provider.proxyAgent)
       : streamingEarlyReply
-        ? await requestOpenAICompatibleStreaming(provider.endpoint, withDeepSeekThinking(provider, { ...requestBody, stream: true }), headers, overrides.timeout ?? provider.timeout, onStreamText, collect, provider.proxyAgent)
+        ? await requestOpenAICompatibleStreaming(provider.endpoint, withDeepSeekThinking(provider, { ...requestBody, stream: true, stream_options: { include_usage: true } }), headers, overrides.timeout ?? provider.timeout, onStreamText, collect, provider.proxyAgent)
         : await (async () => {
             const response = await this.postChat(provider, requestBody, overrides.timeout ?? provider.timeout, cacheFirstPayload)
             collect(response?.usage)
@@ -1141,6 +1156,7 @@ async function requestZhipuStreaming(endpoint: string, body: Record<string, unkn
       const decoder = new TextDecoder()
       let pending = ''
       let content = ''
+      let latestUsage: unknown
       let stopped = false
       while (!stopped) {
         const { done, value } = await reader.read()
@@ -1155,7 +1171,7 @@ async function requestZhipuStreaming(endpoint: string, body: Record<string, unkn
           if (!data) continue
           let chunk: any
           try { chunk = JSON.parse(data) } catch { continue }
-          if (chunk?.usage) collectUsage?.(chunk.usage)
+          if (chunk?.usage) latestUsage = chunk.usage
           const delta = chunk?.choices?.[0]?.delta?.content ?? chunk?.choices?.[0]?.message?.content ?? chunk?.choices?.[0]?.text
           const text = flattenChatText(delta)
           if (!text) continue
@@ -1169,6 +1185,7 @@ async function requestZhipuStreaming(endpoint: string, body: Record<string, unkn
         if (done) break
       }
       if (!receivedVisibleToken) throw new Error('Zhipu stream ended without visible content.')
+      if (latestUsage) collectUsage?.(latestUsage)
       return content
     } catch (error) {
       if (firstTokenTimedOut) throw new Error(`Zhipu first visible token timed out after ${ZHIPU_FIRST_VISIBLE_TOKEN_TIMEOUT}ms.`)
@@ -1205,6 +1222,7 @@ async function requestOpenAICompatibleStreaming(endpoint: string, body: Record<s
       let pending = ''
       let content = ''
       let raw = ''
+      let latestUsage: unknown
       let stopped = false
       while (!stopped) {
         const { done, value } = await reader.read()
@@ -1220,7 +1238,7 @@ async function requestOpenAICompatibleStreaming(endpoint: string, body: Record<s
           if (!data) continue
           let parsed: any
           try { parsed = JSON.parse(data) } catch { continue }
-          if (parsed?.usage) collectUsage?.(parsed.usage)
+          if (parsed?.usage) latestUsage = parsed.usage
           const delta = parsed?.choices?.[0]?.delta?.content ?? parsed?.choices?.[0]?.message?.content ?? parsed?.choices?.[0]?.text
           const text = flattenChatText(delta)
           if (!text) continue
@@ -1229,7 +1247,8 @@ async function requestOpenAICompatibleStreaming(endpoint: string, body: Record<s
         }
         if (done) break
       }
-      if (content) return content
+      if (latestUsage) collectUsage?.(latestUsage)
+    if (content) return content
       // A few gateways accept stream:true but still return one ordinary JSON body.
       try {
         const body = JSON.parse(raw) as ChatCompletionResponse & { usage?: unknown }
@@ -1596,7 +1615,7 @@ function phaseInstruction(phase: NarrativeRequest['phase'], groupTurn = false) {
   }
   return [
     'CURRENT PHASE: INDEPENDENT LIFE ADVANCE. currentEvent.type is none. Use the whole interval to write a complete, connected passage of the protagonist’s life: current occupation, concrete changes, encounters, unresolved matters and quiet shifts. End at now on an action, observation, decision, pause or settled thought.',
-    'crossConversationActions are optional proactive contacts. When the completed passage includes an outbound message to another participant, pair it with one matching immediate crossConversationAction containing its chat content. Return an action only for a concrete present reason grounded in the scene. Use {"participantId":"...","mode":"immediate|delayed","content":"...","sendAt":"...","willingness":0.0,"reason":"..."}; sendAt is required for delayed mode. Include willingness from 0 to 1 and a short reason. Let a consideration, draft, or later possibility remain part of the protagonist’s inner or practical life until a matching action carries it outward. When no concrete motive exists, return an empty array.',
+    'crossConversationActions are optional proactive contacts. When the completed passage includes an outbound message to another participant, pair it with one matching immediate crossConversationAction containing its chat content. Write each message bubble verbatim in the script; missing or ambiguous text will not be sent. content-only actions are supported; say markup and actionId are not required. Prose or quotation marks alone never authorize a send. Return an action only for a concrete present reason grounded in the scene. Use {"participantId":"...","mode":"immediate|delayed","content":"...","sendAt":"...","willingness":0.0,"reason":"..."}; sendAt is required for delayed mode. Include willingness from 0 to 1 and a short reason. Let a consideration, draft, or later possibility remain part of the protagonist’s inner or practical life until a matching action carries it outward. When no concrete motive exists, return an empty array.',
   ].filter(Boolean).join('\n')
 }
 
@@ -1630,7 +1649,7 @@ function transportInstruction(phase: NarrativeRequest['phase'], groupTurn: boole
     return `${authority}\nFor this group turn, return groupReply as {"mode":"immediate","content":"the exact words posted to the group now"}. The content must be exactly the words posted in the script. Use mode=none when no group post occurs.`
   }
   if (phase === 'advance') {
-    return `${authority}\nThis independent-life phase has no current reply channel. A present outbound action uses crossConversationActions:[{"participantId":"listed id","mode":"immediate","actionId":"authored say id","willingness":0.0,"reason":"brief concrete motive"}]. Delayed actions keep content and future sendAt. An ordinary life passage needs no transport field.`
+    return `${authority}\nThis independent-life phase has no current reply channel. A present outbound action uses crossConversationActions:[{"participantId":"listed id","mode":"immediate","content":"exact message text","willingness":0.0,"reason":"brief concrete motive"}]. An optional actionId may reference existing authored say text instead of duplicating its words. Delayed actions keep content and future sendAt. An ordinary life passage needs no transport field.`
   }
   return `${authority}\nFor this private turn, interaction describes ONLY messages to the current private participant. Return interaction as {"seen":true,"reply":{"mode":"immediate","content":"the exact words she sends now","sendAt":"future ISO-8601 only when delayed"}}. The content must be exactly the words the script shows her sending. mode=none only when she sends nothing, and a silent turn carries no content. Several bubbles travel inside one content joined by <sep/>; line breaks never separate bubbles. ${phase === 'user-message' ? 'seen records whether she reads the current message content (false when she only notices a notification); seen and reply are independent fields - seen=true with reply.mode=none is the ordinary read-but-does-not-answer state. "mode" must be exactly "none", "immediate", or "delayed" — never "text", "send", or any other word. Whenever the script shows her actually sending words to the current private participant, reply.mode must be immediate.' : 'In a no-message or due-plan turn, seen is false; reply may still be immediate or delayed when a message is genuinely sent now.'}`
 }

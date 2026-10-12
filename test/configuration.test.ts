@@ -4,13 +4,14 @@ import { Config, version } from '../src/index'
 import { hasRequiredNarrativeScript, normalizeGroupVisibleReply, normalizeInteraction, requiresVisibleReplyRecovery, resolveBlindModeConfig, visibleReplyMode } from '../src/service'
 import { configuredProviders, withDeepSeekThinking, ZHIPU_FIRST_VISIBLE_TOKEN_TIMEOUT } from '../src/narrator'
 import { HDS_INTERLUDE_VERSION } from '../src/meta'
+import { DEFAULT_AGENCY_CONFIG, resolveAgencyConfig } from '../src/agency'
 
 const now = new Date('2026-09-09T12:00:00Z')
 
 test('Console sections follow the documented setup order', () => {
   assert.deepEqual(Object.keys(Config.dict), [
     'storyDefaults', 'model', 'onebot', 'sharedStory', 'runtime', 'urge', 'schedulePreplan', 'timelineDirector', 'agency',
-    'chatActions', 'stickers', 'memory', 'alterSystem', 'browser', 'worldSeeder', 'longHorizon', 'qzone', 'presetSync', 'blindMode', 'logging', 'mainPrompt', 'chatRhythm',
+    'chatActions', 'stickers', 'memory', 'alterSystem', 'browser', 'worldSeeder', 'longHorizon', 'qzone', 'presetSync', 'weather', 'blindMode', 'logging', 'mainPrompt', 'chatRhythm',
   ])
   // 分类前缀让配置页按 必填→结构→节奏→表达→内在→扩展→维护 分组可读。
   const headers = Object.values(Config.dict).map((item: any) => String(item.meta?.description ?? ''))
@@ -23,9 +24,10 @@ test('Console sections follow the documented setup order', () => {
   assert.match(headers[14], /^【扩展 15】/)
   assert.match(headers[15], /^【扩展 16】/)
   assert.match(headers[16], /^【扩展 17】/)
-  assert.match(headers[17], /^【扩展 18】/)
-  assert.match(headers[18], /^【维护 19】/)
+  assert.match(headers[17], /^【扩展 18】预设同步/)
+  assert.match(headers[18], /^【扩展 19】运行时天气/)
   assert.match(headers[19], /^【维护 20】/)
+  assert.match(headers[20], /^【维护 21】/)
 })
 
 test('chat actions are opt-in and platform-scoped', () => {
@@ -173,7 +175,7 @@ test('Agency Window exposes only the four bounded scheduling controls', () => {
     'enabled', 'maxWindowMinutes', 'minimumProactiveIntervalMinutes', 'maxCandidateHours',
     'contactMode', 'naturalWillingnessThreshold', 'naturalMinimumIntervalMinutes', 'proactiveDailyCap',
   ])
-  assert.equal(agency.enabled.meta.default, true)
+  assert.equal(agency.enabled.meta.default, false)
   assert.equal(agency.maxWindowMinutes.meta.default, 240)
   assert.equal(agency.contactMode.meta.default, 'strict')
   assert.equal(agency.proactiveDailyCap.meta.default, 3)
@@ -299,7 +301,7 @@ test('visible Console section numbers are unique and continuous', () => {
     const match = String(item.meta?.description ?? '').match(/^【[^】]+ (\d+)】/)
     return match ? [Number(match[1])] : []
   })
-  assert.deepEqual(numbers, Array.from({ length: 20 }, (_, index) => index + 1))
+  assert.deepEqual(numbers, Array.from({ length: 21 }, (_, index) => index + 1))
 })
 
 test('candidate reveal description distinguishes inactive, vague and revealed candidates', () => {
@@ -307,4 +309,16 @@ test('candidate reveal description distinguishes inactive, vague and revealed ca
   assert.match(description, /未激活候选不显示/)
   assert.match(description, /已激活候选.*之前.*可能的个人安排/)
   assert.match(description, /进入揭示时间后显示具体内容/)
+})
+
+test('Agency is opt-in in both schema and runtime, preserving explicit user settings', () => {
+  assert.equal(DEFAULT_AGENCY_CONFIG.enabled, false)
+  assert.equal(resolveAgencyConfig().enabled, false)
+  assert.equal(resolveAgencyConfig({}).enabled, false)
+  assert.equal(resolveAgencyConfig({ enabled: false }).enabled, false)
+  assert.equal(resolveAgencyConfig({ enabled: true }).enabled, true)
+  const schema = Config.dict.agency
+  assert.equal(schema({}).enabled, false)
+  assert.equal(schema({ enabled: false }).enabled, false)
+  assert.equal(schema({ enabled: true }).enabled, true)
 })

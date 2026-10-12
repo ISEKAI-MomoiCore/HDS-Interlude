@@ -1,8 +1,8 @@
 # 当前架构
 
-适用版本：`1.0.1-rc50`
+适用版本：`1.0.1-rc51`
 
-当前文档已同步至 2026-10-11 的 rc50，累计变更以 rc48 为基线。发布流程现已执行源码构建，rc50 由本次生成的 `lib/` 与 `release/koishi-plugin-hds-interlude-1.0.1-rc50.tgz` 交付；旧 rc48 安装包不会自动获得这些修改，运行实例须安装并重载后才生效。验收与边界见 [发布验证报告](development/RELEASE_VERIFICATION_2026-10-11_RC50.md)。
+当前文档已同步至 2026-10-13 的 rc51，累计变更以 rc50 发布包为基线。发布流程已执行源码构建，rc51 由本次生成的 `lib/` 与 `release/koishi-plugin-hds-interlude-1.0.1-rc51.tgz` 交付；旧安装包不会自动获得这些修改，运行实例须安装并重载后才生效。
 
 历史增量（证据层）：事实/工作细节使用 knowledge 保存认知主体、证据角色与条件来源；contactThreads 给主叙事和时间导演提供同事项原始联系链。派生记录、主角相信的事与实际沟通结果分开解释，原文不裁写为第二份剧本。发送端将同一动作的完整分隔块映射至原有逐段回执链。详见 [实现报告](development/BETA6_EVIDENCE_DELIVERY_REPAIR.md)。
 

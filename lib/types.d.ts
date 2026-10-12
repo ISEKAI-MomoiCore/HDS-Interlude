@@ -54,12 +54,15 @@ export interface StoryState {
     workingDetails?: WorkingDetail[];
     /** Source revisions prevent a delayed background review reopening settled details. */
     workingDetailResolutions?: Record<string, number>;
-    /** 主动联系审计窗（最近 20 条）：每参与者每日上限的计数来源，不进模型上下文。 */
+    /** 主动联系审计窗（最近 20 条）：每参与者每日上限的计数来源，不进模型上下文。
+     * ref 关联放行时的投递草稿；投递终态失败时置 voided，不再消耗每日配额。 */
     proactiveContactLog?: Array<{
         participantId: string;
         at: string;
         endpointId?: string;
         channelReason?: string;
+        ref?: string;
+        voided?: boolean;
     }>;
     /** 压缩器写入的主角注意力状态（busy/asleep/idle）；群聊意愿 auto 档读取。 */
     lifeStatus?: {
@@ -539,6 +542,9 @@ export interface OutgoingMessageDraft {
     laterSegments?: string[];
     /** Lets a failed delivery explain whether it originated in a live user turn. */
     userInitiated?: boolean;
+    /** Agency 放行的主动联系在放行时预记入 proactiveContactLog（ref 关联）；
+     * 投递终态失败时宿主按 ref 作废该条计数。 */
+    proactiveContactRef?: string;
     /** Set by transport when a literal quote was converted into a platform reply. */
     quoteMessageId?: string;
     /** Stable link back to the one script event that authored all bubbles. */
@@ -730,6 +736,16 @@ export interface NarrativeDecision {
     statePatch?: Partial<ParticipantState>;
     /** Optional outbound actions aimed at other accounts in the same main story. */
     crossConversationActions?: ConversationActionDraft[];
+    /** advance 相位被解析层意愿门丢弃的主动行动（目标合法、内容非空但
+     * willingness 缺失/低于阈值，或 delayed 时间越界）。它们从未进入
+     * crossConversationActions，无事件无账本；在此显式携带供 withdrawn
+     * 账本补偿，避免"剧本已说但从未发出"的幻影。 */
+    droppedProactiveActions?: Array<{
+        participantId: string;
+        mode: 'immediate' | 'delayed';
+        content: string;
+        reason: string;
+    }>;
     /** Optional visible reply to the configured OneBot group that caused this turn. */
     groupReply?: {
         mode: 'none' | 'immediate';

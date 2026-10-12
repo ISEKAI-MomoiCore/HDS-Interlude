@@ -86,8 +86,10 @@ test('seeder prompt teaches the critical rules', () => {
   assert.match(prompt, /NEVER generate events about BLOCKED NAMES/)
   assert.match(prompt, /Offline channels only/)
   assert.match(prompt, /External facts only/)
-  assert.match(prompt, /MOST RUNS MUST RETURN an empty events array/)
-  assert.match(prompt, /high is rare/)
+  assert.match(prompt, /Most runs should produce 0-2 events/)
+  assert.match(prompt, /Prefer medium for events involving named NPCs/)
+  assert.match(prompt, /CONNECT TO HER LIFE/)
+  assert.match(prompt, /Variety: avoid repeating/)
 })
 
 test('世界切面轮换：同槽稳定、跨槽前进、一个周期覆盖全部切面', () => {
@@ -107,11 +109,11 @@ test('世界切面轮换：同槽稳定、跨槽前进、一个周期覆盖全�
 
 test('播种提示词按切面提问且每轮至多一事件', () => {
   const plain = worldSeederSystemPrompt()
-  assert.match(plain, /Output at most 1 event/)
+  assert.match(plain, /Most runs should produce 0-2 events/)
   assert.doesNotMatch(plain, /SLICE OF THE WORLD/, '无切面时保持通用形态（兼容旧调用）')
   const sliced = worldSeederSystemPrompt(WORLD_SEED_DOMAINS[2])
   assert.match(sliced, /THIS RUN'S SLICE OF THE WORLD: 生计与日常事务/)
-  assert.match(sliced, /Originate this run's event from this slice only/)
+  assert.match(sliced, /render it through this world's own places/)
   assert.match(sliced, /If nothing genuine fits the slice right now, return an empty array/)
   assert.match(sliced, /never import real-world institutions into a world that does not have them/, '异世界兼容：切面按世界语汇本地化')
 })

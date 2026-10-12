@@ -1,6 +1,6 @@
 {
   "name": "koishi-plugin-hds-interlude",
-  "version": "1.0.1-rc50",
+  "version": "1.0.1-rc51",
   "description": "A time-aware, persistent narrative chat framework for Koishi.",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",
@@ -66,7 +66,12 @@
     }
   },
   "devDependencies": {
-    "koishi-plugin-puppeteer": "^3.9.0"
+    "@minatojs/driver-sqlite": "^4.7.0",
+    "@types/node": "^22.7.5",
+    "koishi-plugin-puppeteer": "^3.9.0",
+    "tsx": "^4.16.2",
+    "typescript": "^5.6.2",
+    "yml-register": "^1.2.5"
   },
   "dependencies": {
     "qface": "^1.4.1",

@@ -29,8 +29,9 @@ export declare function normalizeScenePresenceState(value: unknown): ScenePresen
 export declare function normalizeWorkingDetails(value: unknown): WorkingDetail[];
 /** 主动联系审计窗：每参与者每日上限的计数来源（最近 20 条；不进模型上下文）。 */
 export declare function normalizeProactiveContactLog(value: unknown): NonNullable<StoryState['proactiveContactLog']>;
+/** 作废条目不再计入每日上限：一次被端点/传输拦下的主动联系不该烧掉配额。 */
 export declare function countProactiveContactsInWindow(log: StoryState['proactiveContactLog'] | undefined, participantId: string, now: Date, windowMs?: number): number;
-export declare function appendProactiveContact(log: StoryState['proactiveContactLog'] | undefined, participantId: string, at: Date, endpointId?: string): NonNullable<StoryState['proactiveContactLog']>;
+export declare function appendProactiveContact(log: StoryState['proactiveContactLog'] | undefined, participantId: string, at: Date, endpointId?: string, ref?: string): NonNullable<StoryState['proactiveContactLog']>;
 export declare function normalizeLifeStatus(value: unknown): StoryState['lifeStatus'];
 export declare function normalizeTimelineCarry(value: unknown): string[];
 export declare function normalizeContinuitySnapshot(value: unknown): ContinuitySnapshot | undefined;

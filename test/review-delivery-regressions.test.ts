@@ -27,6 +27,7 @@ function fixture(target = 'p', count = 1) {
     getParticipant: async (id: string) => ({ id, status: 'active' }),
     recordCharacterMessage: async () => {}, typingDelayMilliseconds: () => 10,
     recordAutomaticDelivery: async () => {}, reportStandalone: () => {}, report: () => {},
+    interruptedTypingParticipants: new Set<string>(),
     appendIntent: async (_s: string, draft: any) => { intents.push({ id: intents.length + 1, ...draft, participantId: target }) },
     scheduleDueIntentWake: () => {}, scheduleNextSplitWake: async () => {},
     dbGet: async (table: string, query: any) => {

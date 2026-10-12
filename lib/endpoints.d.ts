@@ -140,13 +140,16 @@ export declare function freshEndpointState(endpointId: string, now?: number): En
 export declare function stateAfterConnection(state: EndpointState, online: boolean, now?: number): EndpointState;
 export declare function stateAfterInbound(state: EndpointState, now?: number): EndpointState;
 export declare function stateAfterOutbound(state: EndpointState, ok: boolean, note: string, cooldownMs?: number, now?: number): EndpointState;
-/** deliverable 确认的保质期（P2-8）：超过 TTL 的 allowed 按未知保守处理，
- *  直到下一次出站/入站观测刷新——陈旧的"可投递"不是事实。
- *  M3 出站路径会消费该函数；重启快照即使保存了上次成功，也必须先经过
- *  当前连接器的在线事实确认。 */
+/** deliverable 确认的保质期（P2-8）：超过 TTL 的 allowed 按未知处理。
+ *  QQ/OneBot 在线端点允许实际投递探测，避免过期门控阻止出站刷新；
+ *  其它通道保持保守。重启快照仍须经过当前连接器的在线事实确认。 */
 export declare const ENDPOINT_DELIVERABLE_TTL_MS: number;
-/** 冷却期内视为不可投递（保守）；冷却结束允许重试探测；allowed 超过 TTL 视为过期。 */
-export declare function isEndpointDeliverable(state: EndpointState | undefined, now?: number): boolean;
+/** 返回是否可尝试投递，不代表投递成功；失败冷却与通道主动联系限制独立生效。
+ * ignoreCooldown 供用户触发回复豁免冷却（一次网络抖动不该让该参与者已读不回
+ * 5 分钟）；冷却的防轰炸语义只针对后台/主动重试路径。 */
+export declare function isEndpointDeliverable(state: EndpointState | undefined, now?: number, endpoint?: Pick<EndpointDescriptor, 'channelKind' | 'platform'>, options?: {
+    ignoreCooldown?: boolean;
+}): boolean;
 /** token 过期按不允许保守处理；重新获得有效信号（入站/探测）即恢复。 */
 export declare function isEndpointInitiateAllowed(state: EndpointState | undefined, now?: number): boolean;
 /** interlude_story_alias 持久行。回滚 = 删除行；行本身即审计（reason + 时间）。 */

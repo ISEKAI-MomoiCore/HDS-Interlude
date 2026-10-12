@@ -52,19 +52,22 @@ export interface AutoWillingnessConfig {
 export declare const DEFAULT_AUTO_WILLINGNESS: AutoWillingnessConfig;
 /** 睡眠态安全余量：概率乘数（对压缩器状态过期/误判的兜底）。 */
 export declare const ASLEEP_PROBABILITY_MULTIPLIER = 0.2;
-/** lifeStatus 超过该时长未刷新时，auto 档回退 normal。 */
+/** lifeStatus 超过该时长未刷新时，auto 档按 idle 映射回退。 */
 export declare const LIFE_STATUS_STALE_MS: number;
 export declare function normalizeLifeStatusDraft(value: unknown): LifeStatusValue | undefined;
 export declare function resolveAutoWillingness(value: unknown): AutoWillingnessConfig;
 export interface WillingnessGateDiagnosis {
     preset: WillingnessPreset;
     tier?: WillingnessTier;
-    /** auto 档命中的生活状态；缺失或过期回退 normal 时无。 */
+    /** auto 档有效生活状态；回退时为 idle，不写回剧本状态。 */
     lifeStatus?: LifeStatusValue;
-    /** lifeStatus 存在但已过期或无效（已回退 normal）。 */
+    /** lifeStatus 存在但已过期或无效。 */
     stale?: boolean;
+    fallback?: 'missing' | 'invalid' | 'stale';
     asleep: boolean;
 }
+/** Both successful calls and skipped turns use the same fallback explanation. */
+export declare function formatWillingnessGateDiagnosis(diagnosis: WillingnessGateDiagnosis): string;
 export interface WillingnessGateDecision extends GroupWillingnessDecision {
     diagnosis: WillingnessGateDiagnosis;
 }

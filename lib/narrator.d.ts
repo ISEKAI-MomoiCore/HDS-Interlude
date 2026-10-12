@@ -3,6 +3,11 @@ import { type ContractTier, type ModelFamily, type SpecialtyProfile } from './sp
 import { AlterAnalysisDecision, AlterAnalysisRequest, AlterSystemConfig, ChatActionCapabilities, CompactionDecision, CompactionRequest, NarrativeDecision, NarrativeProvider, OverlayCompactionDecision, OverlayCompactionRequest, EarlyNarrativeReply, LongArcGuidanceRequest, NarrativeCompactor, NarrativeEmbedder, NarrativeImage, NarrativeRequest, SchedulePreplanProposal, SchedulePreplanReviewRequest, ScriptEntry, StickerCatalogEntry, TimelinePlan, TimelinePlanRequest } from './types';
 import { ModelRoutingTable } from './model-routing';
 export { configuredProviders, effectiveMainModelId, resolveModelRouting, usesRemoteProviders, ZHIPU_OFFICIAL_CHAT_ENDPOINT, } from './model-routing';
+/** 插件作用域已销毁（HMR 重载/停机）时的失败签名：在途 ctx.http 请求被
+ * "context disposed" 中止；此后新建 effect 抛 "cannot create effect on
+ * inactive context"。这类失败与提供商和服务质量无关——重试必然失败、
+ * 冷却与告警都是噪音。调用方应立即放弃本轮并静默退出。 */
+export declare function isContextDisposedError(error: unknown): boolean;
 export { storyLocalTimeContext } from './time';
 export type ProviderResponseFormat = 'json-object' | 'prompt-only';
 export type ProviderStrategy = 'priority' | 'round-robin';

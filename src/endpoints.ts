@@ -286,12 +286,19 @@ export function stateAfterConnection(state: EndpointState, online: boolean, now 
 }
 
 export function stateAfterInbound(state: EndpointState, now = Date.now()): EndpointState {
-  // 入站即证明连接在线且该端点此刻可投递；微信 context_token 也随有效入站刷新。
+  // 入站即证明连接在线；微信 context_token 也随有效入站刷新。
+  // 但"收到消息"不等于"可发出消息"——出站失败冷却(cooldownUntil)必须保留,
+  // 否则同账号任一无关入站(如同群任何人发言)都会清零 5 分钟冷却,风控中的
+  // 端点被高频重试。冷却到期后 isEndpointDeliverable 自然放行。
+  const cooldown = state.deliverable?.cooldownUntil
+  const cooldownActive = cooldown != null && now < cooldown
   return {
     ...state,
     connection: { online: true, observedAt: now },
-    deliverable: { allowed: true, checkedAt: now },
-    ...(state.initiate ? { initiate: { ...state.initiate, allowed: true, observedAt: now } } : {}),
+    deliverable: cooldownActive
+      ? { ...state.deliverable, checkedAt: now }
+      : { allowed: true, checkedAt: now },
+    ...(state.initiate && !cooldownActive ? { initiate: { ...state.initiate, allowed: true, observedAt: now } } : {}),
   }
 }
 
@@ -304,20 +311,30 @@ export function stateAfterOutbound(state: EndpointState, ok: boolean, note: stri
   }
 }
 
-/** deliverable 确认的保质期（P2-8）：超过 TTL 的 allowed 按未知保守处理，
- *  直到下一次出站/入站观测刷新——陈旧的"可投递"不是事实。
- *  M3 出站路径会消费该函数；重启快照即使保存了上次成功，也必须先经过
- *  当前连接器的在线事实确认。 */
+/** deliverable 确认的保质期（P2-8）：超过 TTL 的 allowed 按未知处理。
+ *  QQ/OneBot 在线端点允许实际投递探测，避免过期门控阻止出站刷新；
+ *  其它通道保持保守。重启快照仍须经过当前连接器的在线事实确认。 */
 export const ENDPOINT_DELIVERABLE_TTL_MS = 24 * 3_600_000
 
-/** 冷却期内视为不可投递（保守）；冷却结束允许重试探测；allowed 超过 TTL 视为过期。 */
-export function isEndpointDeliverable(state: EndpointState | undefined, now = Date.now()): boolean {
+/** 返回是否可尝试投递，不代表投递成功；失败冷却与通道主动联系限制独立生效。
+ * ignoreCooldown 供用户触发回复豁免冷却（一次网络抖动不该让该参与者已读不回
+ * 5 分钟）；冷却的防轰炸语义只针对后台/主动重试路径。 */
+export function isEndpointDeliverable(
+  state: EndpointState | undefined,
+  now = Date.now(),
+  endpoint?: Pick<EndpointDescriptor, 'channelKind' | 'platform'>,
+  options?: { ignoreCooldown?: boolean },
+): boolean {
   if (!state) return false
   if (state.connection.online === false) return false
+  if (state.deliverable.cooldownUntil && now < state.deliverable.cooldownUntil && !options?.ignoreCooldown) return false
   if (state.deliverable.allowed) {
+    // A stale observation is not a new success. Only QQ/OneBot may probe it;
+    // the existing outbound result handler refreshes success or starts cooldown.
     return now - state.deliverable.checkedAt <= ENDPOINT_DELIVERABLE_TTL_MS
+      || endpoint?.channelKind === 'qq' && isOneBotFamilyPlatform(endpoint.platform)
   }
-  if (state.deliverable.cooldownUntil) return now >= state.deliverable.cooldownUntil
+  if (state.deliverable.cooldownUntil) return now >= state.deliverable.cooldownUntil || options?.ignoreCooldown === true
   // A connector lifecycle event is enough to make a freshly started endpoint
   // eligible for its first probe.  Without this exception the M3 gate would
   // deadlock: the first outbound could never refresh deliverable because the

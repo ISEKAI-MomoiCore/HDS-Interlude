@@ -81,7 +81,7 @@ const LENGTH_GPT = 'Length follows what actually happens, and each passage keeps
 
 const EXTRA_CLAUDE = 'Scenes do not need tidy closure. Ordinary life leaves small matters unresolved, moods unexplained and conversations unfinished; let a passage end mid-motion when that is where the moment genuinely is. Do not end with a concluding summary sentence, a lesson or a mood label; real daily life simply continues past any single passage.'
 
-const EXTRA_GLM = 'Emotional register: let mood follow its actual causes and stay ordinary. Do not drift toward warmth, comfort or reassurance unless the events themselves justify it: no unearned encouragement, no softening a bad mood before the passage ends, no bright side the events did not produce. A neutral or low mood is as common in real life as a good one, and difficult feelings do not need to resolve within the same passage.'
+const EXTRA_GLM = 'Emotional register: let mood follow its actual causes and stay ordinary. Do not drift toward warmth, comfort or reassurance unless the events themselves justify it: no unearned encouragement, no softening a bad mood before the passage ends, no bright side the events did not produce. A neutral or low mood is as common in real life as a good one, and difficult feelings do not need to resolve within the same passage. SCRIPT FORMATTING: the script field is continuous NARRATIVE (one coherent story passage), not continuous LINES — break it into natural paragraphs with \n wherever the scene shifts, a new action begins, or a beat ends. A single unbroken block of text is not what continuous prose means.'
 
 export interface FamilyOverride {
   length?: string

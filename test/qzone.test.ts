@@ -221,6 +221,7 @@ test('qzoneExecute serializes quota reservation: concurrent posts cannot both pa
   const svc = {
     qzoneRuntime: resolveQzoneConfig({ enabled: true, dailyPostCap: 1, minIntervalMinutes: 10 }),
     serial,
+    inSerial: () => false,
     dbGet: async (_table: string, query: { createdAt: { $gte: Date } }) => rows.filter(row => row.createdAt >= query.createdAt.$gte),
     dbCreate: async (_table: string, data: Record<string, unknown>) => { const row = { id: rows.length + 1, ...data } as typeof rows[number]; rows.push(row); return row },
     dbSet: async (_table: string, where: { id: number }, patch: Record<string, unknown>) => { const row = rows.find(item => item.id === where.id); if (row) Object.assign(row, patch); return row },

@@ -3,6 +3,7 @@ import { AudioConfig, CompactionConfig, EmbeddingConfig, FailoverConfig, ModelCo
 import { BlindModeConfig, BrowserConfig, ChatActionsConfig, Config as InterludeConfig, extractSessionVoiceCount, GroupChatRule, InterludeService, LoggingConfig, MemoryConfig, OneBotAccountRule, OneBotNapCatConfig, RestWindow, RuntimeConfig, SharedStoryConfig, StickerLibraryConfig, StoryDefaults } from './service'
 import { AgencyConfig, AlterSystemConfig, ChatReactionName, ChatRhythmConfig, NativeFaceSemantic, StorySetting } from './types'
 import { HDS_INTERLUDE_VERSION } from './meta'
+import { resolveAgencyConfig } from './agency'
 import { GroupWillingnessConfig } from './group-willingness'
 import { resolveSchedulePreplanConfig, SchedulePreplanConfig, schedulePreplanWindow } from './schedule-preplan'
 import { formatLogTime, formatStoryDisplayTime } from './time'
@@ -269,7 +270,7 @@ const SchedulePreplan: Schema<SchedulePreplanConfig> = Schema.object({
 })
 
 const Agency: Schema<AgencyConfig> = Schema.object({
-  enabled: Schema.boolean().default(true).description('启用主体行动窗口。它只判断日程、隐私、设备和生活来源的联系理由，不读取或复用 Alter 情绪值。'),
+  enabled: Schema.boolean().default(false).description('启用主体行动窗口。它只判断日程、隐私、设备和生活来源的联系理由，不读取或复用 Alter 情绪值。'),
   maxWindowMinutes: Schema.natural().min(5).max(1_440).default(240).description('一张 Agency Window 最长有效时间；过期后必须由新的生活回合重新判断。'),
   minimumProactiveIntervalMinutes: Schema.natural().min(0).max(10_080).default(60).description('同一参与者两次普通主动联系之间的安全间隔；承诺型联系可以绕过。'),
   maxCandidateHours: Schema.natural().min(1).max(168).default(24).description('生活产生的主动联系候选最长保留时间；过期后自然放下。'),
@@ -444,9 +445,10 @@ const GroupChatRuleSchema: Schema<GroupChatRule> = (Schema.object({
   groupId: Schema.string().default('').description('QQ 群号。只有列在这里且启用的群会被插件处理。'),
   label: Schema.string().default('').description('群聊备注，帮助主模型理解这个群。'),
   enabled: Schema.boolean().default(true).description('是否允许插件读取并参与这个群。'),
+  assignee: Schema.string().default('').description('群受理人（机器人 QQ）：填写已启用的机器人白名单账号，启动/重载时同步到 Koishi 频道受理人；留空不修改。不会解除频道忽略标记。'),
   purpose: Schema.string().role('textarea').default('').description('这个群主要做什么，例如“同事讨论项目”或“朋友闲聊”。'),
   characterRole: Schema.string().role('textarea').default('').description('主角在群里的身份和说话位置。'),
-  responseMode: Schema.union(['mention-only', 'always']).default('mention-only').description('mention-only: 仅在被 @ 时触发主叙事；always: 所有群消息都触发主叙事'),
+  responseMode: Schema.union(['mention-only', 'always']).default('mention-only').description('mention-only: 仅在被 @ 时触发主叙事；always: 所有群消息进入上下文，是否调用主叙事仍受意愿与冷却控制。两种模式都受 Koishi 频道受理人限制。'),
   contextLimit: Schema.natural().min(4).max(100).default(20).description('进入主叙事时附带的最近群消息条数。'),
   debounceSeconds: Schema.number().min(0).max(10).default(1).description('合并短时间连续群消息后再开始主叙事的等待秒数。'),
   cooldownSeconds: Schema.natural().min(0).max(86_400).default(60).description('主角群发言后的冷却时间，避免连续刷屏。'),
@@ -454,7 +456,7 @@ const GroupChatRuleSchema: Schema<GroupChatRule> = (Schema.object({
   willingnessPreset: Schema.union([
     Schema.const('off').description('关闭（默认）：仅响应模式与冷却生效；旧数值门已启用时自动按 custom 兼容'),
     WillingnessTierChoice,
-    Schema.const('auto').description('自动：按压缩器生活状态切换（busy/asleep/idle 三态各自可配档位；睡眠时 @ 也不触发）'),
+    Schema.const('auto').description('自动：按压缩器生活状态切换；状态缺失、无效或超过 6 小时未刷新时按 idle 档位；睡眠时 @ 不直通。'),
     Schema.const('custom').description('自定义：使用下方旧数值参数'),
   ]).default('off').description('群聊发言意愿档位。'),
   willingnessAuto: GroupWillingnessAuto.default({ busy: 'quiet', idle: 'active', asleep: 'quiet' }).description('auto 档的三态映射。'),
@@ -574,9 +576,18 @@ export const Config: Schema<InterludeConfig> = Schema.object({
     autoUpdate: Schema.boolean().default(false).description('自动更新：重载时检查远端 revision,有新版本才应用。关闭时仅通过 interlude.preset.sync 手动触发。'),
     sections: Schema.array(Schema.string()).role('table').default([]).description('要同步的分区(留空 = 预设里有什么就同步什么)。可选:storyDefaults(配合"应用到当前故事"),runtime,urge,agency,memory,alterSystem,schedulePreplan,timelineDirector,chatActions,stickers,sharedStory,browser,worldSeeder,longHorizon,qzone,blindMode,logging。'),
     applyToCurrentStory: Schema.boolean().default(false).description('同时将 storyDefaults 应用到当前运行中的故事(修改角色名/人设/世界等)。'),
-  }).collapse(true).description('【扩展 18】预设同步：从 typ0-site 分享站自动拉取配置(默认关闭)。'),
-  blindMode: BlindMode.description('【维护 19】盲区模式：低频心跳的最小运行形态。'),
-  logging: Logging.description('【维护 20】日志：级别、信息密度、布局和隐私预览。'),
+    }).collapse(true).description('【扩展 18】预设同步：从 typ0-site 分享站自动拉取配置(默认关闭)。'),
+  weather: Schema.object({
+    enabled: Schema.boolean().default(false).description('启用运行时天气注入:从 Open-Meteo(免费无 Key)拉取真实天气,以 [世界事件] 剧本条目注入当前温度与天况。'),
+    latitude: Schema.number().min(-90).max(90).default(39.14).description('观测点纬度(手动模式,或自动解析失败时的回退)。'),
+    longitude: Schema.number().min(-180).max(180).default(117.18).description('观测点经度。'),
+    autoFromLocation: Schema.boolean().default(true).description('从故事设定中的地点(storySetting.location)自动解析观测点;解析失败回退手动经纬度。'),
+    skipFantasyWorld: Schema.boolean().default(false).description('手动开关:架空世界(异世界/精灵/幻想设定)跳过天气注入。开启后检测到架空关键词时不注入。'),
+    cadenceMinutes: Schema.natural().min(5).max(180).default(30).description('拉取间隔(分钟)。注入为纯数据格式("环境:22°C 小毛毛雨。"),不带建议句。'),
+  }).collapse(true).description('【扩展 19】运行时天气:真实天气 → [世界事件] 注入(默认关闭)。'),
+
+  blindMode: BlindMode.description('【维护 20】盲区模式：低频心跳的最小运行形态。'),
+  logging: Logging.description('【维护 21】日志：级别、信息密度、布局和隐私预览。'),
   mainPrompt: Schema.string().role('textarea').default('').description('⚠️ 除非有把握，否则不要修改。系统主提示词（主叙事行为指令）：与固定合约、文风和特化块协作，塑造全部回合的写作行为；留空使用内置默认，改动下回合立即生效，出问题清空即可恢复默认。'),
   chatRhythm: ChatRhythm.description('【已弃用】对话节奏：仅兼容旧配置，不再统计、干预写作或重试。').hidden(),
 })
@@ -800,7 +811,7 @@ function registerCommands(ctx: Context, service: InterludeService, config: Inter
         `已写到：${story.cursorAt.toISOString()}`,
         `主模型连接：${service.config.model.providers.find(provider => provider.useForMain && provider.enabled !== false)?.label || '未指定（按模型配置回退）'}`,
         `允许主动可见消息：${service.config.runtime.allowProactiveMessages ? '开启' : '关闭'}`,
-        `Agency Window：${service.config.agency?.enabled === false ? '关闭' : '开启'}（${story.state.agencyWindow?.activityLoad || '尚未建立'}）`,
+        `Agency Window：${resolveAgencyConfig(service.config.agency).enabled ? '开启' : '关闭'}（${story.state.agencyWindow?.activityLoad || '尚未建立'}）`,
         `—— 健康指标（自 ${new Date(health.sinceAt).toLocaleString('zh-CN')}）——`,
         `主叙事成功：${health.narrativeTotal}/${health.narrativeTotal + health.narrativeFailed}（${(health.successRate * 100).toFixed(1)}%）`,
         `结构化回复缺失：${health.structureMissing} 次（挽回 ${health.recoverySaved} 次）`,
