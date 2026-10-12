@@ -1,9 +1,23 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1440" height="560" viewBox="0 0 1440 560" role="img" aria-labelledby="title desc">
   <title id="title">HDS Interlude / 幕间系统</title>
-  <desc id="desc">纸面上的持续叙事：蓝色方窗、昼夜圆形、青绿与橙色几何拼贴。聊天在幕前发生，生活在幕间继续。</desc>
+  <desc id="desc">纸面上的持续叙事：右侧几何方块沿径向渐隐，如幕间生活的留白。聊天在幕前发生，生活在幕间继续。</desc>
+  <defs>
+    <pattern id="cubes" width="110" height="110" patternUnits="userSpaceOnUse">
+      <rect x="0" y="0" width="90" height="90" fill="#9db0c9"/>
+    </pattern>
+    <radialGradient id="fade" gradientUnits="userSpaceOnUse" cx="1152" cy="-22" r="1060">
+      <stop offset="30%" stop-color="#ffffff"/>
+      <stop offset="75%" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+    <mask id="fadeMask">
+      <rect x="660" y="-180" width="980" height="920" fill="url(#fade)"/>
+    </mask>
+    <filter id="soft" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="14"/>
+    </filter>
+  </defs>
   <rect width="1440" height="560" fill="#f7f8fa"/>
   <rect x="0.5" y="0.5" width="1439" height="559" fill="none" stroke="#e5e7eb"/>
-  <rect width="12" height="560" fill="#111827"/>
   <g font-family="Outfit, Segoe UI, Arial, sans-serif">
     <rect x="64" y="44" width="12" height="12" fill="#2563eb"/>
     <text x="88" y="56" font-size="15" font-weight="600" letter-spacing="2" fill="#475569">HDS / CONTINUOUS NARRATIVE</text>
@@ -27,26 +41,15 @@
     <text x="608" y="483" font-size="13" font-weight="600" letter-spacing="2" fill="#111827">CONTINUITY</text>
     <text x="576" y="516" font-family="Microsoft YaHei, PingFang SC, Noto Sans CJK SC, sans-serif" font-size="15" fill="#6b7280">持续生活的角色</text>
   </g>
-  <!-- Flat stage collage: a window, a day/night disc and three paper planes. -->
-  <g>
-    <path d="M876 104V424M912 104H1376" fill="none" stroke="#d9dfe7"/>
-    <rect x="966" y="128" width="288" height="288" fill="#2563eb"/>
-    <circle cx="1110" cy="272" r="99" fill="#f7f8fa"/>
-    <path d="M1110 173A99 99 0 0 0 1110 371Z" fill="#111827"/>
-    <path d="M1110 173V371M1011 272H1209" fill="none" stroke="#2563eb" stroke-width="2"/>
-    <rect x="920" y="318" width="46" height="98" fill="#ff5c33"/>
-    <rect x="1224" y="348" width="112" height="68" fill="#14b8a6"/>
-    <path d="M1336 348V416H1268Z" fill="#111827"/>
-    <rect x="1286" y="160" width="50" height="50" fill="#e5e7eb"/>
-    <path d="M1311 169V201M1295 185H1327" stroke="#9ca3af" stroke-width="1.5"/>
-    <circle cx="1293" cy="276" r="8" fill="#ff5c33"/>
-    <path d="M912 432H1376" stroke="#111827"/>
-    <path d="M920 430V434M1110 428V436M1336 430V434" stroke="#111827"/>
-    <g fill="#9ca3af">
-      <circle cx="1290" cy="118" r="2"/><circle cx="1304" cy="118" r="2"/><circle cx="1318" cy="118" r="2"/>
-      <circle cx="1290" cy="132" r="2"/><circle cx="1304" cy="132" r="2"/><circle cx="1318" cy="132" r="2"/>
+  <!-- 一条龙几何语言：重复方块 + 径向渐隐（multiply 于纸面之上），一枚蓝色方块点题。 -->
+  <g mask="url(#fadeMask)">
+    <g opacity="0.32" style="mix-blend-mode:multiply">
+      <rect x="660" y="-180" width="980" height="920" fill="url(#cubes)"/>
     </g>
+    <rect x="990" y="220" width="90" height="90" fill="#2563eb" opacity="0.9"/>
+    <rect x="1210" y="440" width="90" height="90" fill="#ff5c33" opacity="0.75"/>
   </g>
+  <circle cx="1345" cy="485" r="170" fill="#9db0c9" opacity="0.16" filter="url(#soft)"/>
   <g font-family="Outfit, Segoe UI, Arial, sans-serif" font-size="12" letter-spacing="2" fill="#6b7280">
     <text x="912" y="474">ON STAGE / BETWEEN SCENES</text>
     <text x="912" y="516">KOISHI</text>
