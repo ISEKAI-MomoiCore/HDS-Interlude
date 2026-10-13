@@ -17,6 +17,12 @@
 - **冷却豁免用户回复**：出站失败的 5 分钟端点冷却不再拦截 `userInitiated` 回复（含 `allowed=false` 显式失败态）——一次网络抖动不再让该参与者最长 5 分钟已读不回。冷却的防轰炸语义完整保留给后台与主动重试路径；用户回复若真失败仍记录并延长冷却，每条用户消息至多尝试一次。
 - **Agency 每日上限改为送达计数**：放行时预记 `proactiveContactLog` 携带 `ref`（UUID）并随消息草稿进入投递管线；投递终态失败按 `ref` 作废该条计数——被端点拦截或传输失败的主动联系不再消耗每日配额。`pending`（可恢复）失败不作废；归一化保留 `ref/voided`，重启不丢。
 
+### 打包后紧急更正（rc51 安装包构建形态）
+
+- **事故**：首个 rc51 安装包误含 tsc 的 ESM 中间产物而非 esbuild CJS bundle——插件 tsconfig 被测试向自包含版本覆盖后丢失 `emitDeclarationOnly`，全量 `yakumo build` 的 esbuild 步骤因此跳过主插件，产物为无扩展名 ESM 导入的多文件 lib，Node/Koishi 任何 loader 加载即抛错（实测 `require('./lib/index.js')` 直接失败；Linux/Docker 用户报告的启动崩溃属实）。
+- **修复**：恢复 tsconfig 继承工作区 `tsconfig.base.json`（emitDeclarationOnly），清理旧 lib 重建——`lib/index.js` 回到 21,749 行自包含 CJS bundle（rc50 同形态），require 冒烟通过；三端（GitHub/gitee 附件、桌面实例）已全部替换，新 SHA-256 `65f323546beb8abf92b230b80e3c1d7bad250d70cbed5a29fdc00dba554a17b2`。
+- **防线**：`prepack`（ensure-fresh-bundle.mjs）新增 CJS 形态校验——`lib/index.js` 出现顶层 `import/export` 即拒绝打包（已做正反双向测试）；此前它只查 mtime 新鲜度，查不出形态回归。
+
 ### 打包前复核校正
 
 - **运行时版本常量**：`HDS_INTERLUDE_VERSION` 与包版本对齐 rc51（此前启动日志仍报 rc50）。
