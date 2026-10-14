@@ -19,8 +19,10 @@ export interface GroupWillingnessConfig {
 export interface GroupWillingnessState {
     score: number;
     updatedAt: number;
+    /** 回复后跳过计数：下一次触发前需要观察的消息条数（抖动产生）。 */
+    skipCount?: number;
 }
-export type GroupWillingnessReason = 'disabled' | 'forced-mention' | 'below-threshold' | 'probability-roll' | 'asleep';
+export type GroupWillingnessReason = 'disabled' | 'forced-mention' | 'below-threshold' | 'probability-roll' | 'asleep' | 'skip-jitter';
 export interface GroupWillingnessDecision {
     state: GroupWillingnessState;
     shouldCall: boolean;
@@ -50,6 +52,14 @@ export interface AutoWillingnessConfig {
     asleep: WillingnessTier;
 }
 export declare const DEFAULT_AUTO_WILLINGNESS: AutoWillingnessConfig;
+/** 回复后跳过条数的抖动幅度（按档位）：[min, max] 条消息内随机。
+ * 效果：eager 不再每条必回（最高跳 3 条→第 4 条才可能再回），
+ * normal 从固定 2-3 条变为 1-7 条，quiet 从 3-4 条变为 2-10 条。
+ * 节奏调制：phone-focused 减少跳过（她在盯手机,回复更勤），
+ * resting/asleep 增加跳过（低能量时更少介入）。 */
+export declare const WILLINGNESS_JITTER: Record<WillingnessTier, readonly [number, number]>;
+/** 五档节奏 → 跳过条数修正（叠加在档位抖动上）。 */
+export declare const RHYTHM_SKIP_MODIFIER: Record<string, number>;
 /** 睡眠态安全余量：概率乘数（对压缩器状态过期/误判的兜底）。 */
 export declare const ASLEEP_PROBABILITY_MULTIPLIER = 0.2;
 /** lifeStatus 超过该时长未刷新时，auto 档按 idle 映射回退。 */
@@ -90,4 +100,4 @@ export declare function evaluateWillingnessGate(previous: GroupWillingnessState 
 export declare function consumeWillingnessGate(previous: GroupWillingnessState | undefined, preset: unknown, autoInput: unknown, lifeStatus: {
     status: unknown;
     updatedAt: string;
-} | undefined, legacyInput: Partial<GroupWillingnessConfig> | undefined, now: number): GroupWillingnessState;
+} | undefined, legacyInput: Partial<GroupWillingnessConfig> | undefined, now: number, rhythmAttention?: string, random?: () => number): GroupWillingnessState;

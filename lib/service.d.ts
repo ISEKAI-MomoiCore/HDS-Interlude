@@ -37,7 +37,7 @@ export interface DesktopEndpointHealth {
     lastError?: string;
     note?: string;
 }
-/** Fix#9: 分页游标改为 occurredAt+id 双键（与排序键一致）；旧 entry:<id> 继续兼容。 */
+/** 分页游标改为 occurredAt+id 双键（与排序键一致）；旧 entry:<id> 继续兼容。 */
 export interface TimelineCursor {
     occurredAt?: Date;
     id?: number;
@@ -177,6 +177,8 @@ export interface StickerLibraryConfig {
     /** API JSON mode is optional; prompt-only still asks for the compact JSON contract. */
     descriptionResponseFormat?: 'json-object' | 'prompt-only'; /** 表情包投递基址（空=自动：selfUrl → http://127.0.0.1:5140）。OneBot 实现与 Koishi 不共享文件系统时须经 HTTP 回源。 */
     deliveryBaseUrl?: string;
+    /** 投递模式：auto=路由可用走 HTTP、否则退 file://；http/file=强制。 */
+    deliveryMode?: 'auto' | 'http' | 'file';
 }
 export interface GroupChatRule {
     groupId: string;
@@ -574,17 +576,19 @@ export declare class InterludeService extends Service {
     setEmbedder(provider: NarrativeEmbedder): void;
     /** Optional typ-0 bridge hook. No sink is installed in normal Koishi use. */
     setDesktopEventSink(sink?: (event: string, payload: unknown) => void): void;
-    /** P2-4：Puppeteer 缺失提示进程内只打一次。 */
+    /** Puppeteer 缺失提示进程内只打一次。 */
     private puppeteerHintLogged;
     /** HMR 重载/停机守卫：stop() 置位后，失败源于插件卸载而非提供商故障，
      * 不再排持久化的叙事重试（重试意图存活于数据库，会在新实例上投递一条
      * 过期回复），也不再以 warn/error 刷屏。 */
     private disposed;
-    /** QQ CDN 下载链接过期（retcode -5503007）是永久性的：同一条历史图片
-     * 引用之后每次回源都必然再 400。缓存已知过期的原始 source 串（含
-     * onebot-url:/onebot-file: 前缀形态），命中即跳过网络请求与重复告警；
-     * FIFO 有界，防止长进程内存无上限增长。 */
-    private expiredImageSources;
+    /** 确定性失败的图片源负缓存：key = 原始 source 串，value = 首次失败原因。
+     * 覆盖两类永不自愈的失败：① QQ CDN 链接过期（HTTP 400 / retcode
+     * -5503007）；② 结构性不可用——非白名单域（如实测出现的 koishi.js.org
+     * 资源链接）、非法 source、超限 data-URI、超限字节数、非图片 MIME。
+     * 命中即跳过网络与重复告警；FIFO 有界。瞬时性失败（空响应、超时、
+     * 网络错误、会话缺失导致的 file 引用不可解析）不入缓存。 */
+    private deadImageSources;
     /** typ-0 bridge 在安装时注册后台投递通道；卸载时传 undefined 复原。 */
     setDesktopDeliveryHandler(handler?: InterludeService['desktopDeliveryHandler']): void;
     setDesktopOnebotActionHandler(handler?: InterludeService['desktopOnebotActionHandler']): void;
@@ -1006,8 +1010,15 @@ export declare class InterludeService extends Service {
      * factual result into the text narrator's current event. */
     private describeCurrentImages;
     isExpiredImageSource(source: string): boolean;
-    private rememberExpiredImageSource;
+    /** 已判死来源的首次失败原因（未判死返回 undefined）。 */
+    deadImageSourceReason(source: string): string;
+    private rememberDeadImageSource;
     private fetchNativeImage;
+    /** QQ CDN 媒体 URL 会 302 跳转（SnowLuma stream-download 同款结论），
+     * 原先的 redirect:'error' 把每一跳都变成非过期错误：不入负缓存、每轮
+     * 重复失败。改为手动逐跳跟随（至多 3 跳），每跳按入口同一规则校验
+     * 目标域，保住 SSRF 边界；跳向不受信域视为确定性失败判死。 */
+    private fetchImageThroughRedirects;
     private fetchNativeImageUncached;
     /** Convert adapter/fetched bytes into one bounded native-vision attachment.
      * Animated stickers are rendered to a representative PNG frame when the
@@ -1157,7 +1168,7 @@ export declare class InterludeService extends Service {
     private applyFollowUpResolutions;
     private deferUnresolvedDueFollowUps;
     private appendProactiveCheck;
-    /** Fix#2: schedule_preplan 的主键就是 storyId，Minato 拒绝含主键的 update——
+    /** schedule_preplan 的主键就是 storyId，Minato 拒绝含主键的 update——
      * 混在改写循环里必抛，导致后续 participantId 回填被跳过（隐私脱敏失效）。
      * 改为读旧行→建新行→删旧行（每故事仅一行，无并发窗口问题）。 */
     private migrateSchedulePreplanRecord;
@@ -1212,6 +1223,8 @@ export declare class InterludeService extends Service {
     private get urgeConfig();
     private get effectiveUrgeRuntime();
     private scheduleUrgeAdvance;
+    /** 入站消息→节奏提升:asleep/resting → phone-focused(source: incoming)。 */
+    private elevateRhythmOnIncoming;
     private isAutomaticAdvancePaused;
     private dueConversationFollowUps;
     /** Remove elapsed short passes after their single writing turn. The next
@@ -1296,7 +1309,7 @@ export declare class InterludeService extends Service {
     /** 加载并补齐端点注册表（幂等）：active 故事/参与者/启用的群规则派生行。 */
     /** 加载并补齐端点注册表（幂等 + 单飞：并发调用共享同一次 reconcile）。 */
     private endpointRegistryInFlight;
-    /** 端点/别名运行期写队列（P1-2）：所有注册表变更串行执行，杜绝并发"查后写"重复。 */
+    /** 端点/别名运行期写队列：所有注册表变更串行执行，杜绝并发"查后写"重复。 */
     private endpointWriteQueue;
     private enqueueEndpointWrite;
     /** Keep health snapshots durable without making connector lifecycle writes part of
@@ -1317,8 +1330,8 @@ export declare class InterludeService extends Service {
     private endpointForDelivery;
     private ensureEndpointRegistry;
     private reconcileEndpointRegistry;
-    /** 运行期增量登记（P1-2）：故事/参与者创建时同步 upsert 端点行。
-     * P1-1/P1-2：经写队列串行执行；先落库成功才进内存；失败置脏（下次 reconcile
+    /** 运行期增量登记：故事/参与者创建时同步 upsert 端点行。
+     * 经写队列串行执行；先落库成功才进内存；失败置脏（下次 reconcile
      * 重试）——绝不留下"进程内有、重启即无"的幽灵端点，也不让登记失败被静默
      * 吞掉后触发陌生账号拒绝（置脏保证 findStory 下次会重新 reconcile 补上）。 */
     private registerStoryRoleEndpointRow;
@@ -1340,7 +1353,7 @@ export declare class InterludeService extends Service {
     /** M1b 只读视图：列出当前别名（管理命令用）。 */
     listStoryAliases(): StoryAliasRecord[];
     /** 注册一个角色端点到既有故事（幂等；accountKey 被其他故事占用时拒绝）。
-     * P1-2：经写队列串行执行——并发 add 不会双双重叠冲突检查；P1-1：落库失败
+     * 经写队列串行执行——并发 add 不会双双重叠冲突检查；落库失败
      * 不进内存且返回失败。 */
     addStoryEndpoint(story: InterludeStory, platform: string, selfId: string, channelKind?: 'qq' | 'wechat'): Promise<{
         ok: boolean;
@@ -1413,12 +1426,12 @@ export declare class InterludeService extends Service {
     /**
      * M1a 出站地址解析（v3 §五）：注册表命中且启用时以注册表为准，并核对旧字段
      * （漂移只告警一次）；未命中/注册表未加载时回落旧字段——单平台零影响。
-     * P2-11：同一 owner 多行时不再"取第一行"——优先最近观测过连接的端点，
+     * 同一 owner 多行时不再"取第一行"——优先最近观测过连接的端点，
      * 平手按 createdAt 稳定排序，并一次性告警（M2 起多端点归因的正确性基础）。
      */
     private endpointAddressSync;
     /** 出站结果回写端点状态（v3 §四 deliverable 维；内存无副作用）。
-     * P2-11：提供 address 时只更新地址匹配的端点——多端点下不串刷兄弟端点。 */
+     * 提供 address 时只更新地址匹配的端点——多端点下不串刷兄弟端点。 */
     private noteEndpointOutbound;
     stop(): Promise<void>;
     private weatherSweep;
@@ -1432,7 +1445,7 @@ export declare class InterludeService extends Service {
      * 低重要性只在推进/跟进回合注入，避免劫持对话回合。 */
     private drainDueSeededEvents;
     private compactStories;
-    /** Fix#8: 复核退避/对话推迟会让 materializedDays 的 [今天,明天] 槽位缺失，窗口静默变空。
+    /** 复核退避/对话推迟会让 materializedDays 的 [今天,明天] 槽位缺失，窗口静默变空。
      * 取记录时若两个槽位都没有物化天，先本地无模型重物化（锚定今天）再算窗口。 */
     private currentSchedulePreplanWindow;
     private getSchedulePreplan;
@@ -1470,7 +1483,6 @@ export declare class InterludeService extends Service {
     /** 手动/强制压缩的三阶段入口:Phase1 队列内快照,Phase2 队列外模型+embedding,
      * Phase3 队列内轻量落库——与后台调度器路径同构,不阻塞直播回合。 */
     private compactThreePhase;
-    private compactUnlocked;
     /** Everything up to the expensive compactor call: cheap reads plus the due
      * checks. Runs inside the story serial queue, but the model call itself must
      * not — a queued compactor request would delay the next live turn. */
@@ -1516,7 +1528,12 @@ export declare class InterludeService extends Service {
     /** 当前异步调用链正在其中执行的故事串行域(用于嵌套写路径判断"已在队列内,勿再排队")。 */
     private serialScope;
     private inSerial;
+    /** serial 看门狗(rc50 issue 报告)：任务占用队列超 2 分钟打 warn——
+     * 单次网络挂起曾把整条执行链永久堵死且无任何日志,重启才能恢复。 */
+    private serialWatchdog;
     private serial;
+    /** 看门狗扫描：占用超 2 分钟的任务告警一次（每 token 只报一次）。 */
+    private reportStuckSerialQueues;
     private dbWrite;
     /**
      * A SQLite/sql.js read can fail during the same short filesystem hiccup as a
@@ -1562,6 +1579,12 @@ export declare function extractSessionFileFacts(session: Session): SessionFileFa
 /** 群聊入站没有原生附件通道：把 <img>/<file>/<record> 等元素标记转成事实
  * 占位（保留"发过什么"的信息），URL 污水不进群上下文，也不再被模型复述。 */
 export declare function describeGroupAttachments(content: unknown): string;
+/** 出站传输超时包装（rc50 issue 报告）：OneBot 实现不回应时把"永久挂起"
+ * 变成有界等待，防止按故事串行的执行链被单次发送永久堵死。默认 30s 与
+ * send_forward_msg 一致。与 withTimeout 的区别：超时错误带 `transport-timeout`
+ * 标记与调用点标签——上层把它当作"结果未知"（账本记 pending 交由待投递
+ * 补偿幂等收尾），而不是确定失败；迟到回执由 deliveryExecutionKey 去重。 */
+export declare function withTransportTimeout<T>(promise: Promise<T>, label: string, timeoutMs?: number): Promise<T>;
 /** Audio files arrive as original bytes (unlike SILK voice records). Accept
  * only formats the OpenAI-compatible input_audio channel documents. */
 export declare function guessAudioFormat(bytes: Buffer, hintedName?: string): string;
@@ -1579,6 +1602,10 @@ export declare function calibratedNativeFaceWillingness(semantic: NativeFaceSema
 export declare function stableStickerAssetId(filePath: string, hash: string): string;
 /** 表情包投递 URL：Koishi HTTP 路由 + assetId（OneBot 实现回源下载） */
 export declare function stickerDeliveryUrl(base: string, assetId: string): string;
+/** 表情包本地文件 URI：file:/// + 正斜杠绝对路径（Linux 与 Windows 盘符
+ * 两种形态都产出三斜杠标准形；SnowLuma/NapCat 的图片段按 file:// 与
+ * 含分隔符的本地路径解析，见 SnowLuma element-codecs 的 file 优先规则）。 */
+export declare function stickerFileUrl(absolutePath: string): string;
 /** Extract only explicit clock statements from a live user message. This is a
  * small factual aid, not an attempt to infer every temporal expression. */
 export declare function extractUserReportedTimes(content: string, now: Date, timezone: string): UserReportedTime[];
@@ -1606,6 +1633,7 @@ export declare function normalizeGroupVisibleReply(raw: NarrativeDecision['group
 export declare function hoistParticipantlessInteraction<T extends NarrativeDecision>(decision: T, phase: NarrativeRequest['phase']): T;
 export declare function requiresVisibleReplyRecovery(phase: NarrativeRequest['phase'], groupContext: GroupContext | undefined, decision: NarrativeDecision): boolean;
 export declare function visibleReplyMode(decision: NarrativeDecision, phase: NarrativeRequest['phase'], groupContext?: GroupContext): string;
+export declare function sanitizeAndClampVisibleContent(value: unknown, maxCharacters: number, separator?: string): string;
 /** 可见回复的气泡拆分（纯函数，可单测）。
  * 小模型适配开关：模型没有按合约输出 <sep/> 而是用换行分条时，把换行运行
  * （含单个换行与 CRLF）视作气泡边界。仅在内容不含显式分隔符时转换——
@@ -1647,6 +1675,11 @@ export declare function manageSessionDenialReason(input: {
     };
     managers?: string[];
 }): ManageSessionDenial | undefined;
+/** 模型偶发把 script 输出成对象（{tag,content} / {entries:[…]}，形态模仿
+ * recentScript 的载荷结构）。散文完整，做无损归一而非弃稿：对象直取散文键、
+ * entries 按序拼接、顶层数组同法。归一发生在 no-usable-script 闸门之前
+ * （decide() 返回链），normalizeDecision 内再兜一道。 */
+export declare function normalizeScriptField(raw: unknown): string;
 export declare function hasRequiredNarrativeScript(value: NarrativeDecision | undefined | null): boolean;
 export declare function resolveBlindModeConfig(value?: Partial<BlindModeConfig>): BlindModeConfig;
 /** Scene compaction may update a tiny roster only with explicit observed

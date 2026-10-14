@@ -33,5 +33,11 @@ export declare function normalizeProactiveContactLog(value: unknown): NonNullabl
 export declare function countProactiveContactsInWindow(log: StoryState['proactiveContactLog'] | undefined, participantId: string, now: Date, windowMs?: number): number;
 export declare function appendProactiveContact(log: StoryState['proactiveContactLog'] | undefined, participantId: string, at: Date, endpointId?: string, ref?: string): NonNullable<StoryState['proactiveContactLog']>;
 export declare function normalizeLifeStatus(value: unknown): StoryState['lifeStatus'];
+/** 五档节奏归一化：合法档位+有效时间戳+合法来源才保留。 */
+export declare function normalizeLifeRhythm(value: unknown): StoryState['lifeRhythm'];
+/** 节奏过期判定（>2h 无更新视为 stale，退回 restWindows 兜底）。 */
+export declare function lifeRhythmStale(rhythm: StoryState['lifeRhythm'] | undefined, now?: number): boolean;
+/** 旧三值 lifeStatus → 五档映射（读侧兼容：升级前的存量状态在首次读取时转换）。 */
+export declare function lifeRhythmFromLegacyStatus(status: StoryState['lifeStatus'] | undefined): StoryState['lifeRhythm'] | undefined;
 export declare function normalizeTimelineCarry(value: unknown): string[];
 export declare function normalizeContinuitySnapshot(value: unknown): ContinuitySnapshot | undefined;

@@ -324,7 +324,7 @@ export function normalizeLongArcDecision(
   if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
   const raw = value as Record<string, unknown>
   const explicitDecision = raw.decision
-  // P2-1：缺省 decision 从 activate 改为 dormant——模型未显式声明催化意图时
+  // 缺省 decision 从 activate 改为 dormant——模型未显式声明催化意图时
   // 保守不写入（无 active 指导产生），避免 legacy 格式绕过催化结构校验。
   const decision: LongArcDecision = explicitDecision === 'dormant' || explicitDecision === 'prime' || explicitDecision === 'activate'
     ? explicitDecision : 'dormant'
@@ -362,7 +362,7 @@ export function normalizeLongArcDecision(
     : { id: stages[0].id, name: stages[0].name, purpose: stages[0].objective }
 
   const firstExpression = normalizeFirstExpression(raw.firstExpression)
-  // P2-1：催化结构校验按解析后的 decision 判定（不再仅看 explicitDecision）——
+  // 催化结构校验按解析后的 decision 判定（不再仅看 explicitDecision）——
   // 任何要写入 prime/activate 行的输出都必须携带完整的首次表达与回应分支。
   if (decision === 'prime' || decision === 'activate') {
     if (!firstExpression) return undefined

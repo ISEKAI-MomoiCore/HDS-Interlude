@@ -17,6 +17,52 @@
 - **冷却豁免用户回复**：出站失败的 5 分钟端点冷却不再拦截 `userInitiated` 回复（含 `allowed=false` 显式失败态）——一次网络抖动不再让该参与者最长 5 分钟已读不回。冷却的防轰炸语义完整保留给后台与主动重试路径；用户回复若真失败仍记录并延长冷却，每条用户消息至多尝试一次。
 - **Agency 每日上限改为送达计数**：放行时预记 `proactiveContactLog` 携带 `ref`（UUID）并随消息草稿进入投递管线；投递终态失败按 `ref` 作废该条计数——被端点拦截或传输失败的主动联系不再消耗每日配额。`pending`（可恢复）失败不作废；归一化保留 `ref/voided`，重启不丢。
 
+### 代码审查修复与功能增强（2026-10-15 批次）
+
+**Urge 推进系统重构（乘法模型 + 五档生活节奏）**：
+- `planUrge` 从线性插值改为乘法公式 `base / (densityFactor × rhythmFactor)`——对话密度与生活节奏两个独立因子相乘，hot 区间不再截断正常通道
+- 新增五档生活节奏 `lifeRhythm`（phone-focused ×1.4 / available ×1.0 / occupied ×0.7 / resting ×0.5 / asleep ×0.15），由**压缩器**主写、**主叙事 urge 交接**可覆盖、**用户消息到达**即时提升（asleep/resting → phone-focused）
+- `restWindows` 从"替换间隔"降级为"无节奏数据时的兜底倍率"（`restMultiplier` 默认 0.6）
+- 半衰期默认从 45min 提高到 90min（对话后高密度持续期翻倍）
+- 新配置：`compaction.sideTaskMaxTokens`（侧端 JSON 任务输出预算，默认 4096，0=不限）、`urge.advanced.activeMultiplier`（默认 1.4）、`urge.advanced.restMultiplier`（默认 0.6）
+- 群聊意愿新增**回复后跳过抖动**：五档幅度表（eager 0-3 条 / normal 0-6 / quiet 1-9）× 节奏调制（phone-focused -1 / resting +2 / asleep +3），@ 直通不清零计数
+- Alter 兜底 max_tokens 从 500 抬到 2000
+
+**rc50 issue 报告九项修复**：
+- 问题二（P0）：七处发送/OneBot 调用加 `withTransportTimeout`（30s 默认，超时→"结果未知"记 pending 交补偿幂等）；serial 看门狗（占用 >2min 告警带任务起点栈）
+- 问题三：lite 档补表情包/聊天动作/引用回复三段说明（条件展开）
+- 问题四：`requiresVisibleReplyRecovery` 携带动作字段时不判回复缺失（只发表情包不配文字合法）
+- 问题五：`reconcileTransportReferences` 为 `localMedia`/`nativeFace`/`messageReactions` 补两层嵌套提权
+- 问题六：`normalizeScriptField` 纯函数归一对象/entries/数组形态的 script 字段（decide() 返回链接，闸门前生效）
+- 问题七：`repairBareQuotes` 裸引号修补候选（排在括号平衡扫描之前）
+- 问题八：模型失败时保留原始输出快照（`safeJsonPreview`/截断原文）
+- 问题九：`gxh.vip.qq.com` 加入信任域
+- 问题十：off 档日志区分（`full(off→legacy 完整合约)`）；`sideSpecialty` 支持 standard
+
+**issue #3（群聊隐私回声）修复**：
+- `normalizeDecision` 层新增内容回声闸：群目标 cross-action 内容与 `interaction.reply` 重叠（完全一致/包含/bigram Jaccard > 0.55）时丢弃并留痕
+- 最短长度守卫（≥6 字符才做包含判定，防止短回复误杀）
+- `sendCrossGroupMessage` 无 scriptEvent 时打不可追溯警告
+
+**issue #4（引号层级）修复**：
+- `sanitizeAndClampVisibleContent` 加引号层级提升：成对中文弯单引号 `‘...’` → `“...”`（剧本外层 `“”` 剥掉后内层应升为第一层）
+
+**世界播种器天气领地让渡**：
+- 实况天气生效的故事，播种器让出天气领地（nature 切面换替身 + 硬排除规则 + weather-guard 校验闸）
+- 架空世界/天气关闭保持模型即兴（它们没有别的天气来源）
+
+**代码审查修复（moderate 级）**：
+- `serial` 看门狗 token 改为任务实际开始时写入，且不被后续排队任务覆盖
+- `withTransportTimeout` 用结构化标记替代子串匹配识别超时
+- `isGroupEchoOfPrivateReply` 加最短长度守卫（≥6 字符才做包含判定）
+- Urge `rhythmAttention` 只在本次交接显式提供时写入 `lifeRhythm`（防止档位永久"新鲜"导致 stale 永不触发）
+- `weather.ts` 五处修复：`Number()` null→0 坐标错位 / 快照 TTL==sweep 周期导致刷新率减半 / weather_code undefined / 负地理编码缓存 / 注释全角冒号
+- `interlude.reset` 补删 `preset-sync-state.json`（与 `database.clear` 一致）
+- `normalizeLifeRhythmDraft` 接入 service 消费点（压缩器输出的五档节奏经校验后落库）
+- 群发/贴纸/表情回应路径的 transport-timeout 待接入 pending 语义（当前仅私聊路径已修）
+
+**天气功能测试**（15 项专项）：配置归一化/架空判定/WMO 码映射/手动经纬度/自动地理编码/编码失败回退/缓存/注入格式
+
 ### 打包后紧急更正（rc51 安装包构建形态）
 
 - **事故**：首个 rc51 安装包误含 tsc 的 ESM 中间产物而非 esbuild CJS bundle——插件 tsconfig 被测试向自包含版本覆盖后丢失 `emitDeclarationOnly`，全量 `yakumo build` 的 esbuild 步骤因此跳过主插件，产物为无扩展名 ESM 导入的多文件 lib，Node/Koishi 任何 loader 加载即抛错（实测 `require('./lib/index.js')` 直接失败；Linux/Docker 用户报告的启动崩溃属实）。

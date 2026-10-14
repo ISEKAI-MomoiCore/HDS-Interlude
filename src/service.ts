@@ -14,7 +14,8 @@ import {
   shouldTriggerLongHorizon,
 } from './long-arc'
 import { createWorldSeeder, parseWorldSeedEvents, resolveWorldSeederRuntime, seedDomainForRun, validateSeedEvent, type SeedValidationInput, type WorldSeedDomain, type WorldSeeder } from './world-seeder'
-import { fetchWeatherSnapshot, lastWeatherSnapshot, resolveWeatherConfig, type WeatherConfig, type WeatherSnapshot } from './weather'
+import { fetchWeatherSnapshot, isFantasyStory, lastWeatherSnapshot, resolveWeatherConfig } from './weather'
+import { lifeRhythmStale, lifeRhythmFromLegacyStatus } from './story-state'
 import { callQzoneAction, evaluateQzoneGate, matchQzoneFeedContent, normalizeQzoneFeedEntry, normalizeQzoneMsgEntry, probeQzoneAvailable, qzoneFeedCandidates, qzoneIntentFromPayload, qzoneReactionDeltas, qzoneRecordsForEndpoint, qzoneVisibilityLabel, resolveQzoneConfig, QzoneActionError, type QzoneActionCaller, type QzoneActionKind, type QzoneConfig, type QzoneFeedEntry, type QzoneMsgEntry, type QzonePostRecord } from './qzone'
 import {
   channelContextMetadata, deriveGroupEndpoint, deriveParticipantUserEndpoint, deriveStoryRoleEndpoint,
@@ -30,10 +31,10 @@ import { createHash, randomUUID } from 'node:crypto'
 import { createTurnEngine, shouldSupersedeRequest, type TurnEngine, type TurnBufferedNarrativeTurn as BufferedNarrativeTurn, type TurnBufferedUserMessage as BufferedUserMessage } from './turn-engine'
 import { describeHttpError } from './http-proxy'
 import { createScheduler, type Scheduler } from './scheduler'
-import { UrgeConfig, resolveUrgeConfig, normalizeUrgeState, urgeUserEvent, planUrge, commitUrge, acknowledgeUrge, urgeBurstActive } from './urge'
+import { UrgeConfig, resolveUrgeConfig, normalizeUrgeState, urgeUserEvent, planUrge, commitUrge, acknowledgeUrge, urgeBurstActive, ATTENTION_MULTIPLIERS, type UrgeRhythmInput } from './urge'
 import { extname, relative, resolve, sep } from 'node:path'
 import { createReadStream } from 'node:fs'
-import { AudioConfig, compactPromptEntries, createCompactor, createEmbedder, createNarrator, createStickerDescriber, createVisionDescriber, detectMessageRepetition, formatTokenUsageLine, isContextDisposedError, ModelConfig, promptVisibleMessageContent, recentScriptOwnership, StickerDescriber, StickerDescription, TokenUsageRecord, VisionDescriber } from './narrator'
+import { AudioConfig, compactPromptEntries, createCompactor, createEmbedder, createNarrator, createStickerDescriber, createVisionDescriber, detectMessageRepetition, formatTokenUsageLine, isContextDisposedError, ModelConfig, normalizeLifeRhythmDraft, promptVisibleMessageContent, recentScriptOwnership, StickerDescriber, StickerDescription, TokenUsageRecord, VisionDescriber } from './narrator'
 import { formatModelRouting, ModelRoutingTable, resolveModelRouting } from './model-routing'
 import {
   advanceAlterSystem, alterHistoryForScope, alterScopeCoolingDown, alterScopeValue, calculateAlterThreshold,
@@ -144,7 +145,7 @@ function parseDesktopTimelineDate(value: unknown) {
   return Number.isNaN(date.getTime()) ? undefined : date
 }
 
-/** Fix#9: 分页游标改为 occurredAt+id 双键（与排序键一致）；旧 entry:<id> 继续兼容。 */
+/** 分页游标改为 occurredAt+id 双键（与排序键一致）；旧 entry:<id> 继续兼容。 */
 export interface TimelineCursor { occurredAt?: Date, id?: number }
 export function parseTimelineCursor(cursor: string | undefined): TimelineCursor | undefined {
   if (typeof cursor !== 'string' || !cursor) return undefined
@@ -328,7 +329,7 @@ type PreparedCompaction = PreparedCompactionSkip | PreparedCompactionRun
 // arbitrary user-provided URLs from becoming an internal-network fetch proxy.
 function isTrustedImageHost(hostname: string) {
   const host = hostname.toLowerCase().replace(/\.$/, '')
-  const allowed = ['gchat.qpic.cn', 'c2cpicdw.qpic.cn', 'multimedia.nt.qq.com.cn', 'thirdqq.qlogo.cn', 'q.qlogo.cn']
+  const allowed = ['gchat.qpic.cn', 'c2cpicdw.qpic.cn', 'multimedia.nt.qq.com.cn', 'thirdqq.qlogo.cn', 'q.qlogo.cn', 'gxh.vip.qq.com']
   return allowed.some(domain => host === domain || host.endsWith(`.${domain}`))
 }
 
@@ -460,6 +461,8 @@ export interface StickerLibraryConfig {
   /** API JSON mode is optional; prompt-only still asks for the compact JSON contract. */
   descriptionResponseFormat?: 'json-object' | 'prompt-only'  /** 表情包投递基址（空=自动：selfUrl → http://127.0.0.1:5140）。OneBot 实现与 Koishi 不共享文件系统时须经 HTTP 回源。 */
   deliveryBaseUrl?: string
+  /** 投递模式：auto=路由可用走 HTTP、否则退 file://；http/file=强制。 */
+  deliveryMode?: 'auto' | 'http' | 'file'
 }
 
 export interface GroupChatRule {
@@ -891,7 +894,7 @@ export class InterludeService extends Service {
     traceId?: string, processingId?: string,
     /** M3：模型显式选择的目标端点（B1-1 桥接透传；缺省按 selfId 路由）。 */
     endpointId?: string,
-    /** P1-1：业务幂等键（scriptEvent.eventId + bubbleIndex），重试间稳定。
+    /** 业务幂等键（scriptEvent.eventId + bubbleIndex），重试间稳定。
      * 宿主 outbox 据此跨 deliveryId 去重——迟到回执场景下 worker 30s 后用新
      * deliveryId 重发时，同一业务消息不会被再次发给用户。 */
     intentKey?: string,
@@ -1046,7 +1049,7 @@ export class InterludeService extends Service {
     if (this.backgroundStarted) return
     this.backgroundStarted = true
     activeServiceForEndpoints = this  // M2：sameParticipantEndpoint 集合匹配读注册表
-    // P2-9：连接器生命周期接入端点在线状态——连接/断开即时回写，不再只靠
+    // 连接器生命周期接入端点在线状态——连接/断开即时回写，不再只靠
     // 出入站间接刷新（管理命令显示的在线状态因此不再滞后）。
     // Koishi/Satori 的 Status.ONLINE 是数字枚举 1，不是字符串 "active"。
     this.ctx.on('bot-status-updated', bot => {
@@ -1081,6 +1084,7 @@ export class InterludeService extends Service {
       this.reportStandaloneOperation('diagnostic', 'warn', '群消息离线补拉异常 错误=%s', error)), 15 * Time.second)
     // Life advancement and memory compaction are both serialized per story.
     const sweepInterval = Math.max(1, this.config.runtime.sweepIntervalMinutes)
+    this.ctx.setInterval(() => this.reportStuckSerialQueues(), 60 * Time.second)
     this.ctx.setInterval(() => {
       void this.sweep().catch(error => this.reportStandalone('error', '后台推进失败 错误=%s', error))
       // P1：bot-status-updated 丢失时（适配器 getLogin 失败、事件早于注册表
@@ -1322,17 +1326,19 @@ export class InterludeService extends Service {
 
   /** Optional typ-0 bridge hook. No sink is installed in normal Koishi use. */
   setDesktopEventSink(sink?: (event: string, payload: unknown) => void) { this.desktopEventSink = sink; this.desktopBridgeActive = !!sink }
-  /** P2-4：Puppeteer 缺失提示进程内只打一次。 */
+  /** Puppeteer 缺失提示进程内只打一次。 */
   private puppeteerHintLogged = false
   /** HMR 重载/停机守卫：stop() 置位后，失败源于插件卸载而非提供商故障，
    * 不再排持久化的叙事重试（重试意图存活于数据库，会在新实例上投递一条
    * 过期回复），也不再以 warn/error 刷屏。 */
   private disposed = false
-  /** QQ CDN 下载链接过期（retcode -5503007）是永久性的：同一条历史图片
-   * 引用之后每次回源都必然再 400。缓存已知过期的原始 source 串（含
-   * onebot-url:/onebot-file: 前缀形态），命中即跳过网络请求与重复告警；
-   * FIFO 有界，防止长进程内存无上限增长。 */
-  private expiredImageSources = new Map<string, true>()
+  /** 确定性失败的图片源负缓存：key = 原始 source 串，value = 首次失败原因。
+   * 覆盖两类永不自愈的失败：① QQ CDN 链接过期（HTTP 400 / retcode
+   * -5503007）；② 结构性不可用——非白名单域（如实测出现的 koishi.js.org
+   * 资源链接）、非法 source、超限 data-URI、超限字节数、非图片 MIME。
+   * 命中即跳过网络与重复告警；FIFO 有界。瞬时性失败（空响应、超时、
+   * 网络错误、会话缺失导致的 file 引用不可解析）不入缓存。 */
+  private deadImageSources = new Map<string, string>()
   /** typ-0 bridge 在安装时注册后台投递通道；卸载时传 undefined 复原。 */
   setDesktopDeliveryHandler(handler?: InterludeService['desktopDeliveryHandler']) { this.desktopDeliveryHandler = handler }
 
@@ -1656,7 +1662,7 @@ export class InterludeService extends Service {
     if (this.sharedStoryConfig.enabled) {
       // Shared mode deliberately has one canonical active story in the whole
       // Koishi instance. Sandbox and OneBot must not run parallel lives.
-      // M1b（v3 §三/§六）+ M1 审计修复 P1-1：端点注册表与别名先于"按账号推导
+      // M1b（v3 §三/§六）+ M1 审计修复 端点注册表与别名先于"按账号推导
       // ID"；注册表就绪后，未注册的 OneBot 账号直接判为无故事——绝不落到
       // 全局 fallback，也不触发 transport 自愈改绑（那会把主剧本绑到陌生
       // 账号上）。账号迁移只能经 interlude.story.endpoint add 显式完成。
@@ -1684,7 +1690,7 @@ export class InterludeService extends Service {
             return undefined
           }
         } catch (error) {
-          // P1-3：注册表已就绪后的解析异常=数据/存储故障，拒绝本次入站（不落
+          // 注册表已就绪后的解析异常=数据/存储故障，拒绝本次入站（不落
           // 全局 fallback，防止陌生账号绕过隔离触发重绑）；仅冷启动（注册表
           // 自身未能加载）时回落旧路径维持可用性。
           if (this.endpointRegistryReady) {
@@ -1757,7 +1763,7 @@ export class InterludeService extends Service {
   async findParticipant(session: Session, story?: InterludeStory) {
     const resolved = story ?? await this.findStory(session)
     if (!resolved) return undefined
-    // M1 审计修复 P1-6：注册表 user 端点优先——链接端点与地址变更后的匹配
+    // M1 审计修复 注册表 user 端点优先——链接端点与地址变更后的匹配
     // 不再依赖旧字段；未命中/异常回落旧字段比对（单平台等价）。
     try {
       const hit = await this.resolveInboundEndpointFor({ platform: session.platform, selfId: String(session.selfId ?? resolved.selfId), userId: String(session.userId ?? '') })
@@ -1812,8 +1818,8 @@ export class InterludeService extends Service {
       return raced
     }
     await this.ensureContinuity(story, now)
-    // P1-2：新建故事同步登记角色端点与别名——findStory 的陌生账号拒绝
-    // （P1-1）依赖"本故事账号必然已注册"这一不变式。
+    // 新建故事同步登记角色端点与别名——findStory 的陌生账号拒绝
+    // 依赖"本故事账号必然已注册"这一不变式。
     await this.registerStoryRoleEndpointRow({ id: story.id, platform: story.platform, selfId: story.selfId })
     if (session.isDirect) await this.ensureParticipant(story, session, now)
     await this.appendEntry(story.id, {
@@ -1953,7 +1959,7 @@ export class InterludeService extends Service {
       if (!raced) throw error
       return raced
     }
-    // P1-2：新参与者同步登记用户端点——入站匹配（P1-6）依赖注册表先行。
+    // 新参与者同步登记用户端点——入站匹配依赖注册表先行。
     await this.registerParticipantUserEndpointRow({ id: participant.id, platform: participant.platform, selfId: participant.selfId, userId: participant.userId })
     await this.appendEntry(story.id, {
       kind: 'participant-joined', actor: 'system',
@@ -2203,7 +2209,7 @@ export class InterludeService extends Service {
   private async purgeAllStoryDataUnlocked(storyId: string) {
     this.invalidateBufferedNarratives(storyId)
     this.invalidateStoryTasks(storyId)
-    // Fix#3: 软删后历史向量缓存必须失效，否则语义召回继续注入已删除内容直至重启。
+    // 软删后历史向量缓存必须失效，否则语义召回继续注入已删除内容直至重启。
     this.invalidateHistoryVectors(storyId)
     await this.purgeTable('interlude_script_entry', { storyId }, {
       kind: 'redacted', actor: 'system', content: '[管理员已删除剧本内容]', metadata: { redacted: true },
@@ -2546,6 +2552,9 @@ export class InterludeService extends Service {
     // This lets an arriving message invalidate a model request that is about
     // to persist, and lets a due split segment stop before transport begins.
     this.signalIncomingInterruption(story, participant)
+    // 用户消息到达=她显然在看手机:asleep/resting 立即提升为 phone-focused,
+    // 不等主叙事或压缩器——节奏变化应与触发事件同步(推进密度立刻跟上)。
+    this.elevateRhythmOnIncoming(story.id, receivedAt)
     const forward = await this.readForward(session)
     const userInput = this.describeUserEvent(story, session, forward)
     // M1a 端点层（解析在故事队列外）：注册表命中才标注通道上下文/刷新端点状态，
@@ -2741,8 +2750,9 @@ export class InterludeService extends Service {
     const tierLabel = formatWillingnessGateDiagnosis(willingness.diagnosis)
     if (!hasAudio && !willingness.shouldCall) {
       this.reportOperation('diagnostic', 'debug', story, 'user-message',
-        '群聊意愿未触发模型调用 群=%s 分数=%s 概率=%s 原因=%s 档位=%s', turn.groupId,
-        willingness.state.score.toFixed(3), willingness.probability.toFixed(3), willingness.reason, tierLabel)
+        '群聊意愿未触发模型调用 群=%s 分数=%s 概率=%s 原因=%s 档位=%s 跳过=%d', turn.groupId,
+        willingness.state.score.toFixed(3), willingness.probability.toFixed(3), willingness.reason, tierLabel,
+        willingness.state.skipCount ?? 0)
       if (this.bufferedGroupTurns.get(key) === turn && !turn.messages.length && !turn.timer) this.bufferedGroupTurns.delete(key)
       return
     }
@@ -2892,7 +2902,7 @@ export class InterludeService extends Service {
         )
         : false
       if (groupDelivery.deliveredSegments.length || completedReactions || stickerDelivered || nativeFaceDelivered) {
-        this.groupWillingness.set(key, consumeWillingnessGate(this.groupWillingness.get(key), turn.rule.willingnessPreset, turn.rule.willingnessAuto, decodeStoryState(story.state).lifeStatus, turn.rule.willingness, Date.now()))
+        this.groupWillingness.set(key, consumeWillingnessGate(this.groupWillingness.get(key), turn.rule.willingnessPreset, turn.rule.willingnessAuto, decodeStoryState(story.state).lifeStatus, turn.rule.willingness, Date.now(), decodeStoryState(story.state).lifeRhythm?.attention))
       }
       // Other conversations use the same delivery ledger as private turns.
       if (result.messages.length) await this.deliverOutgoingMessages(snapshot.story, result.messages)
@@ -2968,15 +2978,17 @@ export class InterludeService extends Service {
       }
       attempts += batch.length
       const images = await Promise.all(batch.map(async ref => {
-        if (this.isExpiredImageSource(ref.source)) {
-          this.reportOperation('diagnostic', 'debug', story, 'user-message', '历史图片跳过：来源链接已过期缓存 entry=%s 来源=%s', ref.sourceEntryId, describeImageSource(ref.source))
+        const deadReason = this.deadImageSourceReason(ref.source)
+        if (deadReason !== undefined) {
+          this.reportOperation('diagnostic', 'debug', story, 'user-message', '历史图片跳过：来源已判死(原因=%s) entry=%s 来源=%s', deadReason, ref.sourceEntryId, describeImageSource(ref.source))
           return undefined
         }
         try {
           const image = await this.fetchNativeImage(ref.source, (session as any)?.bot)
           if (!image) {
-            if (this.isExpiredImageSource(ref.source)) {
-              this.reportOperation('standard', 'info', story, 'user-message', '历史图片链接已过期，本进程内不再回源 entry=%s 来源=%s', ref.sourceEntryId, describeImageSource(ref.source))
+            const reason = this.deadImageSourceReason(ref.source)
+            if (reason !== undefined) {
+              this.reportOperation('standard', 'info', story, 'user-message', '历史图片源不可用(原因=%s)，本进程内不再回源 entry=%s 来源=%s', reason, ref.sourceEntryId, describeImageSource(ref.source))
             } else {
               this.report('warn', story, 'user-message', '历史图片回源失败 阶段=historical-image-fetch entry=%s 来源=%s 原因=empty-or-unsupported', ref.sourceEntryId, describeImageSource(ref.source))
             }
@@ -3050,7 +3062,7 @@ export class InterludeService extends Service {
           if (reference) await this.recordPlatformDeliveryOutcome(story.id, reference, 'cancelled', 'reaction-api-unavailable')
           continue
         }
-        await internal.setMsgEmojiLike(reaction.messageId, emojiId, true)
+        await withTransportTimeout(internal.setMsgEmojiLike(reaction.messageId, emojiId, true), 'msg-emoji-like', 10_000)
         platformDelivered = true
         const completedAt = new Date()
         await this.serial(story.id, async () => {
@@ -3140,12 +3152,24 @@ export class InterludeService extends Service {
         })
         if (!outcome.ok) throw new Error(outcome.error || `宿主动作代理失败：${outcome.errorCode ?? 'unknown'}`)
       } else {
-        // 独立 Koishi：经自身 HTTP 服务回源投递（file:/// 指向 Koishi 侧文件系统，
-        // OneBot 实现分容器/分进程部署时读不到——retcode 1200/100 实测）。HTTP URL
-        // 由 OneBot 实现主动下载，跨容器/跨机通吃，也不必把图片内联进载荷。
+        // 独立 Koishi：优先经自身 HTTP 服务回源投递（file:/// 指向 Koishi 侧
+        // 文件系统，OneBot 实现分容器/分进程部署时读不到——retcode 1200/100
+        // 实测）；HTTP URL 由 OneBot 实现主动下载，跨容器/跨机通吃。但宿主
+        // 没加载 server/router 时路由不存在（issue #1：retcode 1200 根因），
+        // auto 模式退回 file:// 本地路径——同容器/同主机的 OneBot 实现
+        // （SnowLuma/NapCat 宿主模式）按本地文件读取，不依赖 HTTP。
         this.registerStickerRoute()
-        const src = stickerDeliveryUrl(this.stickerDeliveryBase(), asset.assetId)
-        await session.bot.sendMessage(channelId, h('img', { src }))
+        const routerAvailable = this.stickerRouteRegistered
+        const mode = this.stickerConfig.deliveryMode ?? 'auto'
+        if (mode === 'file' || (mode === 'auto' && !routerAvailable)) {
+          const file = resolve(this.ctx.baseDir, this.stickerConfig.directory, asset.filePath)
+          const fileSrc = stickerFileUrl(file)
+          this.reportOperation('diagnostic', 'debug', story, 'user-message', '表情包经本地文件投递（HTTP 路由不可用） 素材=%s 路径=%s', asset.assetId, fileSrc)
+          await withTransportTimeout(session.bot.sendMessage(channelId, h('img', { src: fileSrc })), 'sticker-file-send')
+        } else {
+          const src = stickerDeliveryUrl(this.stickerDeliveryBase(), asset.assetId)
+          await withTransportTimeout(session.bot.sendMessage(channelId, h('img', { src })), 'sticker-url-send')
+        }
       }
       platformDelivered = true
       const now = new Date()
@@ -3191,7 +3215,7 @@ export class InterludeService extends Service {
       // 拒绝（"is not a valid segment"）。宽容实现两者都收，统一发数字。
       const faceId = Number(QQ_NATIVE_FACE_IDS[semantic])
       if (this.desktopOnebotActionHandler) {
-        // P1-3：桌面合成 session 没有 bot 属性，此前直接 session.bot.sendMessage
+        // 桌面合成 session 没有 bot 属性，此前直接 session.bot.sendMessage
         // 必然 TypeError 后被外层 catch 吞掉。改走宿主动作代理（与贴纸同型）。
         const targetId = onebotTargetId(channelId)
         const outcome = await this.desktopOnebotActionHandler({
@@ -3205,7 +3229,7 @@ export class InterludeService extends Service {
         })
         if (!outcome.ok) throw new Error(outcome.error || `宿主动作代理失败：${outcome.errorCode ?? 'unknown'}`)
       } else {
-        await session.bot.sendMessage(channelId, h('face', { id: faceId }))
+        await withTransportTimeout(session.bot.sendMessage(channelId, h('face', { id: faceId })), 'native-face-send')
       }
       platformDelivered = true
       const now = new Date()
@@ -3353,11 +3377,11 @@ export class InterludeService extends Service {
           })
           if (!outcome.ok) throw new Error(outcome.error || 'typ-0 群消息投递失败。')
         } else {
-          const receipt = await bot.sendMessage(transportGroupId, outgoing)
+          const receipt = await withTransportTimeout(bot.sendMessage(transportGroupId, outgoing), 'group-send')
           if (Array.isArray(receipt) && !receipt.length) throw new Error('Group transport returned no message receipt.')
         }
         control?.onDelivered(index, segment)
-        // P2-8：状态按实际投递的 bot 归因——实时群会话优先时归因到 session.bot，
+        // 状态按实际投递的 bot 归因——实时群会话优先时归因到 session.bot，
         // 否则归因到解析出的兜底账号（多角色下不再错刷 fallback）。
         const actualBot = (bot as unknown as { platform?: string, selfId?: string } | undefined)
         this.noteEndpointOutbound(endpointOwner, true, 'group-delivered', { platform: String(actualBot?.platform ?? address.platform), selfId: String(actualBot?.selfId ?? address.selfId) })
@@ -3446,6 +3470,7 @@ export class InterludeService extends Service {
       // 修复：此前漏拷此字段——Console 配置的投递基址静默失效，Docker 部署下
       // 永远回落 127.0.0.1:5140，OneBot 实现拉不到贴纸（retcode 1200/100）。
       deliveryBaseUrl: String(configured?.deliveryBaseUrl ?? '').trim(),
+      deliveryMode: configured?.deliveryMode === 'http' || configured?.deliveryMode === 'file' ? configured.deliveryMode : 'auto',
     }
   }
 
@@ -4003,10 +4028,15 @@ export class InterludeService extends Service {
     if (!this.config?.model?.vision?.enabled || !sources.length) return []
     const images: NarrativeImage[] = []
     for (const [index, source] of sources.slice(0, 3).entries()) {
+      const deadReason = this.deadImageSourceReason(source)
+      if (deadReason !== undefined) {
+        this.reportOperation('diagnostic', 'debug', story, 'user-message', '当前图片跳过：来源已判死(原因=%s) 序号=%d 来源=%s', deadReason, index + 1, describeImageSource(source))
+        continue
+      }
       try {
         const image = await this.fetchNativeImage(source, (session as any)?.bot)
         if (image) images.push({ id: `turn-image-${index + 1}`, ...image })
-        else this.report('warn', story, 'user-message', '当前图片回源失败 阶段=current-image-fetch 序号=%d 来源=%s 原因=empty-or-unsupported', index + 1, describeImageSource(source))
+        else this.report('warn', story, 'user-message', '当前图片回源失败 阶段=current-image-fetch 序号=%d 来源=%s 原因=%s', index + 1, describeImageSource(source), this.deadImageSourceReason(source) ?? 'empty-or-unsupported')
       } catch (error) {
         // 重载窗口内 ctx.http 必然中止：静默放弃剩余图片。
         if (isContextDisposedError(error)) break
@@ -4043,17 +4073,22 @@ export class InterludeService extends Service {
   }
 
   isExpiredImageSource(source: string) {
-    return this.expiredImageSources.has(String(source ?? '').trim())
+    return this.deadImageSources.has(String(source ?? '').trim())
   }
 
-  private rememberExpiredImageSource(source: string) {
+  /** 已判死来源的首次失败原因（未判死返回 undefined）。 */
+  deadImageSourceReason(source: string) {
+    return this.deadImageSources.get(String(source ?? '').trim())
+  }
+
+  private rememberDeadImageSource(source: string, reason: string) {
     const key = String(source ?? '').trim()
     if (!key) return
-    if (this.expiredImageSources.size >= 1000) {
-      const oldest = this.expiredImageSources.keys().next().value
-      if (oldest !== undefined) this.expiredImageSources.delete(oldest)
+    if (this.deadImageSources.size >= 1000) {
+      const oldest = this.deadImageSources.keys().next().value
+      if (oldest !== undefined) this.deadImageSources.delete(oldest)
     }
-    this.expiredImageSources.set(key, true)
+    this.deadImageSources.set(key, reason)
   }
 
   private async fetchNativeImage(source: string, bot?: any, adapterProvided = false): Promise<{ mimeType: string, dataUri: string } | undefined> {
@@ -4063,19 +4098,54 @@ export class InterludeService extends Service {
       return await this.fetchNativeImageUncached(key, bot, adapterProvided)
     } catch (error) {
       if (isExpiredImageUrlError(error)) {
-        this.rememberExpiredImageSource(key)
+        this.rememberDeadImageSource(key, 'url-expired')
         return undefined
       }
       throw error
     }
   }
 
+  /** QQ CDN 媒体 URL 会 302 跳转（SnowLuma stream-download 同款结论），
+   * 原先的 redirect:'error' 把每一跳都变成非过期错误：不入负缓存、每轮
+   * 重复失败。改为手动逐跳跟随（至多 3 跳），每跳按入口同一规则校验
+   * 目标域，保住 SSRF 边界；跳向不受信域视为确定性失败判死。 */
+  private async fetchImageThroughRedirects(url: URL, adapterProvided: boolean): Promise<{ data: ArrayBuffer, headers: { get(name: string): string | null } }> {
+    let target = url
+    for (let hop = 0; hop < 3; hop++) {
+      const response = await this.ctx.http('GET', target.href, { responseType: 'arraybuffer', timeout: 10_000, redirect: 'manual' })
+      const status = Number((response as { status?: unknown }).status ?? 200)
+      if (status >= 300 && status < 400) {
+        const location = response.headers?.get('location')
+        if (!location) throw new Error(`image redirect without Location (HTTP ${status})`)
+        let next: URL
+        try { next = new URL(location, target) } catch { throw new Error(`image redirect Location invalid: ${clip(location, 120)}`) }
+        if (next.protocol !== 'http:' && next.protocol !== 'https:') throw new Error(`image redirect to unsupported protocol ${next.protocol}`)
+        if (!adapterProvided && !isTrustedImageHost(next.hostname)) {
+          this.rememberDeadImageSource(target.href, 'untrusted-redirect')
+          throw new Error(`image redirect to untrusted host ${next.hostname}`)
+        }
+        target = next
+        continue
+      }
+      return response as { data: ArrayBuffer, headers: { get(name: string): string | null } }
+    }
+    throw new Error('image redirect chain too long (>3 hops)')
+  }
+
   private async fetchNativeImageUncached(source: string, bot?: any, adapterProvided = false): Promise<{ mimeType: string, dataUri: string } | undefined> {
     const value = String(source ?? '').trim()
     if (value.startsWith('onebot-url:')) {
       const url = value.slice('onebot-url:'.length)
-      return this.fetchNativeImage(url, bot, true)
+      const image = await this.fetchNativeImage(url, bot, true)
+      // 内层 URL 判死时同步判死外层带前缀的 key：否则(合并转发引用的
+      // 常态形态)每轮外层 miss→解包→内层命中负缓存→误报 empty-or-unsupported。
+      if (!image) {
+        const innerReason = this.deadImageSourceReason(url)
+        if (innerReason !== undefined) this.rememberDeadImageSource(value, innerReason)
+      }
+      return image
     }
+    // onebot-file: 无 bot 属于会话缺失(可能恢复),不判死。
     if (value.startsWith('onebot-file:')) {
       const file = value.slice('onebot-file:'.length)
       if (!file || !bot?.getImage) return undefined
@@ -4097,20 +4167,24 @@ export class InterludeService extends Service {
     }
     if (/^data:image\//i.test(value)) {
       const match = /^data:(image\/[a-z0-9.+-]+);base64,([a-z0-9+/=\s]+)$/i.exec(value)
-      if (!match) return undefined
+      if (!match) { this.rememberDeadImageSource(value, 'malformed-data-uri'); return undefined }
       const bytes = Buffer.from(match[2].replace(/\s+/g, ''), 'base64')
-      if (!bytes.length || bytes.length > 4 * 1024 * 1024) return undefined
+      if (bytes.length > 4 * 1024 * 1024) { this.rememberDeadImageSource(value, 'oversized-data-uri'); return undefined }
+      if (!bytes.length) return undefined
       const mimeType = match[1].toLowerCase()
       return this.imageBytesToNative(bytes, mimeType)
     }
     let url: URL
-    try { url = new URL(value) } catch { return undefined }
-    if (url.protocol !== 'http:' && url.protocol !== 'https:') return undefined
-    if (!adapterProvided && !isTrustedImageHost(url.hostname)) return undefined
-    const response = await this.ctx.http('GET', url.href, { responseType: 'arraybuffer', timeout: 10_000, redirect: 'error' })
+    try { url = new URL(value) } catch { this.rememberDeadImageSource(value, 'invalid-source'); return undefined }
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') { this.rememberDeadImageSource(value, 'invalid-source'); return undefined }
+    if (!adapterProvided && !isTrustedImageHost(url.hostname)) { this.rememberDeadImageSource(value, 'untrusted-host'); return undefined }
+    const response = await this.fetchImageThroughRedirects(url, adapterProvided)
     const bytes = Buffer.from(response.data)
-    if (!bytes.length || bytes.length > 4 * 1024 * 1024) return undefined
+    // 超限是确定性失败(该 URL 的图片就是这个大小);空响应可能是瞬时抖动,不判死。
+    if (bytes.length > 4 * 1024 * 1024) { this.rememberDeadImageSource(value, 'oversized-download'); return undefined }
+    if (!bytes.length) return undefined
     const mimeType = response.headers.get('content-type')?.split(';')[0].trim().toLowerCase() || guessImageMime(bytes)
+    if (!mimeType.startsWith('image/')) { this.rememberDeadImageSource(value, 'non-image-content'); return undefined }
     return this.imageBytesToNative(bytes, mimeType)
   }
 
@@ -4125,7 +4199,7 @@ export class InterludeService extends Service {
     if (isAnimatedImageMime(normalized)) {
       const frame = await this.renderAnimatedImageFrame(dataUri)
       if (frame) return frame
-      // P2-4：配置建议只需提醒一次——每张动态图都刷一遍 warn 是噪音。
+      // 配置建议只需提醒一次——每张动态图都刷一遍 warn 是噪音。
       if (!this.puppeteerHintLogged) {
         this.puppeteerHintLogged = true
         this.reportStandalone('warn', '动态图片未能抽帧，已使用原始图片输入；请启用 Puppeteer 以提高识别兼容性。')
@@ -4276,6 +4350,7 @@ export class InterludeService extends Service {
     const requestId = revision
     turn.inFlightRequestId = requestId
     const batch = turn.messages.splice(0)
+    this.reportOperation('diagnostic', 'debug', { id: turn.storyId } as InterludeStory, 'user-message', '写请求开始 参与者=%s 请求=%d 批次=%d', turn.participantId, requestId, batch.length)
     // Keep the endpoint set for this exact debounce batch separate from the
     // broader turn source snapshot.  M4's batch-multi-endpoint annotation
     // must only fire when messages in this request came from multiple
@@ -4302,7 +4377,7 @@ export class InterludeService extends Service {
         return { story, participant, from: narrativeCursor(story, now), now, due }
       })
       if (!snapshot) {
-        // Fix#10: 批次已被 splice 消费，早退同样要排重试（入站消息已先落库）。
+        // 批次已被 splice 消费，早退同样要排重试（入站消息已先落库）。
         // 参与者已暂停时不排——重试会由到期路径消化成暂停期的一次投递；
         // 恢复后由用户新消息自然驱动。
         const participantNow = await this.getParticipant(turn.participantId).catch(() => undefined)
@@ -4422,7 +4497,7 @@ export class InterludeService extends Service {
           localMedia: sticker ? decision.localMedia : undefined,
           nativeFace: nativeFace ? decision.nativeFace : undefined,
         }, snapshot.from, effectiveNow, true, 'user-message', [], early.delivered)
-        // Fix#10 回归修正：committed 标志在持久化成功后才置位——提前置位会让
+        // committed 标志在持久化成功后才置位——提前置位会让
         // catch 守卫（!== requestId）误判“已提交”，模型成功但落库抛错的回合
         // 既无投递也无重试。
         if (commitsFirstReply) turn.firstMessageCommittedRequestId = requestId
@@ -4459,9 +4534,10 @@ export class InterludeService extends Service {
 
       if (result.obsolete) {
         if (result.requeue) turn.messages.unshift(...batch)
-        this.reportOperation('standard', 'info', snapshot.story, 'user-message', '已丢弃过期主模型结果 参与者=%s 请求=%d', snapshot.participant.id, requestId)
+        this.reportOperation('standard', 'info', snapshot.story, 'user-message', '已丢弃过期主模型结果 参与者=%s 请求=%d 回队消息=%d', snapshot.participant.id, requestId, batch.length)
         return
       }
+      this.reportOperation('diagnostic', 'debug', snapshot.story, 'user-message', '模型结果通过闸门 参与者=%s 请求=%d 批次=%d', snapshot.participant.id, requestId, batch.length)
       if (this.canHandleParticipant(snapshot.participant)) {
         const delivered = await this.deliverOutgoingMessages(snapshot.story, result.messages, snapshot.participant, turn.latestSession, undefined, true, requestStartedAt)
         // P2 Fix: 主动联系按实际投递结果计数——成功/失败在平台确认后。
@@ -4499,7 +4575,7 @@ export class InterludeService extends Service {
         this.reportStandalone('debug', '插件重载中，合并写作任务放弃 参与者=%s', turn.participantId)
       } else {
         this.reportStandalone('warn', '合并写作任务失败：参与者=%s 错误=%s', turn.participantId, error)
-        // Fix#10: 持久化抛错不再静默吞批——未 committed 的回合从已落库入站条目排一次重试。
+        // 持久化抛错不再静默吞批——未 committed 的回合从已落库入站条目排一次重试。
         if (turn.firstMessageCommittedRequestId !== requestId) {
           await this.scheduleNarrativeRetry(turn.storyId, turn.participantId, new Date()).catch(() => undefined)
         }
@@ -4584,8 +4660,8 @@ export class InterludeService extends Service {
           && normalizeGroupId(String((item as any).guildId ?? '')) === groupId)
         const internal = (bot as any)?.internal
         if (typeof internal?._request !== 'function') continue
-        const response = await internal._request('get_group_msg_history', { group_id: Number(groupId), count: 50 })
-        const messages = Array.isArray(response?.data?.messages) ? response.data.messages : []
+        const response = await withTransportTimeout(internal._request('get_group_msg_history', { group_id: Number(groupId), count: 50 }) as Promise<{ data?: { messages?: unknown[] } } | undefined>, 'group-history-fetch')
+        const messages = (Array.isArray(response?.data?.messages) ? response.data.messages : []) as any[]
         const missed = messages.filter((msg: any) => {
           const time = typeof msg?.time === 'number' && msg.time > 0 ? new Date(msg.time * 1000) : undefined
           return time && time.getTime() > watermark.getTime() + 1000
@@ -5013,7 +5089,7 @@ export class InterludeService extends Service {
         .map(group => ({ participantId: `group:${normalizeGroupId(group.groupId)}`, groupId: normalizeGroupId(group.groupId), label: group.label || '' }))
       : []
     const endpointSelection = this.narrativeEndpointSelection(story, allParticipants, availableGroupTargets)
-    return reconcileTransportReferences(await this.narrator.decide({
+    const narrated = await this.narrator.decide({
       urgeEnabled: this.urgeConfig.enabled && !dueIntents.some(intent => intent.type === 'narrative-retry'),
       phase, refreshContinuity, outputRecovery, story, from, now, userMessage, userReportedTimes, images, audio, visualObservations, historicalGroupImages, timelinePlan, developmentTendencies,
       writingOptions: {
@@ -5168,7 +5244,12 @@ export class InterludeService extends Service {
       followUpCommitments,
       schedulePreplan: await this.currentSchedulePreplanWindow(story, now),
       onEarlyReply,
-    }), false, this.config.runtime.messageSeparator)
+    })
+    // script 对象形态归一（rc50 issue 报告）：必须在 no-usable-script 闸门
+    // (tryDecide:5465) 之前——归一后 script 恒为字符串,闸门与 normalizeDecision 自然通过。
+    const normalizedScript = normalizeScriptField((narrated as { script?: unknown })?.script)
+    const narratedDecision = normalizedScript ? { ...narrated, script: normalizedScript } : narrated
+    return reconcileTransportReferences(narratedDecision, false, this.config.runtime.messageSeparator)
   }
 
   /** Refresh continuity only on the first automatic pass or every fifteenth
@@ -5392,6 +5473,8 @@ export class InterludeService extends Service {
       // the existing persisted retry path and background turns retain time for
       // their next attempt. Fallback is intentionally a no-network smoke mode.
       if (this.modelRouting.main.available && !hasRequiredNarrativeScript(decision)) {
+        // rc50 issue 报告:抛错前留原始决策快照——字段名/类型错排障必需。
+        this.reportOperation('diagnostic', 'warn', story, phase, '主叙事无可用 script，原始决策=%s', safeJsonPreview(decision))
         throw new Error('Narrative provider returned no usable script.')
       }
       const result = {
@@ -5409,7 +5492,7 @@ export class InterludeService extends Service {
         Date.now() - startedAt, result.decision.script?.length ?? 0, visibleReplyMode(result.decision, phase, groupContext))
       this.health?.recordNarrativeComplete(story.id, Date.now() - startedAt, visibleReplyMode(result.decision, phase, groupContext))
       this.lastActiveStoryId = story.id
-      // 无可见回复的私聊回合打出最终 interaction（P2-5：纳入 logScriptPreview
+      // 无可见回复的私聊回合打出最终 interaction（纳入 logScriptPreview
       // 门控——JSON 里可能带 reply 草稿，不能绕过隐私开关；需要时与剧本预览
       // 一起打开）。
       if (phase === 'user-message' && !groupContext && result.decision.interaction?.reply?.mode === 'none' && this.config.logging?.logScriptPreview) {
@@ -5418,7 +5501,7 @@ export class InterludeService extends Service {
       }
       return result
     } catch (error) {
-      // P2-4：主叙事失败是最高优先级故障（角色无响应）——升 error 供运维告警。
+      // 主叙事失败是最高优先级故障（角色无响应）——升 error 供运维告警。
       // 例外：插件重载/停机导致的调用中断不是提供商故障，不告警、不记健康分。
       if (isContextDisposedError(error) || this.disposed) {
         this.reportOperation('diagnostic', 'debug', story, phase, '插件重载中，放弃本轮主叙事调用 耗时=%dms', Date.now() - startedAt)
@@ -5985,7 +6068,22 @@ export class InterludeService extends Service {
         const target = agencyAllowsSend && agencyCandidate && prepared.some(message => message.participantId === agencyCandidate!.participantId)
           ? agencyCandidate.participantId : undefined
         const urge = commitUrge(normalizeUrgeState(state.extensions?.urge, now.getTime()), raw.urge, decision.script || '', scriptEntry.id, target, now.getTime(), this.urgeConfig)
-        await this.dbSet('interlude_story', { id: story.id }, { state: encodeStoryState({ ...state, extensions: { ...state.extensions, urge } }), updatedAt: now })
+        // 主叙事轻量节奏覆盖:模型在 urge 交接里带 rhythmAttention 时写入 lifeRhythm,
+        // 比等下一次压缩更即时(source: narrator)。
+        const rawUrge = raw.urge as Record<string, unknown> | undefined
+        const rhythmOverride = urge.rhythmAttention && typeof rawUrge?.rhythmAttention === 'string'
+          ? {
+              attention: urge.rhythmAttention as 'phone-focused' | 'available' | 'occupied' | 'resting' | 'asleep',
+              basis: '主叙事交接覆盖',
+              assessedAt: now.toISOString(),
+              source: 'narrator' as const,
+            }
+          : undefined
+        await this.dbSet('interlude_story', { id: story.id }, { state: encodeStoryState({
+          ...state,
+          extensions: { ...state.extensions, urge },
+          ...(rhythmOverride ? { lifeRhythm: rhythmOverride } : {}),
+        }), updatedAt: now })
       } catch (error) {
         // Optional scheduling projection must never swallow already committed speech.
         this.reportStandalone('warn', 'Urge 调度交接保存失败，保留既有剧本与投递 错误=%s', error)
@@ -7013,7 +7111,7 @@ export class InterludeService extends Service {
       candidate.participantId, formatLogTime(recheckAt, story.setting.timezone), reason)
   }
 
-  /** Fix#2: schedule_preplan 的主键就是 storyId，Minato 拒绝含主键的 update——
+  /** schedule_preplan 的主键就是 storyId，Minato 拒绝含主键的 update——
    * 混在改写循环里必抛，导致后续 participantId 回填被跳过（隐私脱敏失效）。
    * 改为读旧行→建新行→删旧行（每故事仅一行，无并发窗口问题）。 */
   private async migrateSchedulePreplanRecord(legacyStoryId: string, newStoryId: string) {
@@ -7060,7 +7158,7 @@ export class InterludeService extends Service {
       }, now, participantId)
       return matching
     } finally {
-      // Fix#11: 无条件清理——异常滞留会永久跳过该参与者的后续分段投递。
+      // 无条件清理——异常滞留会永久跳过该参与者的后续分段投递。
       this.interruptedTypingParticipants.delete(participantId)
     }
   }
@@ -7143,11 +7241,18 @@ export class InterludeService extends Service {
       if (this.databaseResetting || this.deliveryGeneration(story.id) !== generation) return
       // A durable success receipt precedes ledger reconciliation. A later
       // ledger failure cannot turn an accepted bubble back into transport work.
-      if (unrecorded.length) await this.appendEntry(story.id, {
+      if (unrecorded.length) {
+        if (!message.scriptEvent) {
+          // 无账本旁路（issue #3）：cross-action 未经 commit 事件直接投递——
+          // 可追溯到 normalizeDecision 的 group-echo 闸漏网或恢复路径残留。
+          this.reportOperation('diagnostic', 'warn', story, 'intent-due', '跨群投递缺少账本引用(不可追溯) 群=%s 分段=%d', groupId, unrecorded.length)
+        }
+        await this.appendEntry(story.id, {
         kind: 'character-group-message', actor: 'character', content: unrecorded.map(segment => segment.content).join('<sep/>'), occurredAt: now.toISOString(),
         metadata: { groupId, channelId: groupId, ...(message.scriptEvent ?? {}),
           deliverySegmentIndexes: unrecorded.map(segment => baseIndex + segment.index), partialDelivery: !outcome.complete },
       }, now)
+      }
       if (message.scriptEvent) {
         for (const segment of outcome.segmentOutcomes) {
           const ledgerStatus = segment.status === 'failed' && (failureStatus === 'pending' || segment.reason === 'delivery-generation-obsolete') ? 'pending' : segment.status
@@ -7395,9 +7500,9 @@ export class InterludeService extends Service {
           this.report('info', story, 'intent-due', '主角消息内容：%s', message.content.slice(0, this.config.logging.previewLength))
         }
         if (!explicitEndpointId && session && current?.id === target.id && sessionMatchesEndpoint) {
-          const receipt = await session.send(outgoingContent)
+          const receipt = await withTransportTimeout(session.send(outgoingContent), 'private-session-send')
           if (Array.isArray(receipt) && !receipt.length) throw new Error('Private transport returned no message receipt.')
-          // P2-5：即时会话投递成功同样刷新端点状态（与 bot/desktop 路径一致）。
+          // 即时会话投递成功同样刷新端点状态（与 bot/desktop 路径一致）。
           this.noteEndpointOutbound({ kind: 'participant-user', id: target.id }, true, 'session-delivered', address)
           delivered.push(message)
           continue
@@ -7431,7 +7536,7 @@ export class InterludeService extends Service {
             ...(message.scriptEvent ? { intentKey: `${message.scriptEvent.eventId}:${message.scriptEvent.bubbleIndex}` } : {}),
           })
           if (outcome.ok) {
-            // P2-9：桌面宿主投递成功同样刷新端点 deliverable 状态。
+            // 桌面宿主投递成功同样刷新端点 deliverable 状态。
             this.noteEndpointOutbound({ kind: 'participant-user', id: target.id }, true, 'desktop-delivered', address)
             delivered.push(message)
           }
@@ -7450,7 +7555,7 @@ export class InterludeService extends Service {
           if (recordFailures) await this.recordOutgoingDeliveryFailure(story, target.id, message, 'bot-not-found', failureStatus)
           continue
         }
-        const receipt = await bot.sendMessage(privateChannelId, outgoingContent)
+        const receipt = await withTransportTimeout(bot.sendMessage(privateChannelId, outgoingContent), 'private-bot-send')
         if (Array.isArray(receipt) && !receipt.length) throw new Error('Private transport returned no message receipt.')
         this.noteEndpointOutbound({ kind: 'participant-user', id: target.id }, true, endpoint ? 'endpoint-explicit' : 'private-delivered', address)
         delivered.push(message)
@@ -7459,9 +7564,18 @@ export class InterludeService extends Service {
         // pick a different sibling endpoint after a failure and poison its
         // cooldown/diagnostics in a multi-account story.
         const address = attemptedAddress ?? this.endpointAddressSync({ platform: target.platform, selfId: target.selfId }, { kind: 'participant-user', id: target.id })
-        this.noteEndpointOutbound({ kind: 'participant-user', id: target.id }, false, String(error), address)
-        this.report('error', story, 'intent-due', '消息投递失败 参与者=%s 错误=%s', target.id, error)
-        if (recordFailures) await this.recordOutgoingDeliveryFailure(story, target.id, message, `transport-failed: ${String(error)}`, failureStatus)
+        const unknownOutcome = (error as { transportTimeout?: boolean })?.transportTimeout === true
+        if (unknownOutcome) {
+          // 传输超时=结果未知：底层请求仍在飞,迟到回执由 deliveryExecutionKey
+          // 幂等去重。账本记 pending 交待投递补偿收尾,不判定失败(避免重复投递)。
+          this.noteEndpointOutbound({ kind: 'participant-user', id: target.id }, false, String(error), address)
+          this.report('warn', story, 'intent-due', '消息投递超时（结果未知，等待补偿确认） 参与者=%s 错误=%s', target.id, error)
+          if (recordFailures) await this.recordOutgoingDeliveryFailure(story, target.id, message, String(error), 'pending')
+        } else {
+          this.noteEndpointOutbound({ kind: 'participant-user', id: target.id }, false, String(error), address)
+          this.report('error', story, 'intent-due', '消息投递失败 参与者=%s 错误=%s', target.id, error)
+          if (recordFailures) await this.recordOutgoingDeliveryFailure(story, target.id, message, `transport-failed: ${String(error)}`, failureStatus)
+        }
       }
     }
     return delivered
@@ -7818,9 +7932,15 @@ export class InterludeService extends Service {
     if (incoming) urge = urgeUserEvent(urge, anchor.getTime())
     const rest = activeRestWindow(this.autoAdvanceConfig.restWindows, story.setting.timezone, anchor)
     const window = activeAgencyWindow(state.agencyWindow, anchor)
+    // 五档生活节奏：压缩器主写/主叙事或入站覆盖；stale 时走 restMultiplier 兜底。
+    const rhythmRaw = state.lifeRhythm ?? lifeRhythmFromLegacyStatus(state.lifeStatus)
+    const rhythm: UrgeRhythmInput | undefined = rhythmRaw
+      ? { attention: rhythmRaw.attention, stale: lifeRhythmStale(rhythmRaw, anchor.getTime()) }
+      : undefined
     const planned = planUrge(urge, anchor.getTime(), config,
-      rest ? automaticIntervalMinutes(story, anchor, this.autoAdvanceConfig) : 0,
-      !!window && (window.deviceAccess !== 'available' || window.activityLoad === 'overloaded'))
+      rest ? 1 : 0,
+      !!window && (window.deviceAccess !== 'available' || window.activityLoad === 'overloaded'),
+      undefined, rhythm)
     const ordinary = new Date(planned.nextAdvanceAt)
     const next = planned.reason === 'conversation-density-decay' ? await this.schedulePreplanAnchoredTime(story, anchor, ordinary) : ordinary
     await this.dbSet('interlude_story', { id: story.id }, {
@@ -7830,8 +7950,28 @@ export class InterludeService extends Service {
           ...(incoming ? { lastUserMessageAt: anchor.toISOString() } : {}), nextAdvanceAt: next.toISOString() },
       }), updatedAt: anchor,
     })
-    this.reportOperation('standard', 'info', story, 'advance', 'Urge 调度 档位=%s 原因=%s 下次=%s 加速已用=%d/%d',
-      config.frequency, planned.reason, formatLogTime(next, story.setting.timezone), planned.state.burst?.used ?? 0, config.budget)
+    this.reportOperation('standard', 'info', story, 'advance', 'Urge 调度 档位=%s 原因=%s 节奏=%s%s 下次=%s 加速已用=%d/%d',
+      config.frequency, planned.reason,
+      rhythm?.attention ?? '(无)',
+      rhythm?.stale === true ? '(stale)' : '',
+      formatLogTime(next, story.setting.timezone), planned.state.burst?.used ?? 0, config.budget)
+  }
+
+  /** 入站消息→节奏提升:asleep/resting → phone-focused(source: incoming)。 */
+  private async elevateRhythmOnIncoming(storyId: string, now: Date) {
+    try {
+      const story = await this.getStory(storyId)
+      if (!story) return
+      const state = decodeStoryState(story.state)
+      const rhythm = state.lifeRhythm
+      if (rhythm && (rhythm.attention === 'asleep' || rhythm.attention === 'resting')) {
+        const next = { attention: 'phone-focused' as const, basis: '收到用户消息，她在看手机', assessedAt: now.toISOString(), source: 'incoming' as const }
+        await this.dbSet('interlude_story', { id: storyId }, {
+          state: encodeStoryState({ ...state, lifeRhythm: next }), updatedAt: now,
+        })
+        this.reportOperation('diagnostic', 'debug', story, 'user-message', '生活节奏提升 %s→phone-focused(入站触发)', rhythm.attention)
+      }
+    } catch { /* 节奏提升是尽力而为;失败不阻塞入站消息 */ }
   }
 
   private isAutomaticAdvancePaused(story: InterludeStory, now: Date) {
@@ -8422,7 +8562,7 @@ export class InterludeService extends Service {
    */
   async qzoneExecute(story: InterludeStory, kind: QzoneActionKind, input: { content?: string, tid?: string, targetUin?: string, ugcRight?: number }, preferSelfId?: string): Promise<{ ok: boolean, tid?: string, error?: string }> {
     if (!this.qzoneRuntime.enabled) return { ok: false, error: 'QQ 空间通道未启用（Console → 扩展 → QQ 空间）。' }
-    // M1a（路径 7）+ P1-4：qzone 账号选择——显式指定 preferSelfId 时按 accountKey
+    // M1a（路径 7）+ qzone 账号选择——显式指定 preferSelfId 时按 accountKey
     // 精确匹配本故事的角色端点，找不到直接失败（绝不自动切到其他端点）；
     // 未指定时经 endpointAddressSync 解析（多端点按最近观测选取）。
     // endpointId 随行落审计，限流门按端点分桶（历史无 id 行保守计入）。
@@ -8549,7 +8689,7 @@ export class InterludeService extends Service {
     try {
       const story = await this.getCanonicalStory()
       if (!story || !this.canHandleStory(story)) return
-      // P2-7：轮询账号经端点注册表解析（多角色端点下不再读故事旧 selfId），
+      // 轮询账号经端点注册表解析（多角色端点下不再读故事旧 selfId），
       // feed-seen 审计行随记 endpointId。
       const sweepAddress = this.endpointAddressSync({ platform: story.platform, selfId: story.selfId }, { kind: 'story-role', id: story.id })
       const sweepEndpointId = (sweepAddress as { endpointId?: string }).endpointId
@@ -8562,7 +8702,7 @@ export class InterludeService extends Service {
         const raw = await callQzoneAction<{ feeds?: unknown[] }>(caller, 'get_qzone_feeds', { page_num: 1, count: 20 })
         feeds = (Array.isArray(raw.feeds) ? raw.feeds : []).map(item => normalizeQzoneFeedEntry(item, now)).filter((item): item is QzoneFeedEntry => !!item)
       } catch (error) {
-        // P1-2：feeds CGI 间歇失败跳过本轮，但必须可见（此前零日志）。
+        // feeds CGI 间歇失败跳过本轮，但必须可见（此前零日志）。
         this.report('warn', story, 'advance', '好友动态列表拉取失败，本轮跳过 错误=%s', error)
       }
       // 去重账本：feed-seen 行的 tid 即 feeds.key（7 天窗足够覆盖时间窗的双倍）。
@@ -8579,7 +8719,7 @@ export class InterludeService extends Service {
           this.reportOperation('diagnostic', 'debug', story, 'advance', '好友动态正文拉取失败，按元数据入账 uin=%s 错误=%s', feed.uin, error)
         }
         const owner = feed.nickname || `QQ ${feed.uin}`
-        // P1-2：先落 feed-seen 账本再写条目——账本失败则本轮跳过该条（下轮
+        // 先落 feed-seen 账本再写条目——账本失败则本轮跳过该条（下轮
         // 重新发现），杜绝"条目已写、账本未落"造成的重复 [好友动态] 入账。
         try {
           await this.dbCreate('interlude_qzone_post', { storyId: story.id, kind: 'feed-seen', tid: feed.key, targetUin: feed.uin, ...(sweepEndpointId ? { endpointId: sweepEndpointId } : {}), content: feed.nickname.slice(0, 100), status: 'confirmed', createdAt: now })
@@ -8629,7 +8769,7 @@ export class InterludeService extends Service {
       const raw = await callQzoneAction<{ msglist?: unknown[] }>(caller, 'get_qzone_msg_list', { target_uin: Number(address.selfId), num: 10 })
       entries = (Array.isArray(raw.msglist) ? raw.msglist : []).map(item => normalizeQzoneMsgEntry(item)).filter((item): item is QzoneMsgEntry => !!item)
     } catch (error) {
-      // P1-2：拉取失败基线不动、下轮重试，但必须可见（此前零日志）。
+      // 拉取失败基线不动、下轮重试，但必须可见（此前零日志）。
       this.report('warn', story, 'advance', '被评论列表拉取失败，本轮感知跳过 错误=%s', error)
       return
     }
@@ -8645,7 +8785,7 @@ export class InterludeService extends Service {
           .catch(error => this.report('warn', story, 'advance', '被评论基线初始化失败（不影响本轮感知） tid=%s 错误=%s', baseline.tid, error))
       }
     }
-    // P1-2：逐条提交——先推进该帖基线再写感知条目。单轮预算 3 条之外的
+    // 逐条提交——先推进该帖基线再写感知条目。单轮预算 3 条之外的
     // delta 不推进基线（下轮重新发现），杜绝"第 4 条起永久丢失"；基线回写
     // 失败则本轮中止（不写条目），杜绝"旧基线重算出相同 delta 的重复入账"。
     const reactionBudget = 3
@@ -8690,7 +8830,7 @@ export class InterludeService extends Service {
   /** 加载并补齐端点注册表（幂等 + 单飞：并发调用共享同一次 reconcile）。 */
   private endpointRegistryInFlight: Promise<void> | undefined
 
-  /** 端点/别名运行期写队列（P1-2）：所有注册表变更串行执行，杜绝并发"查后写"重复。 */
+  /** 端点/别名运行期写队列：所有注册表变更串行执行，杜绝并发"查后写"重复。 */
   private endpointWriteQueue: Promise<unknown> = Promise.resolve()
 
   private enqueueEndpointWrite<T>(task: () => Promise<T>): Promise<T> {
@@ -8785,7 +8925,7 @@ export class InterludeService extends Service {
   private async ensureEndpointRegistry() {
     if (this.endpointRegistryReady) return
     if (this.endpointRegistryInFlight) return this.endpointRegistryInFlight
-    // P1-4：单飞锁——两个并发初始化不会各自"查不存在→插入"造成重复行。
+    // 单飞锁——两个并发初始化不会各自"查不存在→插入"造成重复行。
     this.endpointRegistryInFlight = this.reconcileEndpointRegistry().finally(() => { this.endpointRegistryInFlight = undefined })
     return this.endpointRegistryInFlight
   }
@@ -8809,7 +8949,7 @@ export class InterludeService extends Service {
       byKey.set(key, draft)
       drafts.push({ ...draft, id: randomUUID() })
     }
-    // active+paused 都登记（P2-7）：暂停故事的账号/别名同样要能被 resume/status
+    // active+paused 都登记：暂停故事的账号/别名同样要能被 resume/status
     // 与入站重定向找到；archived 由 migrateLegacyStory 迁移时单独登记。
     const stories = (await this.dbGet('interlude_story', { status: { $in: ['active', 'paused'] } })) as any[]
     for (const story of stories) {
@@ -8823,7 +8963,7 @@ export class InterludeService extends Service {
     }
     const persisted: EndpointRow[] = []
     for (const draft of drafts) {
-      // P1-1：先落库、成功才进内存——失败行不产生幽灵端点（重启即消失的假行）。
+      // 先落库、成功才进内存——失败行不产生幽灵端点（重启即消失的假行）。
       try {
         await this.dbCreate('interlude_endpoint', draft)
         persisted.push(draft)
@@ -8854,13 +8994,13 @@ export class InterludeService extends Service {
       if (recorded) aliasesAdded += 1
     }
     this.reportStandaloneOperation('diagnostic', 'debug', '剧本别名迁移完成 新增=%d 总数=%d', aliasesAdded, this.storyAliasRows.length)
-    // P2-10：回填 qzone 审计行的 endpointId（按 storyId → 角色端点归因）。
+    // 回填 qzone 审计行的 endpointId（按 storyId → 角色端点归因）。
     await this.backfillQzoneEndpointIds()
     this.endpointRegistryReady = true
   }
 
-  /** 运行期增量登记（P1-2）：故事/参与者创建时同步 upsert 端点行。
-   * P1-1/P1-2：经写队列串行执行；先落库成功才进内存；失败置脏（下次 reconcile
+  /** 运行期增量登记：故事/参与者创建时同步 upsert 端点行。
+   * 经写队列串行执行；先落库成功才进内存；失败置脏（下次 reconcile
    * 重试）——绝不留下"进程内有、重启即无"的幽灵端点，也不让登记失败被静默
    * 吞掉后触发陌生账号拒绝（置脏保证 findStory 下次会重新 reconcile 补上）。 */
   private async registerStoryRoleEndpointRow(story: { id: string, platform: string, selfId: string }) {
@@ -8930,7 +9070,7 @@ export class InterludeService extends Service {
     }
     const now = new Date()
     const row: StoryAliasRecord = { aliasStoryId, canonicalStoryId, reason, createdAt: now }
-    // P1-1：先落库、成功才进内存——失败不产生幽灵别名。
+    // 先落库、成功才进内存——失败不产生幽灵别名。
     try {
       await this.dbCreate('interlude_story_alias', row)
     } catch (error) {
@@ -8987,10 +9127,10 @@ export class InterludeService extends Service {
     return [...this.storyAliasRows]
   }
 
-  // ── 角色端点管理（P1-1 的显式迁移路径）：账号变更只能经此，入站永不改绑 ──
+  // ── 角色端点管理（的显式迁移路径）：账号变更只能经此，入站永不改绑 ──
 
   /** 注册一个角色端点到既有故事（幂等；accountKey 被其他故事占用时拒绝）。
-   * P1-2：经写队列串行执行——并发 add 不会双双重叠冲突检查；P1-1：落库失败
+   * 经写队列串行执行——并发 add 不会双双重叠冲突检查；落库失败
    * 不进内存且返回失败。 */
   async addStoryEndpoint(story: InterludeStory, platform: string, selfId: string, channelKind: 'qq' | 'wechat' = 'qq'): Promise<{ ok: boolean, endpointId?: string, error?: string }> {
     const account = String(selfId || '').trim()
@@ -9199,7 +9339,7 @@ export class InterludeService extends Service {
   private async touchEndpointStateInbound(source: { platform: string, selfId: string, userId?: string, groupId?: string, channelId?: string }) {
     const resolution = await this.resolveInboundEndpointFor(source)
     if (!resolution) return
-    // P2-10：重复角色端点（脏数据）一次性告警——静默取首行会让地址选择与
+    // 重复角色端点（脏数据）一次性告警——静默取首行会让地址选择与
     // qzone 限流的歧义无法追踪。
     if (resolution.duplicateRoleAccountKeys?.length) {
       const key = `dup-role:${resolution.duplicateRoleAccountKeys.join(',')}`
@@ -9245,7 +9385,7 @@ export class InterludeService extends Service {
   /**
    * M1a 出站地址解析（v3 §五）：注册表命中且启用时以注册表为准，并核对旧字段
    * （漂移只告警一次）；未命中/注册表未加载时回落旧字段——单平台零影响。
-   * P2-11：同一 owner 多行时不再"取第一行"——优先最近观测过连接的端点，
+   * 同一 owner 多行时不再"取第一行"——优先最近观测过连接的端点，
    * 平手按 createdAt 稳定排序，并一次性告警（M2 起多端点归因的正确性基础）。
    */
   private endpointAddressSync(legacy: { platform: string, selfId: string }, owner?: { kind: 'story-role' | 'participant-user', id: string }): { platform: string, selfId: string, endpointId?: string } {
@@ -9280,7 +9420,7 @@ export class InterludeService extends Service {
   }
 
   /** 出站结果回写端点状态（v3 §四 deliverable 维；内存无副作用）。
-   * P2-11：提供 address 时只更新地址匹配的端点——多端点下不串刷兄弟端点。 */
+   * 提供 address 时只更新地址匹配的端点——多端点下不串刷兄弟端点。 */
   private noteEndpointOutbound(owner: { kind: 'story-role' | 'participant-user' | 'group', id: string }, ok: boolean, note: string, address?: { platform: string, selfId: string }) {
     const now = Date.now()
     for (const row of this.endpointRows) {
@@ -9307,11 +9447,7 @@ export class InterludeService extends Service {
     const story = await this.getCanonicalStory()
     if (!story || !this.canHandleStory(story)) return
     // 手动开关:架空世界跳过(由 Console 控制,不做关键词自动判定)
-    if (this.weatherConfig.skipFantasyWorld) {
-      const world = story.setting.world ?? ''
-      const location = story.setting.location ?? ''
-      if (/异世界|精灵|架空|幻想|另一个世界/.test(world + location)) return
-    }
+    if (this.weatherConfig.skipFantasyWorld && isFantasyStory(story.setting.world, story.setting.location)) return
     const snapshot = await fetchWeatherSnapshot(this.ctx, this.weatherConfig, story.setting.location)
     if (!snapshot) { this.reportOperation('diagnostic', 'debug', story, 'advance', '天气拉取失败或无数据,本轮跳过'); return }
     // 幂等:内容无变化不注入
@@ -9363,7 +9499,12 @@ export class InterludeService extends Service {
       const windowRows = [...scheduled, ...recentInjected]
       const domain = seedDomainForRun(story.id, now, runtime.cadenceMinutes)
       const payload = await this.buildWorldSeederPayload(story, now, windowRows.map(row => String(row.summary)), domain)
-      const raw = await this.worldSeeder.generate(payload)
+      // 实况天气接管判定:天气开启且该故事不被架空开关跳过 → 播种器让出天气领地
+      // (提示词换 nature 替身切面 + 硬排除规则;校验闸 weather-guard 兜底)。
+      // 架空世界(或天气关闭)保持原行为——那些世界里模型即兴是唯一的天气来源。
+      const weatherHandledByHost = this.weatherConfig.enabled
+        && !(this.weatherConfig.skipFantasyWorld && isFantasyStory(story.setting.world, story.setting.location))
+      const raw = await this.worldSeeder.generate(payload, { weatherHandledByHost })
       if (!this.taskGenerationCurrent(story.id, generation)) return
       const drafts = parseWorldSeedEvents(raw)
       if (!drafts.length) {
@@ -9384,6 +9525,7 @@ export class InterludeService extends Service {
         recentSummaries,
         recentSubjects,
         recentOccursAt,
+        ...(weatherHandledByHost ? { weatherGuard: true } : {}),
       }
       let pendingCount = scheduled.length
       let dailyCount = last24.length
@@ -9535,7 +9677,7 @@ export class InterludeService extends Service {
     }
   }
 
-  /** Fix#8: 复核退避/对话推迟会让 materializedDays 的 [今天,明天] 槽位缺失，窗口静默变空。
+  /** 复核退避/对话推迟会让 materializedDays 的 [今天,明天] 槽位缺失，窗口静默变空。
    * 取记录时若两个槽位都没有物化天，先本地无模型重物化（锚定今天）再算窗口。 */
   private async currentSchedulePreplanWindow(story: InterludeStory, at: Date) {
     if (!this.schedulePreplanConfig.enabled) return schedulePreplanWindow(undefined, at, story.setting.timezone, 12, this.schedulePreplanConfig)
@@ -10168,47 +10310,6 @@ export class InterludeService extends Service {
     })
   }
 
-  private async compactUnlocked(story: InterludeStory, now: Date, force: boolean, generation?: string) {
-    const taskCurrent = () => !generation || this.taskGenerationCurrent(story.id, generation)
-    if (!taskCurrent()) return false
-    const review = await this.prepareSchedulePreplanReview(story, now)
-    const context = await this.prepareCompaction(story, now, force)
-    if (review?.needsModel && review.request) {
-      const proposal = await this.requestSchedulePreplan(story, review.request)
-      if (!taskCurrent()) return false
-      const persisted = await this.persistSchedulePreplanReview(story, review, proposal, new Date())
-      if (persisted) this.schedulePreplanBackoff.delete(story.id)
-      else this.schedulePreplanBackoff.set(story.id, Date.now() + SCHEDULE_PREPLAN_RETRY_BACKOFF)
-    }
-    if (!context || context.phase === 'skip') return context?.overlayCompacted ?? false
-    const startedAt = Date.now()
-    this.reportOperation('standard', 'info', story, 'advance', '后台整理开始 条目=%d 字符=%d 场景压缩=%s SchedulePreplan=%s', context.sceneEntries.length, context.chars, context.sceneCompactionDue, !!review?.needsModel)
-    let decision: CompactionDecision = {}
-    try {
-      decision = await this.compactor.compact(context.compactRequest)
-      if (!taskCurrent()) return false
-    } catch (error) {
-      this.noteCompactionFailure(story.id, context.fingerprint, error)
-      this.report('warn', story, 'advance', '记忆压缩失败：%s', error)
-      return false
-    }
-    try {
-      if (context.sceneCompactionDue) {
-        context.factEmbeddings = await this.prepareCompactionEmbeddings(story.id, decision, context.sceneEntries)
-        if (!taskCurrent()) return false
-      }
-      const result = await this.applyCompaction(story, context, decision, now, startedAt)
-      if (!await this.compactionCheckpointAdvanced(context)) {
-        throw new Error(`Compaction checkpoint did not advance (scene=${context.scene.id}, expected=${context.sceneEntries.at(-1)?.id ?? 0})`)
-      }
-      this.scheduler.clearBackoff(story.id)
-      return result
-    } catch (error) {
-      this.noteCompactionFailure(story.id, context.fingerprint, error)
-      throw error
-    }
-  }
-
   /** Everything up to the expensive compactor call: cheap reads plus the due
    * checks. Runs inside the story serial queue, but the model call itself must
    * not — a queued compactor request would delay the next live turn. */
@@ -10471,17 +10572,35 @@ export class InterludeService extends Service {
     })
     const scenePatch = decision.scene ?? {}
     const presenceUpdates = normalizeScenePresenceDrafts(scenePatch.presence, entries, now)
-    // 压缩器附带的主角注意力状态（群聊意愿 auto 档输入）：合法三值才落库，
-    // 无效/缺失保持旧值——状态不是本轮压缩的产物时不应被清空。
-    const nextLifeStatus = normalizeLifeStatusDraft(decision.lifeStatus)
+    // 压缩器附带的主角节奏（五档,推进密度输入）+ 旧三值 lifeStatus（群聊意愿 auto 档输入）。
+    // 五档落 lifeRhythm;旧三值同步映射到 lifeStatus 保持群聊意愿兼容。
+    const rhythmDraft = normalizeLifeRhythmDraft(decision.lifeRhythm)
+    const nextLifeStatus = rhythmDraft?.attention
+      ? rhythmDraft.attention === 'occupied' ? 'busy' as const
+        : rhythmDraft.attention === 'asleep' ? 'asleep' as const
+        : 'idle' as const
+      : normalizeLifeStatusDraft(decision.lifeStatus)
     if (nextLifeStatus) {
       const current = await this.getStory(story.id)
       const state = decodeStoryState(current.state)
-      if (state.lifeStatus?.status !== nextLifeStatus) {
+      const nextRhythm = rhythmDraft ? {
+        attention: rhythmDraft.attention as 'phone-focused' | 'available' | 'occupied' | 'resting' | 'asleep',
+        basis: rhythmDraft.basis || '压缩器评估',
+        assessedAt: now.toISOString(),
+        source: 'compactor' as const,
+      } : undefined
+      const statusChanged = state.lifeStatus?.status !== nextLifeStatus
+      const rhythmChanged = !!nextRhythm && state.lifeRhythm?.attention !== nextRhythm.attention
+      if (statusChanged || rhythmChanged) {
         await this.dbSet('interlude_story', { id: current.id }, {
-          state: encodeStoryState({ ...state, lifeStatus: { status: nextLifeStatus, updatedAt: now.toISOString() } }), updatedAt: now,
+          state: encodeStoryState({
+            ...state,
+            ...(nextLifeStatus ? { lifeStatus: { status: nextLifeStatus, updatedAt: now.toISOString() } } : {}),
+            ...(nextRhythm ? { lifeRhythm: nextRhythm } : {}),
+          }), updatedAt: now,
         })
-        this.reportOperation('diagnostic', 'debug', story, 'advance', '生活状态已更新 状态=%s', nextLifeStatus)
+        this.reportOperation('diagnostic', 'debug', story, 'advance', '生活节奏已更新 状态=%s 节奏=%s',
+          nextLifeStatus ?? '(不变)', nextRhythm?.attention ?? '(不变)')
       }
     }
     if (presenceUpdates.length) {
@@ -10857,7 +10976,7 @@ export class InterludeService extends Service {
     this.desktopEventSink?.('token', record)
     const line = formatTokenUsageLine(record)
     if (!line) return
-    // P2-5：token 行并入 standard verbosity（此前不受门控，高频热路径放大日志量）。
+    // token 行并入 standard verbosity（此前不受门控，高频热路径放大日志量）。
     this.reportStandaloneOperation('standard', 'info', `Token 用量[${record.task}] 模型=${record.model} ${line}`)
   }
 
@@ -10952,16 +11071,41 @@ export class InterludeService extends Service {
     return this.serialScope.getStore() === id
   }
 
+  /** serial 看门狗(rc50 issue 报告)：任务占用队列超 2 分钟打 warn——
+   * 单次网络挂起曾把整条执行链永久堵死且无任何日志,重启才能恢复。 */
+  private serialWatchdog: Map<string, { startedAt: number, stack: string }> = new Map()
+
   private serial<T>(id: string, task: () => Promise<T>) {
     // catch 保证前一次失败不会永久堵住同一故事；finally 语义通过 then 的两个分支释放队列。
     const previous = this.queues.get(id) ?? Promise.resolve()
-    const current = previous.catch(() => undefined).then(() => this.serialScope.run(id, task))
+    const current = previous.catch(() => undefined).then(() => {
+      // 看门狗 token 在任务实际开始时写入(非入队时),且已有执行中任务的
+      // token 不被后续排队任务覆盖——否则挂死任务的时间戳被新任务顶掉。
+      if (!this.serialWatchdog.has(id)) {
+        this.serialWatchdog.set(id, {
+          startedAt: Date.now(),
+          stack: (new Error('serial-task-origin').stack ?? '').split('\n').slice(2, 6).join(' <- '),
+        })
+      }
+      return this.serialScope.run(id, task)
+    })
     this.queues.set(id, current)
     void current.then(
-      () => { if (this.queues.get(id) === current) this.queues.delete(id) },
-      () => { if (this.queues.get(id) === current) this.queues.delete(id) },
+      () => { if (this.queues.get(id) === current) { this.queues.delete(id); this.serialWatchdog.delete(id) } },
+      () => { if (this.queues.get(id) === current) { this.queues.delete(id); this.serialWatchdog.delete(id) } },
     )
     return current
+  }
+
+  /** 看门狗扫描：占用超 2 分钟的任务告警一次（每 token 只报一次）。 */
+  private reportStuckSerialQueues() {
+    for (const [id, token] of this.serialWatchdog) {
+      const heldMs = Date.now() - token.startedAt
+      if (heldMs > 120_000) {
+        this.reportStandalone('warn', '故事执行链占用超时 故事=%s 已占用=%d秒 起点=%s（若持续无后续动作请检查 OneBot 连接；重启可恢复）', id, Math.round(heldMs / 1000), token.stack || '(未知)')
+        this.serialWatchdog.delete(id)
+      }
+    }
   }
 
   private dbWrite<T>(task: () => Promise<T>) {
@@ -11013,7 +11157,7 @@ export class InterludeService extends Service {
       && (bot.platform === story.platform || isOneBotPlatform(bot.platform) && isOneBotPlatform(story.platform)))
     if (hasLiveStoryBot || (story.platform === session.platform && String(story.selfId) === String(session.selfId))) return story
     const now = new Date()
-    // M1 审计修复 P1-5：多角色端点时先查数量——入站账号不改写任何端点地址，
+    // M1 审计修复 多角色端点时先查数量——入站账号不改写任何端点地址，
     // 仅刷新命中端点的在线状态；地址修复只属于单端点故事（旧世界漂移自愈）。
     await this.ensureEndpointRegistry()
     const roleRows = this.endpointRows.filter(row => row.ownerKind === 'story-role' && row.ownerId === story.id)
@@ -11051,7 +11195,7 @@ export class InterludeService extends Service {
         // bounded, add a little jitter, and only warn on the final failure.
         if (attempt >= 7 || !isTransientDatabaseError(error)) {
           if (isTransientDatabaseError(error)) {
-            // P2-4：重试阶梯走完仍失败 = 数据层故障，升 error。
+            // 重试阶梯走完仍失败 = 数据层故障，升 error。
             this.reportStandalone('error', 'SQLite 写入连续失败，已停止重试 错误=%s', error)
           }
           throw error
@@ -11211,7 +11355,7 @@ function privateDeliveryChannelId(platform: string, userId: string | undefined, 
   return existing || id
 }
 
-/** P1-4：OneBot 目标 ID 类型规则——纯数字串转 number（QQ 的 user_id/group_id
+/** OneBot 目标 ID 类型规则——纯数字串转 number（QQ 的 user_id/group_id
  * 规范类型），其余（wxid_xxx / @chatroom 等字符串 ID）原样传 string。此前
  * Number() 一刀切会把非数字 ID 变成 NaN 直发上游。 */
 function onebotTargetId(channelId: string): string | number {
@@ -11219,7 +11363,7 @@ function onebotTargetId(channelId: string): string | number {
   return /^\d+$/.test(raw) ? Number(raw) : raw
 }
 
-/** P2-5：日志 QQ 号脱敏——5-12 位数字段保留尾 4 位（够关联排查），其余打码。
+/** 日志 QQ 号脱敏——5-12 位数字段保留尾 4 位（够关联排查），其余打码。
  * 只用于 summary 级（verbosity 关不掉）的入站消息行；standard/diagnostic 级
  * 的完整 ID 已有 verbosity 门控，保持原样。 */
 function maskQqIds(value: unknown): string {
@@ -11413,6 +11557,24 @@ export function describeGroupAttachments(content: unknown) {
     })
 }
 
+/** 出站传输超时包装（rc50 issue 报告）：OneBot 实现不回应时把"永久挂起"
+ * 变成有界等待，防止按故事串行的执行链被单次发送永久堵死。默认 30s 与
+ * send_forward_msg 一致。与 withTimeout 的区别：超时错误带 `transport-timeout`
+ * 标记与调用点标签——上层把它当作"结果未知"（账本记 pending 交由待投递
+ * 补偿幂等收尾），而不是确定失败；迟到回执由 deliveryExecutionKey 去重。 */
+export function withTransportTimeout<T>(promise: Promise<T>, label: string, timeoutMs = 30_000): Promise<T> {
+  return withTimeout(promise, timeoutMs).catch(error => {
+    const isTimeout = (error as { timeout?: boolean })?.timeout === true
+      || String(error?.message || error).includes('timeout after')
+    if (isTimeout) {
+      const wrapped = new Error(`transport-timeout:${label} (结果未知，等待补偿重试)`) as Error & { transportTimeout?: boolean }
+      wrapped.transportTimeout = true
+      throw wrapped
+    }
+    throw error
+  })
+}
+
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(`timeout after ${timeoutMs}ms`)), timeoutMs)
@@ -11570,6 +11732,14 @@ export function stableStickerAssetId(filePath: string, hash: string) {
 export function stickerDeliveryUrl(base: string, assetId: string) {
   const root = String(base || '').trim().replace(/\/$/, '')
   return `${root || 'http://127.0.0.1:5140'}/hds-interlude/sticker/${encodeURIComponent(assetId)}`
+}
+
+/** 表情包本地文件 URI：file:/// + 正斜杠绝对路径（Linux 与 Windows 盘符
+ * 两种形态都产出三斜杠标准形；SnowLuma/NapCat 的图片段按 file:// 与
+ * 含分隔符的本地路径解析，见 SnowLuma element-codecs 的 file 优先规则）。 */
+export function stickerFileUrl(absolutePath: string) {
+  const normalized = String(absolutePath ?? '').replace(/[\\]/g, '/').replace(/^\/+/, '')
+  return `file:///${normalized}`
 }
 
 /** Extract only explicit clock statements from a live user message. This is a
@@ -11841,6 +12011,10 @@ export function hoistParticipantlessInteraction<T extends NarrativeDecision>(dec
 export function requiresVisibleReplyRecovery(phase: NarrativeRequest['phase'], groupContext: GroupContext | undefined, decision: NarrativeDecision) {
   if (phase !== 'user-message') return false
   if (groupContext) return !hasStructuredGroupReply(decision)
+  // 合法的"只发表情/动作不配文字"回合：interaction 为弱形态但携带任一动作
+  // 字段时不属于回复缺失（placement:standalone 本就表示不配文字）。动作
+  // 字段的嵌套形态已由 reconcileTransportReferences 提权到顶层。
+  if (decision.localMedia || decision.nativeFace || decision.messageReactions?.length) return false
   // mode=none+actionId 的弱模型矛盾形态不在此处理：能锚定 say 行动的由
   // reconcileTransportReferences 就地救援为 immediate，锚不定的按合法沉默放行
   // （重写无法改变模型的稳定输出习惯，只会把"静默不发"恶化成"整回合失败"）。
@@ -11902,12 +12076,16 @@ function normalizeGroupInteractionReply(raw: NarrativeDecision['interaction'], m
   return sanitizeAndClampVisibleContent(raw.reply.content, maxCharacters, separator)
 }
 
-function sanitizeAndClampVisibleContent(value: unknown, maxCharacters: number, separator = '<sep/>') {
+export function sanitizeAndClampVisibleContent(value: unknown, maxCharacters: number, separator = '<sep/>') {
   return String(value ?? '')
     // Providers occasionally drop the slash or emit full-width brackets while
     // copying the contract. Normalize only structured visible replies; script
     // prose and incoming user text remain untouched.
     .replace(/[<＜]\s*sep\s*\/?\s*[>＞]/gi, separator.trim() || '<sep/>')
+    // 引号层级提升：模型剧本的嵌套引号 ‘...’ 在外层 “...” 剥掉后应升为
+    // “...”——投递的消息自身已是第一层，内层引号用双引号才是中文规范。
+    // 只处理成对的中文弯单引号；ASCII '...' (英文缩写) 和不成对的 ‘’ 不动。
+    .replace(/‘([^’]+)’/g, '“$1”')
     // 模型可能复述入站消息里的附件标记（如 <file src="…qqdownload…">）。
     // 可见回复是纯文本合约：标记一旦漏出会被适配器解析成真实附件发出去。
     .replace(/<\/?(?:file|img|image|audio|record|video|flash|mface)\b[^>]*\/?>/gi, '')
@@ -11945,7 +12123,6 @@ function literalQuoteText(value: unknown) {
 function isLiteralQuoteOnly(value: unknown) {
   return !!literalQuoteText(value)
 }
-
 
 /** Treat OneBot transport aliases as one administrator-facing platform family. */
 function samePlatformFamily(left: string | undefined, right: string | undefined) {
@@ -12040,6 +12217,28 @@ function isEnabledAccount(accounts: OneBotAccountRule[] | undefined, qq: string)
   const normalized = normalizeAccountId(qq)
   if (!normalized) return false
   return (accounts ?? []).some(account => account.enabled !== false && normalizeAccountId(account.qq) === normalized)
+}
+
+/** 模型偶发把 script 输出成对象（{tag,content} / {entries:[…]}，形态模仿
+ * recentScript 的载荷结构）。散文完整，做无损归一而非弃稿：对象直取散文键、
+ * entries 按序拼接、顶层数组同法。归一发生在 no-usable-script 闸门之前
+ * （decide() 返回链），normalizeDecision 内再兜一道。 */
+export function normalizeScriptField(raw: unknown): string {
+  if (typeof raw === 'string') return raw
+  const proseOf = (entry: unknown): string => {
+    const item = entry as Record<string, unknown> | null
+    const text = typeof item?.text === 'string' ? item.text : typeof item?.content === 'string' ? item.content : ''
+    return text.trim()
+  }
+  const joinEntries = (list: unknown[]): string => list.map(proseOf).filter(Boolean).join('\n')
+  if (Array.isArray(raw)) return joinEntries(raw)
+  if (!raw || typeof raw !== 'object') return ''
+  const record = raw as Record<string, unknown>
+  for (const key of ['content', 'text', 'prose', 'narration', 'body', 'script']) {
+    if (typeof record[key] === 'string' && (record[key] as string).trim()) return record[key] as string
+  }
+  if (Array.isArray(record.entries)) return joinEntries(record.entries)
+  return ''
 }
 
 export function hasRequiredNarrativeScript(value: NarrativeDecision | undefined | null) {
@@ -12174,11 +12373,32 @@ function hasExplicitPresenceEvidence(status: ScenePresenceState['status'], entri
   return /一起|同行|身边|来到|抵达|进入|走进|拉着|坐在|站在|陪着/.test(text)
 }
 
+/** 归一化文本(去空白/标点)后判断群发内容是否与私聊回复重叠：
+ * 完全包含或 Jaccard > 0.55 视为"回声"（模型把私聊回复照搬到群聊）。
+ * 只对群目标做（私聊→私聊的 cross-action 不涉及隐私泄漏）。 */
+function isGroupEchoOfPrivateReply(actionContent: string, replyContent: string | undefined): boolean {
+  if (!replyContent?.trim() || !actionContent.trim()) return false
+  const normalize = (s: string) => s.replace(/[\s\p{P}\p{S}]+/gu, '').toLowerCase()
+  const a = normalize(actionContent), b = normalize(replyContent)
+  if (!a || !b) return false
+  // 最短长度守卫：短回复("嗯")归一化后 1-2 字,包含判定会误杀正常群发。
+  const MIN_ECHO = 6
+  if (a === b) return true
+  if (b.length >= MIN_ECHO && a.includes(b)) return true
+  if (a.length >= MIN_ECHO && b.includes(a)) return true
+  const grams = (s: string) => { const set = new Set<string>(); for (let i = 0; i < s.length - 1; i++) set.add(s.slice(i, i + 2)); return set }
+  const ga = grams(a), gb = grams(b)
+  if (!ga.size || !gb.size) return false
+  let shared = 0
+  for (const g of ga) if (gb.has(g)) shared++
+  return shared / (ga.size + gb.size - shared) > 0.55
+}
+
 export function normalizeDecision(raw: NarrativeDecision, from: Date, now: Date, permitMessages: boolean, runtime: RuntimeConfig, shared: SharedStoryConfig, currentParticipantId: string, permittedParticipantIds: Set<string>, permittedGroupIds: Set<string>, phase: NarrativeRequest['phase'] = 'advance', memory?: MemoryConfig, refreshContinuity = false) {
   raw = reconcileTransportReferences(raw, false, runtime.messageSeparator)
-  const script = typeof raw?.script === 'string'
-    ? raw.script.trim().slice(0, runtime.maxScriptCharacters)
-    : ''
+  // script 形态归一兜底(rc50 issue 报告):decide() 返回链已先行归一,此处
+  // 覆盖恢复路径等旁路输入(对象形态直接取散文,不再判空)。
+  const script = normalizeScriptField(raw?.script).trim().slice(0, runtime.maxScriptCharacters)
   // The only channel for a private reply is interaction. Automatic life
   // passes have no live participant event, so they cannot emit it at all.
   const interaction = phase === 'advance' ? undefined : normalizeInteraction(raw?.interaction, now, runtime)
@@ -12206,10 +12426,21 @@ export function normalizeDecision(raw: NarrativeDecision, from: Date, now: Date,
     ? raw.crossConversationActions
       .map(action => {
         const normalized = normalizeConversationAction(action, runtime, permittedParticipantIds, permittedGroupIds, currentParticipantId, now, agencyGatedProactive)
-        if (normalized || !agencyGatedProactive) return normalized
-        const dropped = droppedProactiveActionInfo(action, runtime, permittedParticipantIds, currentParticipantId)
-        if (dropped) droppedProactiveActions.push(dropped)
-        return undefined
+        if (!normalized) {
+          if (!agencyGatedProactive) return undefined
+          const dropped = droppedProactiveActionInfo(action, runtime, permittedParticipantIds, currentParticipantId)
+          if (dropped) droppedProactiveActions.push(dropped)
+          return undefined
+        }
+        // 隐私回声闸：群目标的 cross-action 内容与 interaction.reply 重叠时丢弃
+        // （模型把私聊回复逐字照搬到群聊——issue #3 的直接根因）。
+        if (normalized.participantId.startsWith('group:')
+          && interaction?.reply?.content
+          && isGroupEchoOfPrivateReply(normalized.content, interaction.reply.content)) {
+          droppedProactiveActions.push({ participantId: normalized.participantId, mode: 'immediate' as const, content: normalized.content, reason: 'group-echo-of-private-reply' })
+          return undefined
+        }
+        return normalized
       })
       .filter((action): action is NonNullable<ReturnType<typeof normalizeConversationAction>> => !!action)
       .slice(0, Math.max(0, shared.maxCrossConversationActions))
@@ -12951,5 +13182,4 @@ function normalizeMajorEvents(value: unknown, patches: StatePatchProposal[], sna
   ]
   return Array.from(new Set([...retained, ...modelEvents].filter(Boolean))).slice(-20)
 }
-
 

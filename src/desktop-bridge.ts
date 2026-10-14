@@ -107,7 +107,7 @@ interface DesktopDeliveryRequest {
   /** B1-1（M3 语义）：模型显式选择的目标端点；缺省 = 来源端点（宿主按
    *  selfId/accountKey 路由到对应上游）。 */
   endpointId?: string
-  /** P1-1：业务幂等键（scriptEvent.eventId + bubbleIndex）。宿主 outbox 跨
+  /** 业务幂等键（scriptEvent.eventId + bubbleIndex）。宿主 outbox 跨
    *  deliveryId 去重，防止"上游已收、回执迟到"时重试造成重复投递。 */
   intentKey?: string
 }
@@ -447,7 +447,7 @@ export function installDesktopBridge(service: InterludeService) {
     pendingDeliveries.clear()
     for (const pending of pendingActions.values()) {
       clearTimeout(pending.timeout)
-      // P1-5：dispose 窗口内请求可能已写出宿主——与超时同族，按 ambiguous
+      // dispose 窗口内请求可能已写出宿主——与超时同族，按 ambiguous
       // 保守结算（调用方计入配额、禁止自动重试），不再标记为确定失败。
       pending.resolve({ ok: false, ambiguous: true, errorCode: 'bridge-closed', error: 'typ-0 bridge 已关闭——在途请求结果不可知，禁止自动重试。' })
     }

@@ -1,4 +1,7 @@
 export type StoryStatus = 'active' | 'paused' | 'archived';
+/** 生活节奏五档：Urge 推进密度的乘法因子输入。由压缩器/主叙事/入站事件
+ * 判定，planUrge 消费；与 lifeStatus 三值并存（后者服务群聊意愿 auto 档）。 */
+export type LifeRhythmAttention = 'phone-focused' | 'available' | 'occupied' | 'resting' | 'asleep';
 export interface CharacterSetting {
     name: string;
     profile: string;
@@ -68,6 +71,14 @@ export interface StoryState {
     lifeStatus?: {
         status: 'busy' | 'asleep' | 'idle';
         updatedAt: string;
+    };
+    /** 生活节奏五档（压缩器主写/主叙事与入站可覆盖）：Urge 推进密度的乘法因子。
+     * 过期（>2h）视为 stale，退回 restWindows 兜底。 */
+    lifeRhythm?: {
+        attention: LifeRhythmAttention;
+        basis: string;
+        assessedAt: string;
+        source: 'compactor' | 'narrator' | 'incoming' | 'fallback';
     };
     /** Host-owned unresolved state carried forward from the latest completed
      * automatic event ledger. This outranks prose-derived scratchpad wording. */
@@ -1076,6 +1087,11 @@ export interface CompactionDecision {
     schedulePreplan?: SchedulePreplanProposal;
     /** 主角当前注意力状态（群聊意愿 auto 档输入）；由压缩器附带返回。 */
     lifeStatus?: 'busy' | 'asleep' | 'idle';
+    /** 压缩器输出的五档生活节奏（Urge 推进密度输入）。 */
+    lifeRhythm?: {
+        attention: LifeRhythmAttention;
+        basis: string;
+    };
 }
 export interface WorkingDetailDraft {
     /** Explicit rename of the same evidenced matter; never fuzzy deduplication. */

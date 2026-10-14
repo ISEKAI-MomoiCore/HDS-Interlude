@@ -31,6 +31,18 @@ export function reconcileTransportReferences(decision: NarrativeDecision, alread
   if (!decision.groupReply && decision.interaction && typeof (decision.interaction as any).groupReply === 'object' && (decision.interaction as any).groupReply !== null) {
     decision = { ...decision, groupReply: (decision.interaction as any).groupReply }
   }
+  // 动作字段嵌套兼容（与 groupReply 同因）：模型常把动作字段塞进
+  // interaction 或 interaction.reply。提权到顶层，使 requiresVisibleReplyRecovery
+  // 的放行依据、resolveSticker/resolveNativeFace 与 buildCommit 的 raw 回挂
+  // 全部可见。两种嵌套取先命中者；顶层已有值不覆盖。
+  for (const key of ['localMedia', 'nativeFace', 'messageReactions'] as const) {
+    if (decision[key]) continue
+    const interaction = decision.interaction as unknown as Record<string, unknown> | undefined
+    const nested = interaction?.[key]
+    const deeper = (interaction?.reply as Record<string, unknown> | undefined)?.[key]
+    const value = nested ?? deeper
+    if (value != null && typeof value === 'object') decision = { ...decision, [key]: value as never }
+  }
   const parsed = readAuthoredActions(decision.script)
   const leading = parsed.prose.length - parsed.prose.trimStart().length
   const prose = parsed.prose.trim()
@@ -40,7 +52,7 @@ export function reconcileTransportReferences(decision: NarrativeDecision, alread
     ...action, start: action.start - leading, end: action.end - leading,
   })).filter(action => {
     if (action.start >= 0 && action.end <= prose.length && prose.slice(action.start, action.end) === action.content) return true
-    // Fix#6: 容忍 say 内容两端的空白（闭合标签前的尾随空格很常见）——
+    // 容忍 say 内容两端的空白（闭合标签前的尾随空格很常见）——
     // prose 双侧 trim 后 end 可能越界或切片不等。兜底用夹紧切片做双侧 trim 比较，
     // 命中后回写 content 为切片本身，让镜像/救援路径拿到的是 prose 实际文字。
     const start = Math.max(0, action.start)

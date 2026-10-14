@@ -46,9 +46,13 @@ export interface WorldSeedDomain {
     brief: string;
 }
 export declare const WORLD_SEED_DOMAINS: WorldSeedDomain[];
+/** 实况天气接管时的 nature 替身:天气/温度/天空状态由宿主通道供给,播种器
+ * 只保留季节、光照、声音气味等非天气环境质感。不进 WORLD_SEED_DOMAINS——
+ * 轮换周期必须保持六切面,替身只在 weatherHandledByHost 时替换呈现。 */
+export declare const NATURE_DOMAIN_NO_WEATHER: WorldSeedDomain;
 /** 同一 (storyId, cadence 时间槽) 内切面稳定；跨槽前进一格——相邻两轮必然不同切面。 */
 export declare function seedDomainForRun(storyId: string, slotStart: Date, cadenceMinutes: number): WorldSeedDomain;
-export declare function worldSeederSystemPrompt(domain?: WorldSeedDomain): string;
+export declare function worldSeederSystemPrompt(domain?: WorldSeedDomain, weatherHandledByHost?: boolean): string;
 export interface SeedValidationInput {
     now: Date;
     timezone: string;
@@ -59,15 +63,19 @@ export interface SeedValidationInput {
     recentSubjects?: string[][];
     /** 已排期/已注入事件的 occursAt——时间窗重叠也判重复 */
     recentOccursAt?: Date[];
+    /** 实况天气接管时为 true:天气类事件一律弃(宁可错杀——与播种器哲学一致)。 */
+    weatherGuard?: boolean;
 }
 export declare function summaryJaccard(left: string, right: string): number;
-export type SeedRejection = 'invalid-shape' | 'empty-summary' | 'invalid-importance' | 'invalid-time' | 'blocked-name' | 'night-high' | 'duplicate';
+export type SeedRejection = 'invalid-shape' | 'empty-summary' | 'invalid-importance' | 'invalid-time' | 'blocked-name' | 'night-high' | 'duplicate' | 'weather-guard';
 /** 单事件校验闸；宁可错杀：任何一项不过即弃，不重试。 */
 export declare function validateSeedEvent(draft: WorldSeedEventDraft, input: SeedValidationInput): SeedRejection | undefined;
 /** 防御解析模型输出：字段裁剪、时间解析、subjects/rationale 归一；坏项丢弃。 */
 export declare function parseWorldSeedEvents(value: unknown, limit?: number): WorldSeedEventDraft[];
 export interface WorldSeeder {
     available: boolean;
-    generate(userPayload: string): Promise<unknown>;
+    generate(userPayload: string, opts?: {
+        weatherHandledByHost?: boolean;
+    }): Promise<unknown>;
 }
 export declare function createWorldSeeder(ctx: Context, modelConfig: ModelConfig, runtime: WorldSeederRuntime, onUsage?: (record: TokenUsageRecord) => void): WorldSeeder;

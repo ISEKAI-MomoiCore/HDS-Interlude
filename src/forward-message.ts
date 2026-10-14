@@ -12,9 +12,9 @@ export interface ForwardReadResult {
   forwardCount: number
   truncated: boolean
   failed: boolean
-  /** P2-7：整体拉取失败的原因（模块保持零依赖，日志由调用方记录）。 */
+  /** 整体拉取失败的原因（模块保持零依赖，日志由调用方记录）。 */
   cause?: string
-  /** P2-7：嵌套合并转发读取失败次数（>0 时正文以占位符降级，调用方记 warn）。 */
+  /** 嵌套合并转发读取失败次数（>0 时正文以占位符降级，调用方记 warn）。 */
   nestedFailed?: number
   /** 合并转发节点内图片的可加载引用（http CDN URL → onebot-url: 前缀；
    * 仅有 file token 时 → onebot-file: 前缀，由 fetchNativeImage 经
@@ -112,7 +112,7 @@ async function fetchForwardNodes(internal: any, id: string, limits: ForwardReadL
         segment.type = 'text'
         segment.data = { text: normalized.content }
       } catch {
-        // P2-7：记录失败次数——正文降级为占位符，但不再对调用方完全不可见。
+        // 记录失败次数——正文降级为占位符，但不再对调用方完全不可见。
         state.nestedFailed += 1
         segment.type = 'text'
         segment.data = { text: `[嵌套合并转发读取失败｜资源 ${nestedId}]` }

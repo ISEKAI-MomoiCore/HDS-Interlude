@@ -22,7 +22,7 @@ export interface QzonePostRecord {
   content?: string
   /** 发帖查看权限（1 所有人/4 好友/16 部分好友/64 仅自己/128 排除名单）。 */
   ugcRight?: number
-  /** 执行账号的角色端点（P2-10：多 QQ 端点下限流/审计/归因隔离的键）。 */
+  /** 执行账号的角色端点（多 QQ 端点下限流/审计/归因隔离的键）。 */
   endpointId?: string
   /** 上次观测到的评论数（被评论感知基线；undefined=尚未建立基线）。 */
   commentNum?: number

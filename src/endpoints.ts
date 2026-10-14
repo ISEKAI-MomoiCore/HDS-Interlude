@@ -48,7 +48,7 @@ function isOneBotFamilyPlatform(platform: string) {
 }
 
 /**
- * 平台隔离的账号键（P1-3）：onebot 家族折叠到 `onebot:` 前缀（历史行不变），
+ * 平台隔离的账号键：onebot 家族折叠到 `onebot:` 前缀（历史行不变），
  * 原生平台（wechat 等）用专属前缀——不同平台同 selfId 不再碰撞。键本身已
  * 编码平台族，解析时的平台校验由键匹配隐式完成（比逐字段比对更严）。
  */
@@ -158,7 +158,7 @@ export interface InboundResolution {
   userEndpoint?: EndpointRow
   /** 群消息时命中的群端点。 */
   groupEndpoint?: EndpointRow
-  /** P2-10：同 accountKey 存在多行角色端点（脏数据）——调用方需一次性告警。 */
+  /** 同 accountKey 存在多行角色端点（脏数据）——调用方需一次性告警。 */
   duplicateRoleAccountKeys?: string[]
 }
 
@@ -174,7 +174,7 @@ export function resolveInboundEndpoint(rows: ReadonlyArray<EndpointRow>, source:
   const roleEndpoint = roleMatches[0]
   if (!roleEndpoint) return undefined
   const resolution: InboundResolution = { roleEndpoint }
-  // P2-10：重复角色端点是脏数据——不再静默取首行，暴露给调用方告警。
+  // 重复角色端点是脏数据——不再静默取首行，暴露给调用方告警。
   if (roleMatches.length > 1) resolution.duplicateRoleAccountKeys = [accountKey]
   if (source.groupId) {
     const groupId = normalizedGroupId(String(source.groupId))
@@ -311,7 +311,7 @@ export function stateAfterOutbound(state: EndpointState, ok: boolean, note: stri
   }
 }
 
-/** deliverable 确认的保质期（P2-8）：超过 TTL 的 allowed 按未知处理。
+/** deliverable 确认的保质期：超过 TTL 的 allowed 按未知处理。
  *  QQ/OneBot 在线端点允许实际投递探测，避免过期门控阻止出站刷新；
  *  其它通道保持保守。重启快照仍须经过当前连接器的在线事实确认。 */
 export const ENDPOINT_DELIVERABLE_TTL_MS = 24 * 3_600_000

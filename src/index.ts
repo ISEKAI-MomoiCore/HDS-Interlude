@@ -16,7 +16,7 @@ declare module 'koishi' { interface Context { interlude: InterludeService } }
 
 export const name = 'hds-interlude'
 export const version = HDS_INTERLUDE_VERSION
-export const inject = { required: ['database', 'http'], optional: ['puppeteer', 'server'] }
+export const inject = { required: ['database', 'http'], optional: ['puppeteer', 'server', 'router'] }
 
 const defaultProvider: ProviderConfig = {
   id: 'primary',
@@ -193,6 +193,7 @@ const Model: Schema<ModelConfig> = Schema.object({
     enabled: Schema.boolean().default(true).description('启用后台剧本压缩与长期事实提取。'),
     temperature: Schema.number().min(0).max(2).default(0.3).description('压缩采样温度；建议保持较低以提高稳定性。'),
     maxTokens: Schema.natural().min(0).max(100_000).default(2048).description('压缩响应的最大 token 数。'),
+    sideTaskMaxTokens: Schema.natural().min(0).max(100_000).default(4096).description('侧端 JSON 任务（时间导演/长线指导/日程预排）的最大输出 token。思考型模型会把 reasoning 计入此预算，需留足余量(建议 ≥4096)；0 = 不发送 max_tokens 限制。'),
     timeout: Schema.natural().min(1_000).max(300_000).default(60_000).role('ms').description('压缩请求超时，单位毫秒。'),
     topP: Schema.number().min(0).max(1).default(1).description('压缩请求的核采样概率。'),
     responseFormat: Schema.union(['json-object', 'prompt-only']).default('json-object').description('压缩请求的 JSON 模式；不支持时改为 prompt-only。'),
@@ -302,7 +303,7 @@ const AlterSystem: Schema<AlterSystemConfig> = Schema.object({
   maxIntensity: Schema.number().min(1).max(3).step(0.1).default(2).description('触发值超过阈值时允许的最大情绪偏移强度。'),
   temperature: Schema.number().min(0).max(2).step(0.1).default(0.3).description('侧端分析温度。较低值能保持描述稳定而不过度发挥。'),
   topP: Schema.number().min(0).max(1).step(0.05).default(1).description('侧端分析 top_p。'),
-  maxTokens: Schema.natural().min(64).max(2_000).default(400).description('侧端分析最大输出 token；只需要一到两句话。'),
+  maxTokens: Schema.natural().min(64).max(16_000).default(2000).description('侧端分析最大输出 token。思考型模型需给 reasoning 留余量(建议 ≥2000)。'),
   timeout: Schema.natural().min(1_000).max(120_000).default(30_000).role('ms').description('侧端分析超时。失败时保留累计值，稍后重试。'),
   prompt: Schema.string().role('textarea').default('').description('侧端分析的附加要求；不能覆盖固定的 JSON、隐私和非指令化约束。'),
 }).collapse(true)
@@ -494,6 +495,11 @@ const Stickers: Schema<StickerLibraryConfig> = Schema.object({
   descriptionMaxTokens: Schema.natural().min(256).max(4_096).default(768).description('单张表情包描述的最大输出 token。'),
   descriptionResponseFormat: Schema.union(['json-object', 'prompt-only']).default('json-object').description('表情包描述输出格式。'),
   deliveryBaseUrl: Schema.string().default('').description('表情包投递基址；留空自动推导（selfUrl → http://127.0.0.1:5140）。Koishi 与 OneBot 实现（NapCat/Lagrange）分容器或不共享文件系统时，file:// 路径对方读不到（retcode 1200/100），需要让 OneBot 实现经此 HTTP 地址回源下载。'),
+  deliveryMode: Schema.union([
+    Schema.const('auto').description('自动（默认）：HTTP 回源路由可用走 HTTP；宿主未加载 server/router 时退回 file:// 本地路径（同容器/同主机的 OneBot 实现可直接读文件）'),
+    Schema.const('http').description('强制 HTTP 回源（分容器部署，需保证 deliveryBaseUrl 可达）'),
+    Schema.const('file').description('强制 file:// 本地路径（OneBot 实现与 Koishi 共享文件系统）'),
+  ]).default('auto').description('表情包投递模式。'),
 }).collapse(true)
 
 const SharedStory: Schema<SharedStoryConfig> = Schema.object({
@@ -514,13 +520,15 @@ const UrgeAdvanced = Schema.object({
   burstMax: Schema.number().min(1).max(1440).description('加速首轮最长等待（分钟）。'),
   slowMin: Schema.number().min(1).max(1440).description('剧本 slow 最短等待（分钟）。'),
   slowMax: Schema.number().min(1).max(1440).description('剧本 slow 最长等待（分钟）。'),
-  halfLifeMinutes: Schema.number().min(5).max(240).default(45).description('真实对话热度半衰期（分钟）。'),
+  halfLifeMinutes: Schema.number().min(5).max(240).default(90).description('真实对话热度半衰期（分钟）。对话结束后高密度推进的持续期。'),
   burstThreshold: Schema.number().min(0).max(1).step(.05).default(.75).description('启动加速的有效 Urge；仍需主动行动和发送回执。'),
   jitter: Schema.number().min(0).max(1).step(.05).default(.15).description('Urge 值随机偏移幅度，不改变联系意愿。'),
   extremeChance: Schema.number().min(0).max(1).step(.01).default(.03).description('改为全区间抽样的概率；0 关闭。'),
   burstTtlMinutes: Schema.number().min(5).max(120).default(35).description('同一联系加速段有效期（分钟），不会自行续满。'),
   burstBudget: Schema.natural().max(10).default(3).description('一段最多额外推进次数；0 关闭加速。'),
   burstContactMinMinutes: Schema.number().min(1).max(60).default(5).description('有效加速段中本对象的最短联系间隔，其他 Agency 条件保留。'),
+  activeMultiplier: Schema.number().min(1).max(3).step(.1).default(1.4).description('对话密度满值时的推进加速倍率（乘法因子；与生活节奏倍率相乘）。1.4 = 密集对话时推进密度提升 40%。'),
+  restMultiplier: Schema.number().min(.05).max(1).step(.05).default(.6).description('无节奏数据且在休息窗口时的兜底倍率（乘法因子，不再替换间隔）。0.6 = 推进密度打六折。'),
 }).collapse(true)
 
 export const Config: Schema<InterludeConfig> = Schema.object({
@@ -534,7 +542,7 @@ export const Config: Schema<InterludeConfig> = Schema.object({
     frequency: Schema.union(['low', 'medium', 'high', 'custom']).default('medium').description('低/中/高频或自定义；自定义未填写项沿用中频。高频会增加主叙事和时间导演调用。'),
     proactiveWillingnessThreshold: Schema.number().min(0).max(1).step(.05).default(.4).description('仅 Urge 启用时的主动联系意愿门槛(Agency strict 模式使用;natural/balanced 模式改用 Agency 的 naturalWillingnessThreshold,调这里不生效)；不是发送概率。'),
     advanced: UrgeAdvanced.description('高级时间范围、随机性与调用预算；填写时间覆盖档位。'),
-  }).description('【节奏 6】Urge 弹性推进：剧本驱动的自动调度（可选，替代固定间隔）。'),
+  }).description('【节奏 6】Urge 弹性推进：剧本驱动的自动调度，压缩器五档生活节奏×对话密度双因子乘法模型（可选，替代固定间隔）。'),
   schedulePreplan: SchedulePreplan.description('【节奏 7】日程预排：近期稳定日程与变化颗粒度；主提示词只读取未来约半天。'),
   timelineDirector: Schema.object({ enabled: Schema.boolean().default(true).description('启用时间导演：自动回合先生成相对时间账本——只提供客观时间事实与可能的时间逻辑，不做笃定的未来预测（如几点起床）；用户消息对主角的影响由主模型判断。失败时降级为无账本推进，不冻结自动推进。'), }).description('【节奏 8】时间导演：自动回合的时间账本与熔断保护。'),
   agency: Agency.description('【节奏 9】Agency 行动窗口：日程压力、隐私、设备和生活来源的联系条件。'),
@@ -1082,6 +1090,11 @@ function registerCommands(ctx: Context, service: InterludeService, config: Inter
     if (!confirmed) return '已取消。'
     await service.clearDatabase()
     await service.purgeAllStoryData(story.id)
+    try {
+      const fs = await import('node:fs')
+      const path = await import('node:path')
+      fs.unlinkSync(path.join(ctx.baseDir, 'data', 'hds-interlude', 'preset-sync-state.json'))
+    } catch { /* 同步状态文件本就不存在时无需处理 */ }
     return `已完全重置。数据库已清空，角色设定已回到 Console 故事档案（storyDefaults）模板。
 如需更换角色身份，请在 Console 修改故事档案后重新开始。`
   })

@@ -16,7 +16,7 @@ const KNOWN_STORY_STATE_KEYS = new Set([
   'continuitySnapshot', 'narrativeUpdateCount', 'lastContinuityUpdateAt',
   'continuityDirty', 'automation', 'alterSystem', 'agencyWindow', 'scenePresence',
   'automaticDeliverySummaries', 'workingDetails', 'timelineCarry', 'chatRhythm',
-  'sceneFrame', 'dialogueBurst', 'workingDetailResolutions', 'lifeStatus', 'proactiveContactLog',
+  'sceneFrame', 'dialogueBurst', 'workingDetailResolutions', 'lifeStatus', 'proactiveContactLog', 'lifeRhythm',
 ])
 
 export interface StoryStateMigrationInspection {
@@ -85,6 +85,7 @@ export function upgradeStoryState(value: unknown): StoryState {
       .slice(-32).map(([label, id]) => [label, Number(id)])),
     timelineCarry: normalizeTimelineCarry(record.timelineCarry),
     lifeStatus: normalizeLifeStatus(record.lifeStatus),
+    lifeRhythm: normalizeLifeRhythm(record.lifeRhythm),
     proactiveContactLog: normalizeProactiveContactLog(record.proactiveContactLog),
     automaticDeliverySummaries: normalizeAutomaticDeliverySummaries(record.automaticDeliverySummaries),
     // beta10 declared this field but its old decoder forgot to return it.
@@ -268,6 +269,33 @@ export function normalizeLifeStatus(value: unknown): StoryState['lifeStatus'] {
   if (status !== 'busy' && status !== 'asleep' && status !== 'idle') return undefined
   const updatedAt = typeof value.updatedAt === 'string' && !Number.isNaN(Date.parse(value.updatedAt)) ? value.updatedAt : undefined
   return updatedAt ? { status, updatedAt } : undefined
+}
+
+const LIFE_RHYTHM_ATTENTIONS = ['phone-focused', 'available', 'occupied', 'resting', 'asleep'] as const
+
+/** 五档节奏归一化：合法档位+有效时间戳+合法来源才保留。 */
+export function normalizeLifeRhythm(value: unknown): StoryState['lifeRhythm'] {
+  if (!isRecord(value)) return undefined
+  const attention = value.attention
+  if (typeof attention !== 'string' || !(LIFE_RHYTHM_ATTENTIONS as readonly string[]).includes(attention)) return undefined
+  const assessedAt = typeof value.assessedAt === 'string' && !Number.isNaN(Date.parse(value.assessedAt)) ? value.assessedAt : undefined
+  const source = value.source === 'compactor' || value.source === 'narrator' || value.source === 'incoming' || value.source === 'fallback' ? value.source : 'compactor'
+  const basis = typeof value.basis === 'string' ? value.basis.trim().slice(0, 500) : ''
+  return assessedAt ? { attention: attention as StoryState['lifeRhythm'] extends { attention: infer A } ? A : never, basis, assessedAt, source } : undefined
+}
+
+/** 节奏过期判定（>2h 无更新视为 stale，退回 restWindows 兜底）。 */
+export function lifeRhythmStale(rhythm: StoryState['lifeRhythm'] | undefined, now = Date.now()): boolean {
+  if (!rhythm) return true
+  const assessed = Date.parse(rhythm.assessedAt)
+  return Number.isNaN(assessed) || now - assessed > 2 * 3_600_000
+}
+
+/** 旧三值 lifeStatus → 五档映射（读侧兼容：升级前的存量状态在首次读取时转换）。 */
+export function lifeRhythmFromLegacyStatus(status: StoryState['lifeStatus'] | undefined): StoryState['lifeRhythm'] | undefined {
+  if (!status) return undefined
+  const attention = status.status === 'busy' ? 'occupied' as const : status.status === 'asleep' ? 'asleep' as const : 'available' as const
+  return { attention, basis: `从旧 lifeStatus(${status.status}) 映射`, assessedAt: status.updatedAt, source: 'fallback' }
 }
 
 export function normalizeTimelineCarry(value: unknown): string[] {

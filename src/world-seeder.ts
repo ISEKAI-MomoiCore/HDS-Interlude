@@ -81,6 +81,11 @@ export const WORLD_SEED_DOMAINS: WorldSeedDomain[] = [
   { key: 'chance', label: '小意外与际遇', brief: '丢失与拾得、临时的小机会、小麻烦、身体的小状况' },
 ]
 
+/** 实况天气接管时的 nature 替身:天气/温度/天空状态由宿主通道供给,播种器
+ * 只保留季节、光照、声音气味等非天气环境质感。不进 WORLD_SEED_DOMAINS——
+ * 轮换周期必须保持六切面,替身只在 weatherHandledByHost 时替换呈现。 */
+export const NATURE_DOMAIN_NO_WEATHER: WorldSeedDomain = { key: 'nature-no-weather', label: '天象与环境', brief: '这个世界自己的自然节律：季节、光照的变化、声音与气味、环境的变化(天气与天空状态除外)' }
+
 /** 同一 (storyId, cadence 时间槽) 内切面稳定；跨槽前进一格——相邻两轮必然不同切面。 */
 export function seedDomainForRun(storyId: string, slotStart: Date, cadenceMinutes: number): WorldSeedDomain {
   const hash = [...storyId].reduce((acc, ch) => (Math.imul(acc, 31) + ch.charCodeAt(0)) >>> 0, 7)
@@ -89,7 +94,9 @@ export function seedDomainForRun(storyId: string, slotStart: Date, cadenceMinute
 }
 
 
-export function worldSeederSystemPrompt(domain?: WorldSeedDomain) {
+export function worldSeederSystemPrompt(domain?: WorldSeedDomain, weatherHandledByHost = false) {
+  // 实况天气接管时 nature 切面换替身,并在规则区追加硬排除(见下)。
+  const slice = weatherHandledByHost && domain?.key === 'nature' ? NATURE_DOMAIN_NO_WEATHER : domain
   return [
     'You are the world seeder for HDS Interlude. Your job is to keep the protagonist’s offline world alive with small external events that feel connected to her life.',
     'You will receive: current local time and season, the story’s world setting, current scene and arc summaries, a bounded excerpt of her recent established life, her in-flight working details, her relationship network listed as BLOCKED NAMES, and recently seeded events to avoid repeating.',
@@ -100,10 +107,11 @@ export function worldSeederSystemPrompt(domain?: WorldSeedDomain) {
     '- CONNECT TO HER LIFE: use her supporting cast (NPCs named in worldSetting.supportingCast), her location, and her working details as anchors. Events involving named NPCs she knows or places she frequents are far more valuable than generic ambient noise.',
     '- Fit the environment: season, weather, the canon setting’s texture (city or village, era, neighborhood), and her daily circumstances.',
     '- Fit her established life: events must be plausible next to the recent script, her working details and the current arc; never contradict what has already happened.',
-    ...(domain ? [`- THIS RUN'S SLICE OF THE WORLD: ${domain.label} — ${domain.brief}. A slice is an aspect of the world, not a genre: render it through this world's own places, people and vocabulary — the supplied worldSetting is authoritative, and you must never import real-world institutions into a world that does not have them. Originate this run's event from this slice only; other slices belong to other runs. If nothing genuine fits the slice right now, return an empty array.`] : []),
+    ...(domain ? [`- THIS RUN'S SLICE OF THE WORLD: ${slice.label} — ${slice.brief}. A slice is an aspect of the world, not a genre: render it through this world's own places, people and vocabulary — the supplied worldSetting is authoritative, and you must never import real-world institutions into a world that does not have them. Originate this run's event from this slice only; other slices belong to other runs. If nothing genuine fits the slice right now, return an empty array.`] : []),
     '- Place events at concrete future times within the allowed horizon, expressed in the story timezone. Ordinary gaps in her day are the best slots.',
     '- Variety: avoid repeating the same NPC + same object + same time-of-day pattern across events. If a similar scenario was already seeded, shift to a different NPC, a different place, or a different time entirely.',
     '- Importance: low = texture she may barely notice; medium = a small practical change; high = relationship-relevant or disruptive. Prefer medium for events involving named NPCs; reserve high for genuinely disruptive moments.',
+    ...(weatherHandledByHost ? ['- Real-time weather, temperature and sky conditions arrive via a separate host-injected channel. NEVER originate weather changes: no rain, snow, temperature shifts, wind warnings or sky descriptions in your events.'] : []),
     'Real life is mostly uneventful, but a good world still stirs sometimes. Most runs should produce 0-2 events; when the world has something to say, say it.',
     'Output one JSON object only: {"events":[{"summary":"one concrete Chinese sentence stating what happened","importance":"low|medium|high","occursAt":"ISO-8601 with offset","expiresAt":"optional ISO-8601","subjects":["names of offline people involved, empty when none"],"rationale":"short reason this fits now"}]}',
   ].join('\n')
@@ -121,7 +129,12 @@ export interface SeedValidationInput {
   recentSubjects?: string[][]
   /** 已排期/已注入事件的 occursAt——时间窗重叠也判重复 */
   recentOccursAt?: Date[]
+  /** 实况天气接管时为 true:天气类事件一律弃(宁可错杀——与播种器哲学一致)。 */
+  weatherGuard?: boolean
 }
+
+/** 天气特征词(含口语变体);仅当 weatherGuard 开启时用于拦截。 */
+const WEATHER_PATTERN = /天气|下雨|阵雨|雷阵雨|暴雨|大雪|下雪|雨夹雪|冰雹|打雷|闪电|晴朗|转晴|多云|阴天|大雾|浓雾|台风|寒潮|高温预警|降温|升温|气温|温度骤|大风|刮风|出太阳|太阳出来了/
 
 function bigrams(text: string): Set<string> {
   const normalized = text.replace(/[\p{P}\p{S}\s]+/gu, '')
@@ -147,7 +160,7 @@ function localHourIn(date: Date, timezone: string): number {
   }
 }
 
-export type SeedRejection = 'invalid-shape' | 'empty-summary' | 'invalid-importance' | 'invalid-time' | 'blocked-name' | 'night-high' | 'duplicate'
+export type SeedRejection = 'invalid-shape' | 'empty-summary' | 'invalid-importance' | 'invalid-time' | 'blocked-name' | 'night-high' | 'duplicate' | 'weather-guard'
 
 /** 单事件校验闸；宁可错杀：任何一项不过即弃，不重试。 */
 export function validateSeedEvent(draft: WorldSeedEventDraft, input: SeedValidationInput): SeedRejection | undefined {
@@ -192,6 +205,8 @@ export function validateSeedEvent(draft: WorldSeedEventDraft, input: SeedValidat
       if (shared >= 2) return 'duplicate'
     }
   }
+  // ⑤ 天气守卫:实况天气接管时天气类事件与宿主通道冲突,一律弃(宁可错杀)。
+  if (input.weatherGuard === true && WEATHER_PATTERN.test(draft.summary)) return 'weather-guard'
   return undefined
 }
 
@@ -237,7 +252,7 @@ export function parseWorldSeedEvents(value: unknown, limit = 2): WorldSeedEventD
 
 export interface WorldSeeder {
   available: boolean
-  generate(userPayload: string): Promise<unknown>
+  generate(userPayload: string, opts?: { weatherHandledByHost?: boolean }): Promise<unknown>
 }
 
 export function createWorldSeeder(
@@ -251,9 +266,9 @@ export function createWorldSeeder(
   const client = new OpenAICompatibleNarrator(ctx, modelConfig, true, onUsage)
   return {
     available: true,
-    generate: userPayload => client.customSideTask<unknown>(
+    generate: (userPayload, opts) => client.customSideTask<unknown>(
       provider, '世界播种', runtime.timeout, runtime.temperature, runtime.maxTokens,
-      worldSeederSystemPrompt(), userPayload,
+      worldSeederSystemPrompt(undefined, opts?.weatherHandledByHost === true), userPayload,
     ),
   }
 }

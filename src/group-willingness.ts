@@ -20,9 +20,11 @@ export interface GroupWillingnessConfig {
 export interface GroupWillingnessState {
   score: number
   updatedAt: number
+  /** 回复后跳过计数：下一次触发前需要观察的消息条数（抖动产生）。 */
+  skipCount?: number
 }
 
-export type GroupWillingnessReason = 'disabled' | 'forced-mention' | 'below-threshold' | 'probability-roll' | 'asleep'
+export type GroupWillingnessReason = 'disabled' | 'forced-mention' | 'below-threshold' | 'probability-roll' | 'asleep' | 'skip-jitter'
 
 export interface GroupWillingnessDecision {
   state: GroupWillingnessState
@@ -61,6 +63,15 @@ export function evaluateGroupWillingness(
   const state = decay(previous, config, input.now)
   if (!config.enabled) return { state, shouldCall: true, probability: 1, reason: 'disabled' }
 
+  // 回复后跳过抖动：skipCount > 0 时观察消息但不参与评分。@ 直通（不清零
+  // 跳过计数，下一次仍需消耗剩余条数——否则一次 @ 就重置整个抖动周期）。
+  if ((state.skipCount ?? 0) > 0) {
+    if (!input.mentionedBot) {
+      state.skipCount = Math.max(0, (state.skipCount ?? 0) - input.messageCount)
+      return { state: { ...state, updatedAt: input.now }, shouldCall: false, probability: 0, reason: 'skip-jitter' }
+    }
+  }
+
   const keywordHit = config.keywords.some(keyword => input.content.includes(keyword))
   const rawGain = config.baseGain * Math.max(1, Math.min(3, input.messageCount))
     + (input.quotedBot ? config.quoteGain : 0)
@@ -93,7 +104,9 @@ function decay(previous: GroupWillingnessState | undefined, config: GroupWilling
   const score = previous?.score ?? 0
   const elapsedSeconds = Math.max(0, now - (previous?.updatedAt ?? now)) / 1_000
   const factor = 0.5 ** (elapsedSeconds / Math.max(1, config.decayHalfLifeSeconds))
-  return { score: score * factor < 0.001 ? 0 : score * factor, updatedAt: now }
+  // skipCount 由消息条数递减,不随时间衰减——长时间沉默后仍需观察到足够
+  // 条数才重新触发(防止"回复后隔一天,第一条消息就立即又回"的节律断裂)。
+  return { score: score * factor < 0.001 ? 0 : score * factor, updatedAt: now, ...(previous?.skipCount ? { skipCount: previous.skipCount } : {}) }
 }
 
 function clamp(value: number, min: number, max: number) {
@@ -123,6 +136,28 @@ export interface AutoWillingnessConfig {
 }
 
 export const DEFAULT_AUTO_WILLINGNESS: AutoWillingnessConfig = { busy: 'quiet', idle: 'active', asleep: 'quiet' }
+
+/** 回复后跳过条数的抖动幅度（按档位）：[min, max] 条消息内随机。
+ * 效果：eager 不再每条必回（最高跳 3 条→第 4 条才可能再回），
+ * normal 从固定 2-3 条变为 1-7 条，quiet 从 3-4 条变为 2-10 条。
+ * 节奏调制：phone-focused 减少跳过（她在盯手机,回复更勤），
+ * resting/asleep 增加跳过（低能量时更少介入）。 */
+export const WILLINGNESS_JITTER: Record<WillingnessTier, readonly [number, number]> = {
+  quiet: [1, 9],
+  reserved: [1, 7],
+  normal: [0, 6],
+  active: [0, 4],
+  eager: [0, 3],
+}
+
+/** 五档节奏 → 跳过条数修正（叠加在档位抖动上）。 */
+export const RHYTHM_SKIP_MODIFIER: Record<string, number> = {
+  'phone-focused': -1,
+  'available': 0,
+  'occupied': 1,
+  'resting': 2,
+  'asleep': 3,
+}
 
 /** 睡眠态安全余量：概率乘数（对压缩器状态过期/误判的兜底）。 */
 export const ASLEEP_PROBABILITY_MULTIPLIER = 0.2
@@ -250,7 +285,15 @@ export function consumeWillingnessGate(
   lifeStatus: { status: unknown, updatedAt: string } | undefined,
   legacyInput: Partial<GroupWillingnessConfig> | undefined,
   now: number,
+  rhythmAttention?: string,
+  random: () => number = Math.random,
 ): GroupWillingnessState {
   const layers = resolveWillingnessLayers(preset, autoInput, lifeStatus, now, legacyInput)
-  return consumeGroupWillingness(previous, layers.config, now)
+  const consumed = consumeGroupWillingness(previous, layers.config, now)
+  // 回复成功→掷下一次触发前的跳过条数（档位抖动 + 节奏调制）
+  const tier = layers.diagnosis.tier as WillingnessTier | undefined
+  const [jitterMin, jitterMax] = tier && WILLINGNESS_JITTER[tier] ? WILLINGNESS_JITTER[tier] : [0, 3] as const
+  const rhythmMod = rhythmAttention && RHYTHM_SKIP_MODIFIER[rhythmAttention] !== undefined ? RHYTHM_SKIP_MODIFIER[rhythmAttention] : 0
+  const raw = jitterMin + Math.floor(random() * (jitterMax - jitterMin + 1)) + rhythmMod
+  return { ...consumed, skipCount: Math.max(0, raw) }
 }

@@ -158,6 +158,9 @@ export interface CompactionConfig {
     mainPrompt?: string;
     fixedPrompt: string;
     stylePrompt: string;
+    /** 侧端 JSON 任务的输出预算（时间导演/长线指导/日程预排共用）。
+     * 0 = 不发送 max_tokens（交由网关默认）。思考型模型需给 reasoning 留余量。 */
+    sideTaskMaxTokens?: number;
 }
 /**
  * Embedding is deliberately configured separately from chat generation. A single
@@ -274,6 +277,10 @@ export declare function createEmbedder(ctx: Context, config: ModelConfig, routin
  * still arriving. The contract asks for this field first, but scanning only
  * accepts a fully closed top-level value and never sends partial text. */
 export declare function extractEarlyNarrativeReply(raw: string, group: boolean): EarlyNarrativeReply | undefined;
+/** 裸引号修补(rc50 issue 报告):字符串内遇 '"' 前瞻跳过空白,下一字符是
+ * , } ] : 之一或文本结束时视为真结束符;否则判定为散文里的裸引号(模型引用
+ * 聊天内容的稳定习惯),补逃生符并留在字符串内。合法 \" 不受影响。 */
+export declare function repairBareQuotes(text: string): string;
 /** Normalized token accounting for one provider response. `cachedInputTokens`
  * is the provider-reported subset of input tokens served from prefix cache. */
 export interface TokenUsageRecord {
@@ -347,9 +354,14 @@ export declare function toPromptPayload(request: NarrativeRequest, options?: {
 /** Compact ownership tags for cache-first payloads: one short label replaces the
  * kind/actor/participantId triple. Distinctions the ownership label alone would
  * lose (group posting, platform actions) survive as suffixes. */
-export declare function compactScriptTag(kind: string, actor: string): "protagonist" | "system" | "user" | "protagonist(group)" | "protagonist(action)" | "protagonist-narration" | "group-member";
+export declare function compactScriptTag(kind: string, actor: string): "system" | "user" | "protagonist(group)" | "protagonist(action)" | "protagonist" | "protagonist-narration" | "group-member";
 export declare function promptVisibleMessageContent(content: string, ownership: RecentScriptOwnership): string;
 export declare function compactPromptEntries(entries: NarrativeRequest['recentEntries'], characterBudget: number, protectedSince?: Date): ScriptEntry[];
+/** 压缩器输出的 lifeRhythm 五档归一化（narrator 侧轻校验；完整校验在 story-state）。 */
+export declare function normalizeLifeRhythmDraft(value: unknown): {
+    attention: string;
+    basis: string;
+} | undefined;
 export declare function compactionPrompt(fixedPrompt: string, compactionMainPrompt?: string, compactionFixedPrompt?: string, compactionStylePrompt?: string, specialty?: {
     tier?: string;
 }): string;
