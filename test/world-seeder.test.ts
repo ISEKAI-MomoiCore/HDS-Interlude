@@ -92,6 +92,30 @@ test('seeder prompt teaches the critical rules', () => {
   assert.match(prompt, /Variety: avoid repeating/)
 })
 
+test('weather-guard:实况接管时天气类事件被拒,关闭时放行', () => {
+  const base = { now: new Date(draft().occursAt.getTime() - 60_000), timezone: 'Asia/Shanghai', maxHorizonHours: 72, blockedNames: [], recentSummaries: [] }
+  const rain = { ...draft(), summary: '下午窗外开始下雨,她收回了晾在外面的衣服。' }
+  const nonWeather = { ...draft(), summary: '楼下便利店开始打折清仓,持续三天。' }
+  assert.equal(validateSeedEvent(rain, { ...base, weatherGuard: true }), 'weather-guard')
+  assert.equal(validateSeedEvent(rain, base), undefined, '守卫关闭时天气事件正常放行(架空世界模型即兴是唯一天气来源)')
+  assert.equal(validateSeedEvent(nonWeather, { ...base, weatherGuard: true }), undefined, '非天气事件不受守卫影响')
+  const snow = { ...draft(), summary: '夜间气温骤降,路面结了薄冰。' }
+  assert.equal(validateSeedEvent(snow, { ...base, weatherGuard: true }), 'weather-guard')
+})
+
+test('weatherHandledByHost 时提示词换 nature 替身并含硬排除规则', () => {
+  const nature = WORLD_SEED_DOMAINS[0]
+  const plain = worldSeederSystemPrompt(nature)
+  assert.ok(plain.includes('季节、天气、光照'))
+  assert.ok(!plain.includes('NEVER originate weather'))
+  const guarded = worldSeederSystemPrompt(nature, true)
+  assert.ok(guarded.includes('季节、光照的变化、声音与气味'), 'nature 切面换替身')
+  assert.ok(!guarded.includes('季节、天气、光照、声音与气味、环境的变化(天气与天空状态除外)'.replace('(天气与天空状态除外)', '')), '原天气 brief 不再出现')
+  assert.ok(guarded.includes('NEVER originate weather changes'), '硬排除规则在场')
+  const other = worldSeederSystemPrompt(WORLD_SEED_DOMAINS[2], true)
+  assert.ok(other.includes('THIS RUN' + String.fromCharCode(39) + 'S SLICE') && !other.includes('天象与环境'), '非 nature 切面不受影响')
+})
+
 test('世界切面轮换：同槽稳定、跨槽前进、一个周期覆盖全部切面', () => {
   const storyId = 'fixture-story'
   const slot = new Date('2026-09-29T01:50:00+08:00')

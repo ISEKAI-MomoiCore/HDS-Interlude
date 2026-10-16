@@ -22,7 +22,7 @@ import { HDS_INTERLUDE_VERSION } from './meta'
 export const SHARE_SECTIONS = [
   'storyDefaults', 'runtime', 'urge', 'schedulePreplan', 'timelineDirector', 'agency',
   'chatActions', 'stickers', 'sharedStory', 'memory', 'alterSystem', 'browser',
-  'worldSeeder', 'longHorizon', 'qzone', 'blindMode', 'logging',
+  'worldSeeder', 'weather', 'longHorizon', 'qzone', 'blindMode', 'logging',
 ] as const
 export type ShareSection = typeof SHARE_SECTIONS[number]
 

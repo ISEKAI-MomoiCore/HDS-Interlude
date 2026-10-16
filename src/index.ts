@@ -1,5 +1,5 @@
 import { Context, Schema, Session, h } from 'koishi'
-import { AudioConfig, CompactionConfig, EmbeddingConfig, FailoverConfig, ModelConfig, ProviderConfig, VisionConfig } from './narrator'
+import { AudioConfig, CompactionConfig, DEFAULT_STYLE_PROMPT, EmbeddingConfig, FailoverConfig, ModelConfig, ProviderConfig, VisionConfig } from './narrator'
 import { BlindModeConfig, BrowserConfig, ChatActionsConfig, Config as InterludeConfig, extractSessionVoiceCount, GroupChatRule, InterludeService, LoggingConfig, MemoryConfig, OneBotAccountRule, OneBotNapCatConfig, RestWindow, RuntimeConfig, SharedStoryConfig, StickerLibraryConfig, StoryDefaults } from './service'
 import { AgencyConfig, AlterSystemConfig, ChatReactionName, ChatRhythmConfig, NativeFaceSemantic, StorySetting } from './types'
 import { HDS_INTERLUDE_VERSION } from './meta'
@@ -16,7 +16,9 @@ declare module 'koishi' { interface Context { interlude: InterludeService } }
 
 export const name = 'hds-interlude'
 export const version = HDS_INTERLUDE_VERSION
-export const inject = { required: ['database', 'http'], optional: ['puppeteer', 'server', 'router'] }
+// issue #6：移除死声明 'router'——@cordisjs/plugin-server 的 alias 在 provide
+// 之后早退，router 别名从未注册（ctx.router 恒 undefined）；服务访问统一走 'server'。
+export const inject = { required: ['database', 'http'], optional: ['puppeteer', 'server'] }
 
 const defaultProvider: ProviderConfig = {
   id: 'primary',
@@ -47,7 +49,7 @@ const ProviderIdentity = Schema.object({
   label: Schema.string().default('Primary model').description('连接名称。'),
   enabled: Schema.boolean().default(true).description('启用此连接。'),
   mode: Schema.union(['openai-compatible', 'zhipu-official', 'openai-official', 'deepseek-official', 'moonshot-official', 'dashscope-official', 'siliconflow-official', 'openrouter', 'gemini-openai', 'gemini-interactions']).default('openai-compatible').description('接口预设；重载后显示对应字段。'),
-  proxyAgent: Schema.string().default('').description('HTTP(S) 代理地址，如 http://127.0.0.1:7890（可选，留空直连）。访问需要代理的服务商（如 Google Gemini）时填写；只影响该连接的模型请求，实验性流式抢先回复与智谱官方流式通道暂不经过代理。'),
+  proxyAgent: Schema.string().default('').description('HTTP(S) 代理地址，如 http://127.0.0.1:7890（可选，留空直连）。访问需要代理的服务商（如 Google Gemini）时填写；覆盖该连接的全部模型请求（普通 Chat、Embedding、Anthropic/Zhipu/OpenAI 兼容流式与实验性流式抢先回复）。'),
 })
 
 const ProviderAssignments = Schema.object({
@@ -123,7 +125,7 @@ const Failover: Schema<FailoverConfig> = Schema.object({
 }).collapse(true)
 
 const Embedding: Schema<EmbeddingConfig> = Schema.object({
-  modelId: Schema.string().default('').description('模型预设 ID；填写后优先使用 model.models 中对应的模型。'),
+  modelId: Schema.string().default('').description('【遗留】旧版"模型预设"体系的 ID；当前 Console 已无该列表（改用连接+用途勾选），仅存量手写配置仍生效。新配置请留空，用 providerId + model 指定。'),
   liveQuery: Schema.boolean().default(false).description('是否在每次实时对话中额外请求 Embedding 做语义检索。关闭可减少一次网络请求、降低回复延迟；后台向量补齐不受影响。'),
   enabled: Schema.boolean().default(false).description('启用长期事实的语义检索。关闭时退化为规则排序。'),
   providerId: Schema.string().default('').description('生成向量所使用的服务商 id；留空时自动选择。'),
@@ -151,19 +153,17 @@ const AudioUnderstanding: Schema<AudioConfig> = Schema.object({
 }).collapse(true)
 
 const Model: Schema<ModelConfig> = Schema.object({
-  vision: Vision.default({ enabled: false, mode: 'native', detail: 'auto', maxImageDimension: 1024 }).description('图片理解设置。'),
-  audio: AudioUnderstanding.default({ enabled: false, outFormat: 'mp3', maxFileSizeMB: 10, maxPerMessage: 1 }).description('语音/音频理解设置。'),
   providers: Schema.array(Provider.collapse(true)).default([defaultProvider]).description('新增连接后填写 Key、模型名，再勾选用途。'),
   mainTemperature: Schema.number().min(0).max(2).default(0.8).description('主叙事采样温度。'),
   mainTopP: Schema.number().min(0).max(1).default(1).description('主叙事 top-p。'),
   mainMaxTokens: Schema.natural().min(0).max(100_000).default(4096).description('主叙事最大输出 token 数。'),
   mainTimeout: Schema.natural().min(1_000).max(300_000).default(60_000).role('ms').description('主叙事请求超时，单位毫秒。'),
-  mainResponseFormat: Schema.union(['json-object', 'prompt-only']).default('json-object').description('主叙事输出格式；不支持 JSON mode 时选 prompt-only。'),
+  mainResponseFormat: Schema.union(['json-object', 'prompt-only']).default('json-object').description('主叙事输出格式；不支持 JSON mode 时选 prompt-only。此项是主叙事格式的唯一开关——旧版本写在连接行上的 responseFormat 对主叙事不再生效（仅侧端任务可能参考）。'),
   mainStreamingMode: Schema.union(['off', 'experimental']).default('off').description('实验性私聊首泡加速；仅 JSON 模式。'),
   mainPayloadOrder: Schema.union(['legacy', 'cache-first']).default('cache-first').description('请求字段顺序；支持前缀缓存的接口可选 cache-first。'),
   failover: Failover.default({ enabled: true, strategy: 'priority', maxAttemptsPerProvider: 1, cooldownMinutes: 5 }).description('主叙事请求失败时的切换策略。'),
   specialization: Schema.union([
-    Schema.const('off').description('关闭（默认）：rc12 原始完整合约，行为与未特化版本完全一致'),
+    Schema.const('off').description('关闭（默认）：完整原始合约，不针对任何模型家族精简'),
     Schema.const('lite').description('精简合约：15 块核心 + content-only 协议 + 精简压缩/时间导演提示词（flash 级与 Grok/GLM-4.x 推荐）'),
     Schema.const('standard').description('标准合约：rc12 全量 + content-only 协议（Gemini-Pro/GLM-5/Kimi/DeepSeek 推荐）'),
     Schema.const('full').description('完整合约：特化前原样完整协议（Claude/GPT 推荐）'),
@@ -174,10 +174,12 @@ const Model: Schema<ModelConfig> = Schema.object({
     Schema.const('glm'), Schema.const('kimi'), Schema.const('deepseek'), Schema.const('grok'),
     Schema.const('generic').description('不套用任何家族特化块'),
   ]).default('auto').description('特化家族：模型名无法识别时（如中转自定义别名）在此显式指定。'),
+  vision: Vision.default({ enabled: false, mode: 'native', detail: 'auto', maxImageDimension: 1024 }).description('图片理解设置。'),
+  audio: AudioUnderstanding.default({ enabled: false, outFormat: 'mp3', maxFileSizeMB: 10, maxPerMessage: 1 }).description('语音/音频理解设置。'),
   mainPrompt: Schema.string().role('textarea').default('Continue the character-centered life script with grounded actions, motives, relationships, and ordinary time passing.').description('已迁移到配置页最底部的主提示词分区；此处保留仅为兼容旧配置的自定义值。').hidden(),
   formatPrompt: Schema.string().role('textarea').default('').description('结构化输出补充规则。'),
   fixedPrompt: Schema.string().role('textarea').default('').description('通用长期规则。'),
-  stylePrompt: Schema.string().role('textarea').default('Use restrained, realistic prose with concrete daily details, natural pauses, and no forced drama.').description('全局叙事文风；故事级 style 可进一步覆盖。'),
+  stylePrompt: Schema.string().role('textarea').default(DEFAULT_STYLE_PROMPT).description('全局叙事文风；故事级 style 可进一步覆盖。默认为完整的生活剧本写作指引（2026-10-15 起）。'),
   embedding: (Schema.object({
     enabled: Schema.boolean().default(false).description('启用长期事实的语义检索。模型由上方“用作 Embedding 模型”用途开关选择。'),
     semanticHistory: Schema.boolean().default(false).description('启用历史语义召回。'),
@@ -213,6 +215,10 @@ const RestWindowSchema: Schema<RestWindow> = Schema.object({
 })
 
 const Runtime: Schema<RuntimeConfig> = Schema.object({
+  captureDirectMessages: Schema.boolean().default(true).description('是否拦截并处理私聊文本消息。'),
+  ignoreCommandMessages: Schema.boolean().default(true).description('是否跳过 interlude.* 管理命令，避免进入剧本。'),
+  autoCreate: Schema.boolean().default(false).description('首次私聊时自动从 Console 档案创建故事。'),
+  userMessageDebounceSeconds: Schema.number().min(0).max(15).default(2).description('短消息合并等待秒数；0 关闭。'),
   splitReplyMessages: Schema.boolean().default(true).description('是否将主叙事回复中的 <sep/> 拆成多条 QQ 消息。'),
   messageSeparator: Schema.string().default('<sep/>').description('分段消息标记。通常保持 <sep/>；模型会在需要多条气泡时输出它。'),
   convertNewlineToSeparator: Schema.boolean().default(false).description('小模型适配：模型没有输出分句标记而是用换行分条时，把每个换行自动视作一条消息的分隔再发送。默认关闭；Gemma 等不遵守 <sep/> 合约的小模型建议开启。'),
@@ -220,7 +226,6 @@ const Runtime: Schema<RuntimeConfig> = Schema.object({
   typingCharactersPerSecond: Schema.number().min(1).max(100).default(8).description('模拟打字速度，每秒字符数；数值越小，长消息等待越久。'),
   typingMaxDelaySeconds: Schema.number().min(0).max(120).default(12).description('单条后续分段消息的最长打字等待秒数。'),
   typingJitterRatio: Schema.number().min(0).max(0.5).step(0.05).default(0.3).description('打字延迟随机浮动；0 为固定延迟。'),
-  userMessageDebounceSeconds: Schema.number().min(0).max(15).default(2).description('短消息合并等待秒数；0 关闭。'),
   forwardMessage: Schema.object({
     enabled: Schema.boolean().default(true).description('是否读取 QQ 合并转发正文；关闭时保留原有转发卡片文本行为。'),
     maxNodes: Schema.natural().min(1).max(100).default(30).description('单条合并转发最多读取的节点数。'),
@@ -229,14 +234,6 @@ const Runtime: Schema<RuntimeConfig> = Schema.object({
   }).default({ enabled: true, maxNodes: 30, maxCharacters: 8_000, maxDepth: 3 }).description('【消息扩展】QQ 合并转发读取预算。'),
   narrativeRetryDelaySeconds: Schema.natural().min(5).max(3_600).default(60).description('叙事模型请求失败后，自动再次尝试处理该用户回合前等待的秒数。'),
   narrativeRetryMaxAttempts: Schema.natural().min(0).max(50).default(6).description('单次用户回合因模型失败可自动重试的最多次数；0 表示关闭。'),
-  captureDirectMessages: Schema.boolean().default(true).description('是否拦截并处理私聊文本消息。'),
-  autoCreate: Schema.boolean().default(false).description('首次私聊时自动从 Console 档案创建故事。'),
-  ignoreCommandMessages: Schema.boolean().default(true).description('是否跳过 interlude.* 管理命令，避免进入剧本。'),
-  allowProactiveMessages: Schema.boolean().default(false).description('是否允许无新消息时向参与者主动发送可见消息。'),
-  proactiveWillingnessThreshold: Schema.number().min(0).max(1).step(0.05).default(0.65).description('主动联系意愿门槛。'),
-  sweepIntervalMinutes: Schema.natural().min(1).max(1_440).default(5).description('后台扫描周期；仅用于发现到期任务，不代表每轮都调用模型。'),
-  minimumAdvanceMinutes: Schema.natural().min(1).max(10_080).default(30).description('手动“interlude.advance”的最小有效补写间隔；到期计划和对话后的短期补写不受此限制。'),
-  maxStoriesPerSweep: Schema.natural().min(1).max(1_000).default(20).description('单轮后台扫描最多处理的主剧本数量。'),
   contextEntryLimit: Schema.natural().min(1).max(200).default(35).description('写入主叙事上下文的近期原始剧本条目数。小模型可调小（如 15）；注意与下方时间窗叠加——时间窗内条目会全部并入，需要更小上下文时请同时调小或关闭时间窗。'),
   contextTimeWindowMinutes: Schema.natural().min(0).max(1_440).default(45).description('额外并入最近多少分钟内的全部条目（上限 500）；0 关闭，仅按条数保留。小模型建议与条数一起调小。'),
   memoryLimit: Schema.natural().min(1).max(200).default(20).description('主叙事读取的长期事实数量；会经过相关性重排。'),
@@ -245,14 +242,19 @@ const Runtime: Schema<RuntimeConfig> = Schema.object({
   minimumDelayedReplySeconds: Schema.natural().min(0).max(86_400).default(10).description('模型允许设置的最短延迟，单位秒。'),
   maximumDelayedReplyMinutes: Schema.natural().min(1).max(43_200).default(1_440).description('模型允许设置的最长延迟，单位分钟。'),
   cancelDelayedRepliesOnUserMessage: Schema.boolean().default(true).description('新消息到达时取消普通延迟回复。'),
+  allowProactiveMessages: Schema.boolean().default(false).description('是否允许无新消息时向参与者主动发送可见消息。'),
+  proactiveWillingnessThreshold: Schema.number().min(0).max(1).step(0.05).default(0.65).description('主动联系意愿门槛。仅 Urge 关闭时生效——开启 Urge 后请改调【节奏 6】Urge 里的同名门槛；Agency 自然/平衡模式另有 naturalWillingnessThreshold。'),
+  sweepIntervalMinutes: Schema.natural().min(1).max(1_440).default(5).description('后台扫描周期；仅用于发现到期任务，不代表每轮都调用模型。'),
+  minimumAdvanceMinutes: Schema.natural().min(1).max(10_080).default(30).description('手动“interlude.advance”的最小有效补写间隔；到期计划和对话后的短期补写不受此限制。'),
+  maxStoriesPerSweep: Schema.natural().min(1).max(1_000).default(20).description('单轮后台扫描最多处理的主剧本数量。'),
   autoAdvanceEnabled: Schema.boolean().default(true).description('无对话时是否按真实时间补写角色生活。'),
-  autoAdvanceIntervalMinutes: Schema.natural().min(5).max(1_440).default(40).description('普通时段自动推进的目标间隔，单位分钟。'),
-  autoAdvanceJitterMinutes: Schema.natural().min(0).max(60).default(5).description('自动推进间隔的随机浮动范围，单位分钟。'),
-  conversationFollowUpMinutes: Schema.array(Schema.natural().min(1).max(240)).default([10, 20]).description('一段对话结束后，额外补写生活的时间点，单位分钟。默认约第 10、20 分钟。'),
-  conversationFollowUpJitterMinutes: Schema.natural().min(0).max(10).default(1).description('短期补写的随机浮动范围，单位分钟。填 0 可固定在指定时间点。'),
+  autoAdvanceIntervalMinutes: Schema.natural().min(5).max(1_440).default(40).description('普通时段自动推进的目标间隔，单位分钟。仅 Urge 关闭时生效——开启 Urge 后由弹性调度接管，此值不参与。'),
+  autoAdvanceJitterMinutes: Schema.natural().min(0).max(60).default(5).description('自动推进间隔的随机浮动范围，单位分钟。仅 Urge 关闭时生效（Urge 有独立的抖动幅度）。'),
+  conversationFollowUpMinutes: Schema.array(Schema.natural().min(1).max(240)).default([10, 20]).description('一段对话结束后，额外补写生活的时间点，单位分钟。默认约第 10、20 分钟。仅 Urge 关闭时生效——开启 Urge 后对话热度由半衰期自然衰减，不再补写。'),
+  conversationFollowUpJitterMinutes: Schema.natural().min(0).max(10).default(1).description('短期补写的随机浮动范围，单位分钟。填 0 可固定在指定时间点。仅 Urge 关闭时生效。'),
   restWindows: Schema.array(RestWindowSchema).role('table').default([
     { enabled: true, label: 'night sleep', start: '23:00', end: '07:00', minIntervalMinutes: 120, maxIntervalMinutes: 240 },
-  ]).description('可配置多个低频推进窗口，例如睡眠或午休。'),
+  ]).description('可配置多个低频推进窗口，例如睡眠或午休。仅 Urge 关闭时使用窗口内的低频间隔；开启 Urge 后只判断"当前是否在窗口内"（命中时按 restMultiplier 兜底倍率打折），窗口里的间隔数值不再使用。'),
 })
 
 const BlindMode: Schema<BlindModeConfig> = Schema.object({
@@ -377,11 +379,11 @@ const StoryDefaults: Schema<StoryDefaults> = Schema.object({
   characterProfile: Schema.string().role('textarea').default('').description('主角背景、性格、日程与说话方式。'),
   perspective: Schema.string().role('textarea').default('').description('主角稳定的价值观和看待世界方式（单条总述；多条独立观点请用 perspectives）。'),
   perspectives: Schema.array(Schema.string().role('textarea')).default([]).description('主角多条独立价值观/视角：每条一段，进入提示词时保持独立条目不合并。'),
-  supplementaryFacts: Schema.array(Schema.string().role('textarea')).default([]).description('补充事实：界限不明显的世界/人物/关系复杂事实，每条一段，作为初始长期事实注入。'),
   userProfile: Schema.string().role('textarea').default('').description('默认用户资料；可由白名单行覆盖。'),
   relationship: Schema.string().role('textarea').default('').description('默认初始关系；可由白名单行覆盖。'),
   world: Schema.string().role('textarea').default('').description('故事时代、地点与现实规则。'),
   supportingCast: Schema.string().role('textarea').default('').description('配角及其与主角的关系；无配角可留空。'),
+  supplementaryFacts: Schema.array(Schema.string().role('textarea')).default([]).description('补充事实：界限不明显的世界/人物/关系复杂事实，每条一段，作为初始长期事实注入。'),
   location: Schema.string().default('').description('主角的主要活动地点。'),
   style: Schema.string().role('textarea').default('现实主义日常叙事，情绪克制，关系变化缓慢而具体。').description('故事级叙事文风。'),
   timezone: Schema.string().default('Asia/Shanghai').description('用于自动推进、休息窗口和延迟时间解析的 IANA 时区。'),
@@ -460,7 +462,7 @@ const GroupChatRuleSchema: Schema<GroupChatRule> = (Schema.object({
     Schema.const('auto').description('自动：按压缩器生活状态切换；状态缺失、无效或超过 6 小时未刷新时按 idle 档位；睡眠时 @ 不直通。'),
     Schema.const('custom').description('自定义：使用下方旧数值参数'),
   ]).default('off').description('群聊发言意愿档位。'),
-  willingnessAuto: GroupWillingnessAuto.default({ busy: 'quiet', idle: 'active', asleep: 'quiet' }).description('auto 档的三态映射。'),
+  willingnessAuto: GroupWillingnessAuto.default({ busy: 'quiet', idle: 'active', asleep: 'quiet' }).description('auto 档的三态映射。数据源是三态生活状态：五档生活节奏会降维并入（忙碌→busy、入睡→asleep，玩手机/空闲/休息都按 idle 档处理）。'),
   willingness: GroupWillingness.default({ enabled: false, maxScore: 1, threshold: 0.24, probabilityAmplifier: 1.3, decayHalfLifeSeconds: 180, replyCost: 0.55, baseGain: 0.12, quoteGain: 0.12, keywordGain: 0.18, keywords: [] }).description('自定义数值门（仅 willingnessPreset=custom 时生效；keywords 对所有档位生效）；@ 直接通过，睡眠态除外。'),
 }) as unknown as Schema<GroupChatRule>).collapse(true)
 
@@ -474,7 +476,7 @@ const OneBot: Schema<OneBotNapCatConfig> = Schema.object({
 
 const ChatActions: Schema<ChatActionsConfig> = Schema.object({
   enabled: Schema.boolean().default(false).description('启用聊天动作。'),
-  platforms: Schema.array(Schema.union(['qq', 'wechat'])).role('table').default(['qq']).description('允许使用动作的平台。'),
+  platforms: Schema.array(Schema.union(['qq', 'wechat'])).role('table').default(['qq']).description('允许使用动作的平台。当前仅 qq 实际生效（须包含 qq 才会启用动作；wechat 为预留位，勾选不产生效果）。'),
   quoteReply: Schema.boolean().default(true).description('允许主角引用当前上下文中的一条消息进行指定回复。'),
   messageReactions: Schema.boolean().default(true).description('允许消息表情回应。'),
   allowedReactions: Schema.array(Schema.union(['like', 'smile', 'laugh', 'heart', 'surprised', 'sad', 'angry'])).role('table')
@@ -496,7 +498,7 @@ const Stickers: Schema<StickerLibraryConfig> = Schema.object({
   descriptionResponseFormat: Schema.union(['json-object', 'prompt-only']).default('json-object').description('表情包描述输出格式。'),
   deliveryBaseUrl: Schema.string().default('').description('表情包投递基址；留空自动推导（selfUrl → http://127.0.0.1:5140）。Koishi 与 OneBot 实现（NapCat/Lagrange）分容器或不共享文件系统时，file:// 路径对方读不到（retcode 1200/100），需要让 OneBot 实现经此 HTTP 地址回源下载。'),
   deliveryMode: Schema.union([
-    Schema.const('auto').description('自动（默认）：HTTP 回源路由可用走 HTTP；宿主未加载 server/router 时退回 file:// 本地路径（同容器/同主机的 OneBot 实现可直接读文件）'),
+    Schema.const('auto').description('自动（默认）：HTTP 回源路由可用走 HTTP；宿主未加载 server 时退回 file:// 本地路径（同容器/同主机的 OneBot 实现可直接读文件）'),
     Schema.const('http').description('强制 HTTP 回源（分容器部署，需保证 deliveryBaseUrl 可达）'),
     Schema.const('file').description('强制 file:// 本地路径（OneBot 实现与 Koishi 共享文件系统）'),
   ]).default('auto').description('表情包投递模式。'),
@@ -540,8 +542,8 @@ export const Config: Schema<InterludeConfig> = Schema.object({
   urge: Schema.object({
     enabled: Schema.boolean().default(false).description('启用弹性推进，替代固定间隔及对话后 10/20 分钟补写；不改变剧本文本。总自动推进开关仍优先。'),
     frequency: Schema.union(['low', 'medium', 'high', 'custom']).default('medium').description('低/中/高频或自定义；自定义未填写项沿用中频。高频会增加主叙事和时间导演调用。'),
-    proactiveWillingnessThreshold: Schema.number().min(0).max(1).step(.05).default(.4).description('仅 Urge 启用时的主动联系意愿门槛(Agency strict 模式使用;natural/balanced 模式改用 Agency 的 naturalWillingnessThreshold,调这里不生效)；不是发送概率。'),
     advanced: UrgeAdvanced.description('高级时间范围、随机性与调用预算；填写时间覆盖档位。'),
+    proactiveWillingnessThreshold: Schema.number().min(0).max(1).step(.05).default(.4).description('仅 Urge 启用时的主动联系意愿门槛(Agency strict 模式使用;natural/balanced 模式改用 Agency 的 naturalWillingnessThreshold,调这里不生效)；不是发送概率。'),
   }).description('【节奏 6】Urge 弹性推进：剧本驱动的自动调度，压缩器五档生活节奏×对话密度双因子乘法模型（可选，替代固定间隔）。'),
   schedulePreplan: SchedulePreplan.description('【节奏 7】日程预排：近期稳定日程与变化颗粒度；主提示词只读取未来约半天。'),
   timelineDirector: Schema.object({ enabled: Schema.boolean().default(true).description('启用时间导演：自动回合先生成相对时间账本——只提供客观时间事实与可能的时间逻辑，不做笃定的未来预测（如几点起床）；用户消息对主角的影响由主模型判断。失败时降级为无账本推进，不冻结自动推进。'), }).description('【节奏 8】时间导演：自动回合的时间账本与熔断保护。'),
@@ -561,14 +563,23 @@ export const Config: Schema<InterludeConfig> = Schema.object({
     maxTokens: Schema.natural().min(256).max(8_192).default(1_000).description('单次输出预算（tokens）。'),
     timeout: Schema.natural().min(5_000).max(300_000).default(60_000).description('请求超时（毫秒）。'),
   }).collapse(true).description('【扩展 15】世界播种器：外部事件的生成与注入（未选模型即关闭）。'),
+  weather: Schema.object({
+    enabled: Schema.boolean().default(false).description('启用运行时天气注入:从 Open-Meteo(免费无 Key)拉取真实天气,以 [世界事件] 剧本条目注入当前温度与天况。'),
+    latitude: Schema.number().min(-90).max(90).default(39.14).description('观测点纬度(手动模式,或自动解析失败时的回退)。'),
+    longitude: Schema.number().min(-180).max(180).default(117.18).description('观测点经度。'),
+    autoFromLocation: Schema.boolean().default(true).description('从故事设定中的地点(storySetting.location)自动解析观测点;解析失败回退手动经纬度。'),
+    skipFantasyWorld: Schema.boolean().default(false).description('手动开关:架空世界(异世界/精灵/幻想设定)跳过天气注入。注意默认关闭——即架空世界默认也会注入真实地球天气；设定为异世界的故事建议开启。'),
+    cadenceMinutes: Schema.natural().min(5).max(180).default(30).description('拉取间隔(分钟)。注入为纯数据格式("环境:22°C 小毛毛雨。"),不带建议句。'),
+  }).collapse(true).description('【扩展 16】运行时天气:真实天气 → [世界事件] 注入(默认关闭)。'),
+
   longHorizon: Schema.object({
     enabled: Schema.boolean().default(false).description('实验：长线叙事催化器（Narrative Attractor）——累计加权叙事证据后异步生成可控的长期发展方向，并允许主叙事在自然场景中尝试一次最小、可撤回的首次表达。'),
     triggerScore: Schema.natural().min(10).max(500).default(25).description('首次生成的加权分数门槛（默认25；私聊1.0/群聊0.5）。'),
     reviewIncrement: Schema.natural().min(10).max(500).default(40).description('上次催化器生成后再积累多少分触发一次新的长期发展机会审查。'),
-    privateWeight: Schema.number().min(0.1).max(2.0).step(0.1).default(1.0).description('兼容旧配置；实际固定为 1.0（私聊完全计入）。'),
-    groupWeight: Schema.number().min(0).max(1.0).step(0.1).default(0.5).description('兼容旧配置；实际固定为 0.5（群聊减半计入）。'),
+    privateWeight: Schema.number().min(0.1).max(2.0).step(0.1).default(1.0).description('兼容旧配置；实际固定为 1.0（私聊完全计入）。').hidden(),
+    groupWeight: Schema.number().min(0).max(1.0).step(0.1).default(0.5).description('兼容旧配置；实际固定为 0.5（群聊减半计入）。').hidden(),
     intensity: Schema.union(['subtle', 'moderate', 'strong']).default('subtle').description('指导强度（第一版默认 subtle）。'),
-  }).collapse(true).description('【扩展 16】长线叙事催化器（实验）：生成潜在张力与首次微表达许可（默认关闭）。'),
+  }).collapse(true).description('【扩展 17】长线叙事催化器（实验）：生成潜在张力与首次微表达许可（默认关闭）。'),
   qzone: Schema.object({
     enabled: Schema.boolean().default(false).description('启用 QQ 空间（说说）通道：需要 SnowLuma 连接在线（qzone 系列扩展动作）。启用后可经 interlude.qzone 命令以她本人身份发说说;满足运行条件时叙事也会自动读取好友动态,并按模型安排的发帖/评论/点赞意图在限流内执行。高频会被 Qzone 风控，请保持保守上限。'),
     dailyPostCap: Schema.natural().min(0).max(20).default(3).description('每日发帖上限（0=禁止发帖）。'),
@@ -576,23 +587,15 @@ export const Config: Schema<InterludeConfig> = Schema.object({
     dailyLikeCap: Schema.natural().min(0).max(120).default(12).description('每日点赞上限（0=禁止点赞）。'),
     minIntervalMinutes: Schema.natural().min(10).max(1_440).default(90).description('任意两次空间动作的最小间隔（分钟），跨类型共享。'),
     feedWindowMinutes: Schema.natural().min(15).max(720).default(120).description('好友动态轮询只消费该时间窗内的新鲜说说（分钟）；轮询节律为窗口的一半（15~60 分钟），单轮最多入账 2 条。'),
-  }).collapse(true).description('【扩展 17】QQ 空间：说说/评论/点赞通道（需 SnowLuma；默认关闭）。'),
+  }).collapse(true).description('【扩展 18】QQ 空间：说说/评论/点赞通道（需 SnowLuma；默认关闭）。'),
   presetSync: Schema.object({
     enabled: Schema.boolean().default(false).description('启用预设同步：从 typ0-site 分享站自动拉取并应用配置。需填写分享码。'),
     baseUrl: Schema.string().default('https://typ0.space').description('分享站地址。局域网自托管可填 http://192.168.x.x:5177。'),
     shareCode: Schema.string().default('').description('8 位分享码(大小写均可,可带连字符)。在 typ0-site 详情页获取。'),
     autoUpdate: Schema.boolean().default(false).description('自动更新：重载时检查远端 revision,有新版本才应用。关闭时仅通过 interlude.preset.sync 手动触发。'),
-    sections: Schema.array(Schema.string()).role('table').default([]).description('要同步的分区(留空 = 预设里有什么就同步什么)。可选:storyDefaults(配合"应用到当前故事"),runtime,urge,agency,memory,alterSystem,schedulePreplan,timelineDirector,chatActions,stickers,sharedStory,browser,worldSeeder,longHorizon,qzone,blindMode,logging。'),
+    sections: Schema.array(Schema.string()).role('table').default([]).description('要同步的分区(留空 = 预设里有什么就同步什么)。可选:storyDefaults(配合"应用到当前故事"),runtime,urge,agency,memory,alterSystem,schedulePreplan,timelineDirector,chatActions,stickers,sharedStory,browser,worldSeeder,weather,longHorizon,qzone,blindMode,logging。'),
     applyToCurrentStory: Schema.boolean().default(false).description('同时将 storyDefaults 应用到当前运行中的故事(修改角色名/人设/世界等)。'),
-    }).collapse(true).description('【扩展 18】预设同步：从 typ0-site 分享站自动拉取配置(默认关闭)。'),
-  weather: Schema.object({
-    enabled: Schema.boolean().default(false).description('启用运行时天气注入:从 Open-Meteo(免费无 Key)拉取真实天气,以 [世界事件] 剧本条目注入当前温度与天况。'),
-    latitude: Schema.number().min(-90).max(90).default(39.14).description('观测点纬度(手动模式,或自动解析失败时的回退)。'),
-    longitude: Schema.number().min(-180).max(180).default(117.18).description('观测点经度。'),
-    autoFromLocation: Schema.boolean().default(true).description('从故事设定中的地点(storySetting.location)自动解析观测点;解析失败回退手动经纬度。'),
-    skipFantasyWorld: Schema.boolean().default(false).description('手动开关:架空世界(异世界/精灵/幻想设定)跳过天气注入。开启后检测到架空关键词时不注入。'),
-    cadenceMinutes: Schema.natural().min(5).max(180).default(30).description('拉取间隔(分钟)。注入为纯数据格式("环境:22°C 小毛毛雨。"),不带建议句。'),
-  }).collapse(true).description('【扩展 19】运行时天气:真实天气 → [世界事件] 注入(默认关闭)。'),
+    }).collapse(true).description('【扩展 19】预设同步：从 typ0-site 分享站自动拉取配置(默认关闭)。'),
 
   blindMode: BlindMode.description('【维护 20】盲区模式：低频心跳的最小运行形态。'),
   logging: Logging.description('【维护 21】日志：级别、信息密度、布局和隐私预览。'),
@@ -1351,7 +1354,7 @@ function registerPresetCommands(ctx: Context, service: InterludeService) {
       if (!sync?.enabled || !sync.shareCode?.trim()) {
         return [
           '预设同步未启用。',
-          '请在 Console → 【扩展 18】预设同步 中配置:',
+          '请在 Console → 【扩展 19】预设同步 中配置:',
           '  1. 启用预设同步',
           '  2. 填写分享码(8 位,在 typ0-site 详情页获取)',
           `  3.${sync?.autoUpdate ? ' 自动更新已开启(重载时检查)' : ' 自动更新未开启(仅手动触发)'}`,
@@ -1424,7 +1427,6 @@ function registerPresetCommands(ctx: Context, service: InterludeService) {
       } catch (error) { return `回滚失败:${(error as Error).message}` }
     })
 }
-
 
 function isFactScope(value: string): value is 'character' | 'world' | 'relationship' | 'event' | 'promise' {
   return ['character', 'world', 'relationship', 'event', 'promise'].includes(value)

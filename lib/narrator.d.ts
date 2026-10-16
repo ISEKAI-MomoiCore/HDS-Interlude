@@ -317,6 +317,10 @@ export declare function computeTokenCost(record: TokenUsageRecord): {
 /** One human-readable log line: usage numbers, cache hit rate, and optional
  * billing. Absent fields are simply omitted instead of printed as zero. */
 export declare function formatTokenUsageLine(record: TokenUsageRecord): string;
+/** 主叙事全局文风默认值（model.stylePrompt 兜底）。schema 默认与
+ * systemPrompt 空值兜底共用同一常量——两处漂移会造成"清空后文风不一致"。
+ * 2026-10-15：默认从英文一句话恢复为完整的中文生活剧本写作指引。 */
+export declare const DEFAULT_STYLE_PROMPT: string;
 export declare function systemPrompt(phase: NarrativeRequest['phase'], mainPrompt: string | undefined, formatPrompt: string | undefined, fixedPrompt: string, baseStylePrompt: string, storyStylePrompt: string, refreshContinuity?: boolean, alterEnabled?: boolean, agencyEnabled?: boolean, perspectiveEnabled?: boolean, outputRecovery?: boolean, chatCapabilities?: ChatActionCapabilities, hasQuotedMessage?: boolean, stickerCatalog?: StickerCatalogEntry[], schedulePreplanEnabled?: boolean, streamingReplyFirst?: boolean, cacheFirstPayload?: boolean, groupTurn?: boolean, writingOptions?: NarrativeRequest['writingOptions'], specialty?: SpecialtyProfile, proactiveContactMode?: 'strict' | 'natural' | 'balanced', channelSelectionEnabled?: boolean, longHorizonGuidance?: string): string;
 export declare function writingAffordances(options?: NarrativeRequest['writingOptions']): string;
 /** A guard paragraph rendered into the writing affordances when the host has

@@ -10,7 +10,9 @@ import type { Session } from 'koishi'
 import type { DesktopTimelineRangeRequest, InterludeService } from './service'
 
 export type DesktopRuntimePhase = 'running' | 'muted' | 'paused'
-export type DesktopDeliveryStatus = 'sent' | 'retryable-failed' | 'permanent-failed'
+/** `unknown` = 宿主回执超时/连接断开等"请求已写出、结果不可知"——与
+ *  retryable/permanent 失败语义不同，插件侧按 pending（待补偿）分类。 */
+export type DesktopDeliveryStatus = 'sent' | 'retryable-failed' | 'permanent-failed' | 'unknown'
 
 function isTraceId(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0 && value.length <= 128
@@ -172,7 +174,9 @@ function desktopSession(event: DesktopInboundEvent, requestDelivery: (payload: O
     send: async (outgoing: string) => requestDelivery({
       accountKey: event.accountKey, transport: event.transport, platform: event.platform,
       selfId: event.selfId, channelId, kind: event.kind, replyTo: event.rawMessageId,
-      content: String(outgoing),
+      // satori 片段数组经 Array.toString 会以逗号拼接——逐段 join('') 保持
+      // `<quote id="…"/>` + 零宽分隔的原貌，宿主据此还原为真正的回复引用。
+      content: Array.isArray(outgoing) ? outgoing.map(part => String(part)).join('') : String(outgoing),
     }),
   }
   return session as unknown as Session
@@ -189,7 +193,11 @@ export function installDesktopBridge(service: InterludeService) {
     return new Promise<string[]>((resolve, reject) => {
       const timeout = setTimeout(() => {
         pendingDeliveries.delete(deliveryId)
-        reject(new Error('等待 typ-0 渠道投递确认超时。'))
+        // 45s 无回执 = 请求已交给宿主、结果不可知——按传输超时（pending）分类，
+        // 不能当确定失败（否则补偿永不再查、账本误记"未投递"）。
+        const error = new Error('等待 typ-0 渠道投递确认超时。') as Error & { transportTimeout?: boolean }
+        error.transportTimeout = true
+        reject(error)
       }, 45_000)
       pendingDeliveries.set(deliveryId, { resolve, reject, timeout })
       const context = desktopProcessingContext.getStore()
@@ -208,6 +216,13 @@ export function installDesktopBridge(service: InterludeService) {
     pendingDeliveries.delete(value.deliveryId)
     clearTimeout(pending.timeout)
     if (value.status === 'sent') pending.resolve(Array.isArray(value.messageIds) ? value.messageIds.filter(id => typeof id === 'string') : [])
+    else if (value.status === 'unknown') {
+      // 宿主 echo 超时/断连：消息可能已到达平台。携带 transportTimeout 标记，
+      // 让 service 的 catch 走"结果未知→pending 补偿"而非终态失败。
+      const error = new Error(value.error || '渠道投递结果未知（请求已写出，无回执）。') as Error & { transportTimeout?: boolean }
+      error.transportTimeout = true
+      pending.reject(error)
+    }
     else pending.reject(new Error(value.error || `渠道投递失败：${value.status}`))
     return true
   }
@@ -250,11 +265,13 @@ export function installDesktopBridge(service: InterludeService) {
   // typ-0 后台投递通道：delayed/split/advance 消息没有实时 Session，经宿主
   // Outbox/渠道适配器投递，delivery-result 回执与实时路径共用同一 Promise。
   // 普通 Koishi（无 bridge 环境）不会安装本桥，行为不变。
-  service.setDesktopDeliveryHandler(delivery => new Promise<{ ok: boolean, messageIds?: string[], error?: string }>((resolve, reject) => {
+  service.setDesktopDeliveryHandler(delivery => new Promise<{ ok: boolean, messageIds?: string[], error?: string, transportTimeout?: boolean }>((resolve, reject) => {
     const deliveryId = randomUUID()
     const timeout = setTimeout(() => {
       pendingDeliveries.delete(deliveryId)
-      reject(new Error('等待 typ-0 渠道投递确认超时。'))
+      const error = new Error('等待 typ-0 渠道投递确认超时。') as Error & { transportTimeout?: boolean }
+      error.transportTimeout = true
+      reject(error)
     }, 45_000)
     pendingDeliveries.set(deliveryId, {
       resolve: ids => resolve({ ok: true, messageIds: Array.isArray(ids) ? ids.filter((id): id is string => typeof id === 'string') : [] }),
@@ -277,7 +294,7 @@ export function installDesktopBridge(service: InterludeService) {
       ...(delivery.endpointId ? { endpointId: delivery.endpointId } : {}),
       ...(delivery.intentKey ? { intentKey: delivery.intentKey } : {}),
     })
-  }).catch(error => ({ ok: false as const, error: String(error) })))
+  }).catch(error => ({ ok: false as const, error: String(error), transportTimeout: (error as { transportTimeout?: boolean })?.transportTimeout === true })))
   const initialPhase = isPhase(process.env.HDSI_PHASE) ? process.env.HDSI_PHASE : 'running'
   const heartbeat = setInterval(() => sendToDesktop('heartbeat', { phase: service.getDesktopRuntimePhase(), at: new Date().toISOString() }), 10_000)
 

@@ -11,7 +11,7 @@ const now = new Date('2026-09-09T12:00:00Z')
 test('Console sections follow the documented setup order', () => {
   assert.deepEqual(Object.keys(Config.dict), [
     'storyDefaults', 'model', 'onebot', 'sharedStory', 'runtime', 'urge', 'schedulePreplan', 'timelineDirector', 'agency',
-    'chatActions', 'stickers', 'memory', 'alterSystem', 'browser', 'worldSeeder', 'longHorizon', 'qzone', 'presetSync', 'weather', 'blindMode', 'logging', 'mainPrompt', 'chatRhythm',
+    'chatActions', 'stickers', 'memory', 'alterSystem', 'browser', 'worldSeeder', 'weather', 'longHorizon', 'qzone', 'presetSync', 'blindMode', 'logging', 'mainPrompt', 'chatRhythm',
   ])
   // 分类前缀让配置页按 必填→结构→节奏→表达→内在→扩展→维护 分组可读。
   const headers = Object.values(Config.dict).map((item: any) => String(item.meta?.description ?? ''))
@@ -22,10 +22,10 @@ test('Console sections follow the documented setup order', () => {
   assert.match(headers[11], /^【内在 12】/)
   assert.match(headers[13], /^【扩展 14】/)
   assert.match(headers[14], /^【扩展 15】/)
-  assert.match(headers[15], /^【扩展 16】/)
-  assert.match(headers[16], /^【扩展 17】/)
-  assert.match(headers[17], /^【扩展 18】预设同步/)
-  assert.match(headers[18], /^【扩展 19】运行时天气/)
+  assert.match(headers[15], /^【扩展 16】运行时天气/)
+  assert.match(headers[16], /^【扩展 17】长线叙事催化器/)
+  assert.match(headers[17], /^【扩展 18】QQ 空间/)
+  assert.match(headers[18], /^【扩展 19】预设同步/)
   assert.match(headers[19], /^【维护 20】/)
   assert.match(headers[20], /^【维护 21】/)
 })
@@ -65,7 +65,7 @@ test('ignored compatibility switches stay out of the active Console', () => {
 
 test('runtime and plugin exports share one version constant', () => {
   assert.equal(version, HDS_INTERLUDE_VERSION)
-  assert.equal(version, '1.0.1-rc50')
+  assert.equal(version, '1.0.1-rc56')
 })
 
 test('layered colored logs are the Console default and remain optional', () => {
@@ -78,7 +78,9 @@ test('layered colored logs are the Console default and remain optional', () => {
 
 test('model Console centralizes connections and task assignment without exposing IDs', () => {
   const model = Config.dict.model.dict
-  assert.deepEqual(Object.keys(model).slice(0, 3), ['vision', 'audio', 'providers'])
+  assert.deepEqual(Object.keys(model).slice(0, 1), ['providers'])
+  // 审计 E1：vision/audio 移入高级区（providers 之后的参数区之后），不再是首屏
+  assert.deepEqual(Object.keys(model).slice(-2), ['embedding', 'compaction'])
   assert.equal('mode' in model, false)
   assert.equal('zhipu' in model, false)
   assert.equal('models' in model, false)

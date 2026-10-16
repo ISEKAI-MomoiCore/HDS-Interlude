@@ -23,7 +23,7 @@ function withdrawalHost() {
   } }
   const audits: any[] = []
   const host: any = Object.assign(Object.create(proto), {
-    queues: new Map(), serialScope: new AsyncLocalStorage<string>(),
+    queues: new Map(), serialWatchdog: new Map(), serialScope: new AsyncLocalStorage<string>(), serialWatchdog: new Map(),
     config: { runtime: { messageSeparator: '<sep/>', maxMessageCharacters: 2000 } },
     dbGet: async () => [structuredClone(entry)],
     dbSet: async (_table: string, _query: any, patch: any) => { entry.metadata = patch.metadata },

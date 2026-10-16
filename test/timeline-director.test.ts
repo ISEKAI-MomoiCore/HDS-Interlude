@@ -77,7 +77,7 @@ test('timeline director reuses the compaction route and requests a small JSON le
   assert.equal(plan?.beats[0]?.summary, '继续课堂练习')
   assert.equal(calls[0].temperature, 0.3)
   // 思考型网关把 reasoning 计入输出：预算必须留出思考余量，避免 JSON 截断。
-  assert.equal(calls[0].max_tokens, 1600)
+  assert.equal(calls[0].max_tokens, 4096)
   assert.equal(calls[0].response_format.type, 'json_object')
   const systemPrompt = calls[0].messages[0].content
   // 两条设计原则：不做笃定的未来预测；用户消息的影响由主模型判断。

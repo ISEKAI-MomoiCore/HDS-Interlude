@@ -31,9 +31,9 @@ import { createHash, randomUUID } from 'node:crypto'
 import { createTurnEngine, shouldSupersedeRequest, type TurnEngine, type TurnBufferedNarrativeTurn as BufferedNarrativeTurn, type TurnBufferedUserMessage as BufferedUserMessage } from './turn-engine'
 import { describeHttpError } from './http-proxy'
 import { createScheduler, type Scheduler } from './scheduler'
-import { UrgeConfig, resolveUrgeConfig, normalizeUrgeState, urgeUserEvent, planUrge, commitUrge, acknowledgeUrge, urgeBurstActive, ATTENTION_MULTIPLIERS, type UrgeRhythmInput } from './urge'
+import { UrgeConfig, resolveUrgeConfig, normalizeUrgeState, urgeUserEvent, planUrge, commitUrge, acknowledgeUrge, urgeBurstActive, type UrgeRhythmInput } from './urge'
 import { extname, relative, resolve, sep } from 'node:path'
-import { createReadStream } from 'node:fs'
+import { createReadStream, realpathSync } from 'node:fs'
 import { AudioConfig, compactPromptEntries, createCompactor, createEmbedder, createNarrator, createStickerDescriber, createVisionDescriber, detectMessageRepetition, formatTokenUsageLine, isContextDisposedError, ModelConfig, normalizeLifeRhythmDraft, promptVisibleMessageContent, recentScriptOwnership, StickerDescriber, StickerDescription, TokenUsageRecord, VisionDescriber } from './narrator'
 import { formatModelRouting, ModelRoutingTable, resolveModelRouting } from './model-routing'
 import {
@@ -898,7 +898,7 @@ export class InterludeService extends Service {
      * 宿主 outbox 据此跨 deliveryId 去重——迟到回执场景下 worker 30s 后用新
      * deliveryId 重发时，同一业务消息不会被再次发给用户。 */
     intentKey?: string,
-  }) => Promise<{ ok: boolean, messageIds?: string[], error?: string }>
+  }) => Promise<{ ok: boolean, messageIds?: string[], error?: string, /** true = 请求已写出但结果不可知（宿主 echo 超时/桥关闭），按 pending 补偿而非终态失败。 */ transportTimeout?: boolean }>
 
   /** W3（C2-1）：桥接动作代理出口——desktop-bridge 安装后非空；普通 Koishi 恒空。
    * qzoneCaller 与 sendSticker 桌面模式经此调用宿主代调上游 OneBot 动作。 */
@@ -3150,18 +3150,23 @@ export class InterludeService extends Service {
             auto_escape: false,
           },
         })
-        if (!outcome.ok) throw new Error(outcome.error || `宿主动作代理失败：${outcome.errorCode ?? 'unknown'}`)
+        // 审计 P1-3：ambiguous（超时/断连，可能已达服务端）必须上抛标记——
+        // 否则记确定失败，与 Qzone 路径的 ambiguous 语义不一致。
+        if (!outcome.ok) {
+          if (outcome.ambiguous === true) throw Object.assign(new Error(outcome.error || `宿主动作代理结果未知：${outcome.errorCode ?? 'unknown'}`), { ambiguous: true })
+          throw new Error(outcome.error || `宿主动作代理失败：${outcome.errorCode ?? 'unknown'}`)
+        }
       } else {
         // 独立 Koishi：优先经自身 HTTP 服务回源投递（file:/// 指向 Koishi 侧
         // 文件系统，OneBot 实现分容器/分进程部署时读不到——retcode 1200/100
         // 实测）；HTTP URL 由 OneBot 实现主动下载，跨容器/跨机通吃。但宿主
-        // 没加载 server/router 时路由不存在（issue #1：retcode 1200 根因），
-        // auto 模式退回 file:// 本地路径——同容器/同主机的 OneBot 实现
+        // 没加载 server 时路由不存在（issue #1：retcode 1200 根因），auto 模式
+        // 退回 file:// 本地路径——同容器/同主机的 OneBot 实现
         // （SnowLuma/NapCat 宿主模式）按本地文件读取，不依赖 HTTP。
         this.registerStickerRoute()
-        const routerAvailable = this.stickerRouteRegistered
+        const serverAvailable = this.stickerRouteRegistered
         const mode = this.stickerConfig.deliveryMode ?? 'auto'
-        if (mode === 'file' || (mode === 'auto' && !routerAvailable)) {
+        if (mode === 'file' || (mode === 'auto' && !serverAvailable)) {
           const file = resolve(this.ctx.baseDir, this.stickerConfig.directory, asset.filePath)
           const fileSrc = stickerFileUrl(file)
           this.reportOperation('diagnostic', 'debug', story, 'user-message', '表情包经本地文件投递（HTTP 路由不可用） 素材=%s 路径=%s', asset.assetId, fileSrc)
@@ -3189,12 +3194,20 @@ export class InterludeService extends Service {
       this.reportOperation('standard', 'info', story, 'user-message', '聊天动作完成 类型=本地表情包 素材=%s', asset.assetId)
       return true
     } catch (error) {
+      // 审计 P1-3：ambiguous → 账本记 pending（不自动重发，避免重复贴纸），
+      // 确定失败 → failed（原行为）。
+      const ambiguous = (error as { ambiguous?: boolean })?.ambiguous === true && !platformDelivered
       if (reference) await this.recordPlatformDeliveryOutcome(
-        story.id, reference, platformDelivered ? 'delivered' : 'failed', platformDelivered ? undefined : clip(String(error), 500),
+        story.id, reference, platformDelivered ? 'delivered' : ambiguous ? 'pending' : 'failed',
+        platformDelivered ? undefined : (ambiguous ? 'ambiguous: ' : '') + clip(String(error), 500),
       )
       if (platformDelivered) {
         this.report('warn', story, 'user-message', '聊天动作已完成但结果记录不完整 类型=本地表情包 素材=%s 错误=%s', asset.assetId, error)
         return true
+      }
+      if (ambiguous) {
+        this.report('warn', story, 'user-message', '聊天动作结果未知（可能已发送，不自动重试） 类型=本地表情包 素材=%s 错误=%s', asset.assetId, error)
+        return false
       }
       this.report('warn', story, 'user-message', '聊天动作失败 类型=本地表情包 素材=%s 错误=%s', asset.assetId, error)
       return false
@@ -3227,7 +3240,11 @@ export class InterludeService extends Service {
             auto_escape: false,
           },
         })
-        if (!outcome.ok) throw new Error(outcome.error || `宿主动作代理失败：${outcome.errorCode ?? 'unknown'}`)
+        // 审计 P1-3：ambiguous 上抛标记（与贴纸/Qzone 路径同语义）。
+        if (!outcome.ok) {
+          if (outcome.ambiguous === true) throw Object.assign(new Error(outcome.error || `宿主动作代理结果未知：${outcome.errorCode ?? 'unknown'}`), { ambiguous: true })
+          throw new Error(outcome.error || `宿主动作代理失败：${outcome.errorCode ?? 'unknown'}`)
+        }
       } else {
         await withTransportTimeout(session.bot.sendMessage(channelId, h('face', { id: faceId })), 'native-face-send')
       }
@@ -3246,12 +3263,19 @@ export class InterludeService extends Service {
       this.reportOperation('standard', 'info', story, 'user-message', '聊天动作完成 类型=原生表情 语义=%s', semantic)
       return true
     } catch (error) {
+      // 审计 P1-3：ambiguous → pending（不自动重发）；确定失败 → failed。
+      const ambiguous = (error as { ambiguous?: boolean })?.ambiguous === true && !platformDelivered
       if (reference) await this.recordPlatformDeliveryOutcome(
-        story.id, reference, platformDelivered ? 'delivered' : 'failed', platformDelivered ? undefined : clip(String(error), 500),
+        story.id, reference, platformDelivered ? 'delivered' : ambiguous ? 'pending' : 'failed',
+        platformDelivered ? undefined : (ambiguous ? 'ambiguous: ' : '') + clip(String(error), 500),
       )
       if (platformDelivered) {
         this.report('warn', story, 'user-message', '聊天动作已完成但结果记录不完整 类型=原生表情 语义=%s 错误=%s', semantic, error)
         return true
+      }
+      if (ambiguous) {
+        this.report('warn', story, 'user-message', '聊天动作结果未知（可能已发送，不自动重试） 类型=原生表情 语义=%s 错误=%s', semantic, error)
+        return false
       }
       this.report('warn', story, 'user-message', '聊天动作失败 类型=原生表情 语义=%s 错误=%s', semantic, error)
       return false
@@ -3375,7 +3399,12 @@ export class InterludeService extends Service {
             ...(index === 0 && replyToMessageId ? { quoteMessageId: replyToMessageId } : {}),
             ...(selectedEndpoint?.id ? { endpointId: selectedEndpoint.id } : {}),
           })
-          if (!outcome.ok) throw new Error(outcome.error || 'typ-0 群消息投递失败。')
+          if (!outcome.ok) {
+            // 审计 P1-2：transportTimeout 标记必须随异常上抛——否则 catch 按
+            // 确定失败记 segment，账本写 failed 而非 pending（消息可能已发出）。
+            if (outcome.transportTimeout === true) throw Object.assign(new Error(outcome.error || 'typ-0 群消息投递结果未知。'), { transportTimeout: true })
+            throw new Error(outcome.error || 'typ-0 群消息投递失败。')
+          }
         } else {
           const receipt = await withTransportTimeout(bot.sendMessage(transportGroupId, outgoing), 'group-send')
           if (Array.isArray(receipt) && !receipt.length) throw new Error('Group transport returned no message receipt.')
@@ -3390,12 +3419,16 @@ export class InterludeService extends Service {
       }
       catch (error) {
         allDelivered = false
-        segmentOutcomes.push({ index, content: segment, status: 'failed', reason: clip(String(error), 500) })
+        // 审计 P1-2：结果未知（echo 超时/桥关闭）→ reason 加 transport-timeout:
+        // 前缀，账本映射据此记 pending 交补偿（与私聊路径同语义）；确定失败原样。
+        const unknownOutcome = (error as { transportTimeout?: boolean })?.transportTimeout === true
+        segmentOutcomes.push({ index, content: segment, status: 'failed', reason: (unknownOutcome ? 'transport-timeout:' : '') + clip(String(error), 500) })
         const address = selectedEndpoint
           ? { platform: selectedEndpoint.platform, selfId: selectedEndpoint.selfId }
           : { platform: fallbackAddress!.platform, selfId: fallbackAddress!.selfId }
         this.noteEndpointOutbound(endpointOwner, false, String(error), address)
-        this.report('error', story, 'user-message', '群消息投递失败 群频道=%s 错误=%s', targetGroupId, error)
+        if (unknownOutcome) this.report('warn', story, 'user-message', '群消息投递超时（结果未知，等待补偿确认） 群频道=%s 错误=%s', targetGroupId, error)
+        else this.report('error', story, 'user-message', '群消息投递失败 群频道=%s 错误=%s', targetGroupId, error)
       }
     }
     return { deliveredSegments, complete: allDelivered, segmentOutcomes }
@@ -3626,24 +3659,42 @@ export class InterludeService extends Service {
   /** 表情包 HTTP 回源路由：OneBot 实现（NapCat/Lagrange）分容器时经此下载文件。
    * 仅服务素材库内、资产表登记过的文件；assetId 即查询键，无目录穿越面。 */
   private registerStickerRoute() {
-    // 已注册过或宿主没有 router 时才跳过;此前条件写反导致路由从未注册,
-    // 独立 Koishi + OneBot 分容器部署的表情包回源全部 404
-    if (this.stickerRouteRegistered || !(this.ctx as any).router) return
-    this.stickerRouteRegistered = true
-    ;(this.ctx as any).router.get('/hds-interlude/sticker/:assetId', async (koa: any) => {
+    // issue #6：读 ctx.server 而非 ctx.router。@cordisjs/plugin-server 先
+    // provide("server") 再 alias("server", ["router"])，而 cordis 的 alias()
+    // 在名字已注册时直接早退——router 别名从未真正建立，ctx.router 在当前
+    // cordis 上恒为 undefined（官方 plugin-console 5.30 同样只用 ctx.server）。
+    // 此前读 ctx.router 导致路由从未注册，分容器部署的表情包回源全部失败。
+    if (this.stickerRouteRegistered || !(this.ctx as any).server) return
+    ;(this.ctx as any).server.get('/hds-interlude/sticker/:assetId', async (koa: any) => {
       const asset = this.stickerById.get(koa.params.assetId)
       if (!asset || asset.status !== 'active') { koa.status = 404; return }
       const root = resolve(this.ctx.baseDir, this.stickerConfig.directory)
       const file = resolve(root, asset.filePath)
-      const inside = relative(root, file)
+      // 审计 P2-1：resolve/relative 挡不住 root 内符号链接指向目录外——
+      // realpath 双侧取真实路径后再做边界判定；root 或文件缺失/损坏同样 404。
+      let realFile: string
+      let realRoot: string
+      try {
+        realRoot = realpathSync(root)
+        realFile = realpathSync(file)
+      } catch { koa.status = 404; return }
+      const inside = relative(realRoot, realFile)
       if (!inside || inside === '..' || inside.startsWith(`..${sep}`) || inside.includes(':')) { koa.status = 404; return }
       koa.type = asset.mimeType || 'image/png'
       koa.set('cache-control', 'public, max-age=86400')
-      const stream = createReadStream(file)
-      // 素材可能在响应前被扫描任务清理:流错误回 404,而不是让请求挂起
-      stream.on('error', () => { koa.status = 404; koa.body = undefined })
+      const stream = createReadStream(realFile)
+      // 素材可能在响应前被扫描任务清理:流错误回 404,而不是让请求挂起。
+      // 审计 P2-2：头已发出后改状态码无效——只能销毁流让连接异常终止，
+      // 客户端（OneBot 下载器）按失败重试，不再悬挂。
+      stream.on('error', () => {
+        if ((koa as { res?: { headersSent?: boolean } })?.res?.headersSent) { stream.destroy(); return }
+        koa.status = 404; koa.body = undefined
+      })
       koa.body = stream
     })
+    // 审计 P2-3：标志在注册成功之后置位——server.get 抛出（如路径冲突）时
+    // 保持未注册态，下次发送可重试，而不是永久跳过。
+    this.stickerRouteRegistered = true
     this.reportStandaloneOperation('diagnostic', 'debug', '表情包回源路由已注册 基址=%s', this.stickerDeliveryBase())
   }
 
@@ -4350,7 +4401,15 @@ export class InterludeService extends Service {
     const requestId = revision
     turn.inFlightRequestId = requestId
     const batch = turn.messages.splice(0)
-    this.reportOperation('diagnostic', 'debug', { id: turn.storyId } as InterludeStory, 'user-message', '写请求开始 参与者=%s 请求=%d 批次=%d', turn.participantId, requestId, batch.length)
+    // issue #5（死锁加固）：try 原先从快照阶段才开始——splice 与 try 之间的
+    // 任何异常（日志/簿记）会让 endFlush 永不执行，turn 永久 in-flight 且批次
+    // 已被消费：后续消息持续入队但永不进入模型调度，直到重启。try 提前到
+    // splice 之后，finally 的 endFlush 覆盖全程；空批次早退交由 finally 收尾。
+    try {
+    // issue #5：此处原先传 { id } as InterludeStory 假桩给 reportOperation——
+    // writeReport 读 setting.character.name 即抛 TypeError。改为 standalone：
+    // 该日志本就是回合级诊断，不需要 story 上下文。
+    this.reportStandalone('debug', '写请求开始 故事=%s 参与者=%s 请求=%d 批次=%d', turn.storyId, turn.participantId, requestId, batch.length)
     // Keep the endpoint set for this exact debounce batch separate from the
     // broader turn source snapshot.  M4's batch-multi-endpoint annotation
     // must only fire when messages in this request came from multiple
@@ -4359,11 +4418,7 @@ export class InterludeService extends Service {
       .map(message => message.endpointId)
       .filter((id): id is string => typeof id === 'string' && id.length > 0))]
     turn.activeBatchMessageCount = batch.length
-    if (!batch.length) {
-      this.turnEngine.endFlush(key, requestId)
-      return
-    }
-    try {
+    if (!batch.length) return
       // Snapshot only the lightweight decision inputs under the story lock.
       // The network request stays outside it, so a new user message can be
       // recorded immediately and invalidate this request when appropriate.
@@ -7255,7 +7310,7 @@ export class InterludeService extends Service {
       }
       if (message.scriptEvent) {
         for (const segment of outcome.segmentOutcomes) {
-          const ledgerStatus = segment.status === 'failed' && (failureStatus === 'pending' || segment.reason === 'delivery-generation-obsolete') ? 'pending' : segment.status
+          const ledgerStatus = segment.status === 'failed' && (failureStatus === 'pending' || segment.reason === 'delivery-generation-obsolete' || (segment.reason?.startsWith('transport-timeout') ?? false)) ? 'pending' : segment.status
           await this.updateScriptDeliveryOutcome(story.id, { ...message.scriptEvent, segmentIndex: baseIndex + segment.index }, ledgerStatus, now, segment.reason)
           const draft = drafts[segment.index]
           const key = this.deliveryExecutionKey(story.id, draft, true)!
@@ -7540,6 +7595,11 @@ export class InterludeService extends Service {
             this.noteEndpointOutbound({ kind: 'participant-user', id: target.id }, true, 'desktop-delivered', address)
             delivered.push(message)
           }
+          else if (outcome.transportTimeout) {
+            // 宿主 echo 超时/桥断开 = 结果未知：与 withTransportTimeout 同族，
+            // 账本记 pending 交补偿收尾（重复投递由 intentKey 幂等去重挡住）。
+            throw Object.assign(new Error(outcome.error || 'typ-0 宿主投递结果未知。'), { transportTimeout: true })
+          }
           else throw new Error(outcome.error || 'typ-0 宿主投递失败。')
           continue
         }
@@ -7788,7 +7848,10 @@ export class InterludeService extends Service {
   private async recordPlatformDeliveryOutcome(
     storyId: string,
     reference: ScriptDeliveryReference,
-    status: Exclude<ScriptDeliverySegmentStatus, 'pending'>,
+    // 审计 P1-3：放宽允许 'pending'——桌面动作代理 ambiguous（结果未知）时使用。
+    // 平台动作（local-media/native-face）不在补偿回放的 kind 过滤内，记 pending
+    // 不会触发自动重发，账本如实反映"可能已发送"而非谎报 failed。
+    status: ScriptDeliverySegmentStatus,
     reason?: string,
   ) {
     try {
@@ -10955,14 +11018,18 @@ export class InterludeService extends Service {
     if (rank[logging.level] < rank[level]) return
     const rendered = renderLogMessage(message, args)
     const storyDetail = (logging.verbosity ?? 'standard') === 'diagnostic' ? ` 故事=${story.id}` : ''
+    // issue #5：调用方可能传入轻量 story 桩（只有 id）——读 setting.character.name
+    // 直接抛 TypeError，且发生在叙事管线关键路径上会造成死锁。防御式回退到
+    // 故事 ID，日志层永不成为故障源。
+    const protagonist = story.setting?.character?.name ?? story.id
     const output = logging.format === 'layered'
       ? formatLayeredLog({
-        level, phase, protagonist: story.setting.character.name, message, args,
+        level, phase, protagonist, message, args,
         colors: logging.colors !== false, colorTheme: logging.colorTheme ?? 'dark', kaomoji: logging.kaomoji !== false,
       })
       : logging.format === 'compact'
-        ? `[${phaseLabel(phase)}] ${story.setting.character.name} ${rendered}${storyDetail}`
-        : `[${phaseLabel(phase)}] ${story.setting.character.name}\n事件：${rendered}${storyDetail}`
+        ? `[${phaseLabel(phase)}] ${protagonist} ${rendered}${storyDetail}`
+        : `[${phaseLabel(phase)}] ${protagonist}\n事件：${rendered}${storyDetail}`
     this.emitLog(level, output)
   }
 

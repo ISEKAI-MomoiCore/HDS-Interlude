@@ -1,7 +1,7 @@
 import { Context } from 'koishi';
 import { InterludeService } from './service';
 import { StorySetting } from './types';
-export declare const SHARE_SECTIONS: readonly ["storyDefaults", "runtime", "urge", "schedulePreplan", "timelineDirector", "agency", "chatActions", "stickers", "sharedStory", "memory", "alterSystem", "browser", "worldSeeder", "longHorizon", "qzone", "blindMode", "logging"];
+export declare const SHARE_SECTIONS: readonly ["storyDefaults", "runtime", "urge", "schedulePreplan", "timelineDirector", "agency", "chatActions", "stickers", "sharedStory", "memory", "alterSystem", "browser", "worldSeeder", "weather", "longHorizon", "qzone", "blindMode", "logging"];
 export type ShareSection = typeof SHARE_SECTIONS[number];
 /** 插件侧二次清洗:只保留白名单分区,深度剔除连接类字段。 */
 export declare function sanitizeSharePayload(raw: unknown): {

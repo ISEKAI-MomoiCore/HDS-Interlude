@@ -126,8 +126,8 @@ test('fresh life status at the expiry boundary keeps its real state', () => {
 
 test('reply cost uses the same idle fallback as the invocation gate', () => {
   const state = { score: 1.2, updatedAt: NOW }
-  const absent = consumeWillingnessGate(state, 'auto', { idle: 'eager' }, undefined, undefined, NOW)
-  const idle = consumeWillingnessGate(state, 'auto', { idle: 'eager' }, { status: 'idle', updatedAt: new Date(NOW).toISOString() }, undefined, NOW)
+  const absent = consumeWillingnessGate(state, 'auto', { idle: 'eager' }, undefined, undefined, NOW, undefined, () => 0.5)
+  const idle = consumeWillingnessGate(state, 'auto', { idle: 'eager' }, { status: 'idle', updatedAt: new Date(NOW).toISOString() }, undefined, NOW, undefined, () => 0.5)
   assert.deepEqual(absent, idle)
   assert.equal(absent.score, 0.7)
 })

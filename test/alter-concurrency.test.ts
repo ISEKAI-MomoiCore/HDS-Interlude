@@ -16,7 +16,7 @@ function fixture() {
   const service: any = Object.create(InterludeService.prototype)
   Object.defineProperty(service, 'alterSystemConfig', { value: config })
   Object.assign(service, {
-    queues: new Map(), serialScope: new AsyncLocalStorage(), runtimeGeneration: 0,
+    queues: new Map(), serialWatchdog: new Map(), serialScope: new AsyncLocalStorage(), runtimeGeneration: 0,
     storyTaskGenerations: new Map(), desktopRuntimePhase: 'running', databaseResetting: false,
     recentEntries: async () => [], report: () => {}, reportOperation: () => {},
     scheduler: { cancelWakes() {} }, turnEngine: { turns: new Map() },

@@ -91,8 +91,9 @@ describe('share-sync 分享码同步', () => {
     assert.deepEqual(storyDefaultsToSettingPatch({ characterProfile: '仅人设' }).character, { profile: '仅人设' })
   })
 
-  it('SHARE_SECTIONS:17 个分区,不含 model/onebot', () => {
-    assert.equal(SHARE_SECTIONS.length, 17)
+  it('SHARE_SECTIONS:18 个分区,不含 model/onebot', () => {
+    assert.equal(SHARE_SECTIONS.length, 18)
+    assert.ok(SHARE_SECTIONS.includes('weather'), 'weather 与站点白名单对齐（审计 C1）')
     assert.ok(!SHARE_SECTIONS.includes('model' as any))
     assert.ok(!SHARE_SECTIONS.includes('onebot' as any))
   })

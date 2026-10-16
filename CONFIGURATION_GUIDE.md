@@ -1,8 +1,8 @@
 # HDS Interlude 配置指南
 
-适用版本：`1.0.1-rc52`
+适用版本：`1.0.1-rc56`
 
-当前文档已同步至 2026-10-15 的 rc52，累计变更以 rc50 发布包为基线。发布流程已执行源码构建，rc51 由本次生成的 `lib/` 与 `release/koishi-plugin-hds-interlude-1.0.1-rc52.tgz` 交付；旧安装包不会自动获得这些修改，运行实例须安装并重载后才生效。
+当前文档已同步至 2026-10-15 的 rc56，累计变更以 rc55 发布包为基线。发布流程已执行源码构建，rc54 由本次生成的 `lib/` 与 `release/koishi-plugin-hds-interlude-1.0.1-rc56.tgz` 交付；旧安装包不会自动获得这些修改，运行实例须安装并重载后才生效。
 
 第一次安装先看 `BEGINNER_GUIDE.md`。本文件按配置依赖关系组织字段；下方先列出当前 Console 的实际顺序，旧版本已经移除或隐藏的字段集中列在末尾，不再混入正常配置流程。
 
@@ -27,10 +27,10 @@
 | 【内在】 | 13 | `alterSystem` | Alter 情绪 |
 | 【扩展】 | 14 | `browser` | 网页观察 |
 | 【扩展】 | 15 | `worldSeeder` | 世界事件播种器 |
-| 【扩展】 | 16 | `longHorizon` | 长线叙事指导 |
-| 【扩展】 | 17 | `qzone` | QQ 空间通道 |
-| 【扩展】 | 18 | `presetSync` | 预设同步 |
-| 【扩展】 | 19 | `weather` | 运行时天气 |
+| 【扩展】 | 16 | `weather` | 运行时天气 |
+| 【扩展】 | 17 | `longHorizon` | 长线叙事指导 |
+| 【扩展】 | 18 | `qzone` | QQ 空间通道 |
+| 【扩展】 | 19 | `presetSync` | 预设同步 |
 | 【维护】 | 20 | `blindMode` | 盲区模式 |
 | 【维护】 | 21 | `logging` | 日志 |
 
@@ -470,7 +470,7 @@ Alter 模型由上方 `useForAlter` 选择。`temperature`、`topP`、`maxTokens
 
 机制要点：**每轮检查面向一个"世界切面"提问**（天象与环境/居所与近邻/生计与日常事务/亲近之人/途中与陌生人/小意外与际遇，按剧本+时间确定性轮换）——切面是世界的通用方面而非现代题材，异世界/古代世界观由各自 worldSetting 渲染具体面貌。已注入事件不进入播种器的灵感摘录（防自馈复读），自身产出仅作"近期已播"记忆。**多数检查应输出空**；这是正常形态，不是故障。详细设计见 `docs/WORLD_EVENT_SEEDER_DESIGN.md`。
 
-## 16. longHorizon：长线叙事指导（【扩展 16】）
+## 17. longHorizon：长线叙事指导（【扩展 17】）
 
 实验性叙事催化器（Narrative Attractor）：累计加权叙事证据后异步生成阶段性人物弧线方向，主叙事在自然场景中参考它渐进推进。**默认关闭**。
 
@@ -491,11 +491,11 @@ Alter 模型由上方 `useForAlter` 选择。`temperature`、`topP`、`maxTokens
 
 **与现有系统的关系**：指导 ≠ 事实——实际行为经现有证据流程后才更新事实/overlay。Agency/Urge 行动容量不受指导影响。设计详见 `docs/LONG_HORIZON_NARRATIVE_GUIDANCE_DESIGN.md`。
 
-## 17. qzone：QQ 空间通道（【扩展 17】）
+## 18. qzone：QQ 空间通道（【扩展 18】）
 
 以她本人身份发说说/评论/点赞（经 SnowLuma 的 qzone 扩展动作；需连接在线）。默认关闭；高频会被 Qzone 风控，保持保守上限。启用后可用 `interlude.qzone <内容>` 直接发说说；满足运行条件时，叙事会自动读取好友动态，并在限流内执行模型安排的发帖、评论和点赞意图。键：`enabled`（false）、`dailyPostCap`（3）、`dailyCommentCap`（6）、`dailyLikeCap`（12）、`minIntervalMinutes`（90，跨类型共享）、`feedWindowMinutes`（120，好友动态只消费窗口内新鲜说说）。设计见 `docs/QZONE_FEED_DESIGN.md`。
 
-## 18. presetSync：预设同步（【扩展 18】）
+## 19. presetSync：预设同步（【扩展 19】）
 
 从 typ0-site 分享站拉取并应用预设，默认关闭。分享码可在预设详情页获取；模型连接凭据不属于此同步分区。
 
@@ -510,7 +510,7 @@ Alter 模型由上方 `useForAlter` 选择。`temperature`、`topP`、`maxTokens
 
 同步可能改变当前配置；首次使用建议明确选择分区并保持 `applyToCurrentStory=false`。
 
-## 19. weather：运行时天气（【扩展 19】）
+## 16. weather：运行时天气（【扩展 16】）
 
 从 Open-Meteo（免费、无需 API Key）拉取真实天气，以 `[世界事件]` 剧本条目注入当前温度与天况，默认关闭。注入走世界事件管线：滚动替换（时间线上只保留最新一条天气事件）、内容不变不重复注入。
 

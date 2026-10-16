@@ -15,11 +15,11 @@ function deferred<T = void>() {
 }
 function runtimeHost(extra: Record<string, any> = {}) {
   return Object.assign(Object.create(proto), {
-    queues: new Map(), serialScope: new AsyncLocalStorage(), runtimeGeneration: 0,
+    queues: new Map(), serialWatchdog: new Map(), serialScope: new AsyncLocalStorage(), runtimeGeneration: 0,
     storyTaskGenerations: new Map(), databaseResetting: false, desktopRuntimePhase: 'running',
     report: () => {}, reportOperation: () => {}, reportStandaloneOperation: () => {},
     interruptedTypingParticipants: new Set<string>(),
-    expiredImageSources: new Map(), disposed: false,
+    deadImageSources: new Map(), disposed: false,
   }, extra)
 }
 
@@ -209,7 +209,7 @@ test('expired QQ CDN sources are skipped without network or warn spam', async ()
   const calls: string[] = []
   const host = runtimeHost({
     config: { model: { vision: { enabled: true } } },
-    expiredImageSources: new Map([['https://local.invalid/dead', true]]),
+    deadImageSources: new Map([['https://local.invalid/dead', 'url-expired']]),
     fetchNativeImage: async (url: string) => { calls.push(url); return { dataUrl: 'data:image/png;base64,a' } },
   })
   const refs = [
@@ -219,6 +219,95 @@ test('expired QQ CDN sources are skipped without network or warn spam', async ()
   const images = await host.loadHistoricalGroupImages({ id: 's' }, refs, 6)
   assert.deepEqual(calls, ['https://local.invalid/alive'])
   assert.deepEqual(images.map((image: any) => image.sourceEntryId), [2])
+})
+
+test('untrusted-host historical image source is dead-cached with an accurate reason and skipped afterwards', async () => {
+  const calls: string[] = []
+  const states = new Map<string, string>()
+  const host: any = Object.create(InterludeService.prototype)
+  Object.assign(host, {
+    config: { model: { vision: { enabled: true } } },
+    deadImageSources: states,
+    disposed: false,
+    ctx: { http: async (method: string, url: string) => { calls.push(url); throw new Error('should not fetch') } },
+    report: () => {}, reportOperation: () => {},
+  })
+  const refs = [
+    { source: 'https://koishi.js.org/some-asset.png', sourceEntryId: 9001, occurredAt: new Date(), senderId: 'alice' },
+  ]
+  // 第一次:判死(untrusted-host),不打网络
+  const first = await host.loadHistoricalGroupImages({ id: 's' }, refs, 6)
+  assert.deepEqual(first, [])
+  assert.deepEqual(calls, [])
+  assert.equal(states.get('https://koishi.js.org/some-asset.png'), 'untrusted-host')
+  // 第二次:早跳过,依旧零网络,缓存不再增长
+  const second = await host.loadHistoricalGroupImages({ id: 's' }, refs, 6)
+  assert.deepEqual(second, [])
+  assert.deepEqual(calls, [])
+  assert.equal(states.size, 1)
+})
+
+test('onebot-url prefixed source propagates inner dead-cache to the outer key', async () => {
+  const states = new Map<string, string>([['https://local.invalid/expired.png', 'url-expired']])
+  const host: any = Object.create(InterludeService.prototype)
+  Object.assign(host, {
+    config: { model: { vision: { enabled: true } } },
+    deadImageSources: states,
+    disposed: false,
+    ctx: { http: async () => { throw new Error('inner should short-circuit on dead cache') } },
+    report: () => {}, reportOperation: () => {},
+  })
+  const outer = 'onebot-url:https://local.invalid/expired.png'
+  const result = await host.fetchNativeImage(outer)
+  assert.equal(result, undefined)
+  // 外层 key 已带原因判死;第二次调用在 wrapper 早退,不再进入任何分支
+  assert.equal(states.get(outer), 'url-expired')
+  const again = await host.fetchNativeImage(outer)
+  assert.equal(again, undefined)
+  assert.equal(states.size, 2)
+})
+
+test('image fetch follows trusted redirects hop-by-hop and rejects untrusted targets', async () => {
+  const calls: string[] = []
+  const pngHeader = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+  const makeHost = (hops: Array<{ status: number, location?: string, data?: Buffer, type?: string }>) => {
+    const states = new Map<string, string>()
+    const host: any = Object.create(InterludeService.prototype)
+    Object.assign(host, {
+      config: { model: { vision: {} } },
+      deadImageSources: states,
+      disposed: false,
+      ctx: { http: async (_method: string, url: string) => {
+        calls.push(url)
+        const hop = hops[Math.min(calls.length - 1, hops.length - 1)]
+        return {
+          status: hop.status,
+          headers: { get: (name: string) => name === 'location' ? hop.location ?? null : (hop.type ?? 'image/png') },
+          data: hop.data ?? pngHeader,
+        }
+      } },
+      report: () => {}, reportOperation: () => {},
+    })
+    return host
+  }
+  // 受信域 302 → 跟随 → 成功
+  const ok = makeHost([
+    { status: 302, location: 'https://multimedia.nt.qq.com.cn/real.png' },
+    { status: 200, data: pngHeader },
+  ])
+  const image = await ok.fetchNativeImage('https://multimedia.nt.qq.com.cn/origin.png')
+  assert.ok(image && image.mimeType === 'image/png')
+  assert.deepEqual(calls, ['https://multimedia.nt.qq.com.cn/origin.png', 'https://multimedia.nt.qq.com.cn/real.png'])
+  // 跳向不受信域 → 抛错 + 原始 URL 判死(untrusted-redirect)
+  calls.length = 0
+  const bad = makeHost([{ status: 302, location: 'https://evil.example.net/x.png' }])
+  await assert.rejects(() => bad.fetchNativeImage('https://multimedia.nt.qq.com.cn/origin.png'), /untrusted host/)
+  assert.equal(bad.deadImageSources.get('https://multimedia.nt.qq.com.cn/origin.png'), 'untrusted-redirect')
+  // 缺 Location 的 302 → 抛错,不判死(非确定性)
+  calls.length = 0
+  const broken = makeHost([{ status: 302 }])
+  await assert.rejects(() => broken.fetchNativeImage('https://multimedia.nt.qq.com.cn/origin.png'), /without Location/)
+  assert.equal(broken.deadImageSources.size, 0)
 })
 
 test('disposed-context errors abort narrative retries without provider cooldown or scheduled retry', async () => {

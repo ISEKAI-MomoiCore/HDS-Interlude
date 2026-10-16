@@ -54,6 +54,8 @@ function installFixture() {
     async receiveDesktopEvent(event: any, session: any) {
       received.push(event)
       if (event.content === 'reply') await session.send('reply-body')
+      // 复刻 service 实时路径的片段数组形态：[h('quote',{id}), '\u200b']
+      if (event.content === 'reply-array') await session.send([{ toString: () => '<quote id="raw-77"/>' }, '\u200b'] as unknown as string)
       return true
     },
   }
@@ -166,6 +168,60 @@ test('desktop bridge forwards persisted background correlation metadata without 
       value: { deliveryId: delivery.payload.deliveryId, status: 'sent', messageIds: ['sandbox:background-1'] },
     })
     assert.deepEqual(await promise, { ok: true, messageIds: ['sandbox:background-1'] })
+  } finally {
+    await fixture.restore()
+  }
+})
+
+test('unknown 回执标记 transportTimeout（结果未知→pending 补偿），确定失败不带标记', async () => {
+  const fixture = installFixture()
+  try {
+    const handler = fixture.service['desktopDeliveryHandler']
+    assert.ok(handler)
+    const settle = async (status: string) => {
+      const seen = fixture.messages.length
+      const promise = handler({
+        participantId: 'alice', selfId: '10001', platform: 'sandbox', channelId: 'private:20002',
+        kind: 'private', content: 'probe',
+      })
+      const delivery = await new Promise<MessageFrame>((resolve, reject) => {
+        const deadline = Date.now() + 2_000
+        const poll = () => {
+          const found = fixture.messages.slice(seen).find(item => item.event === 'delivery')
+          if (found) return resolve(found)
+          if (Date.now() >= deadline) return reject(new Error('等待新 delivery 帧超时'))
+          setImmediate(poll)
+        }
+        poll()
+      })
+      await sendCommand({
+        type: 'hdsi-desktop', command: 'delivery-result',
+        value: { deliveryId: delivery.payload.deliveryId, status, ...(status === 'unknown' ? { error: '等待 OneBot 回执超时（结果未知，不自动重发）。' } : {}) },
+      })
+      return promise
+    }
+    const unknown = await settle('unknown')
+    assert.equal(unknown.ok, false)
+    assert.equal((unknown as any).transportTimeout, true, 'unknown 回执必须带 transportTimeout 供 service 记 pending')
+    assert.match(String((unknown as any).error), /结果未知/)
+    const failed = await settle('permanent-failed')
+    assert.equal(failed.ok, false)
+    assert.equal((failed as any).transportTimeout, false, '确定失败不得误标为结果未知')
+  } finally {
+    await fixture.restore()
+  }
+})
+
+test('实时会话发送 satori 片段数组时不再以逗号拼接（quote 序列化保真）', async () => {
+  const fixture = installFixture()
+  try {
+    await sendCommand({
+      type: 'hdsi-desktop', command: 'inbound',
+      value: { requestId: 'request-quote', event: inbound({ content: 'reply-array', rawMessageId: 'raw-77' }) },
+    })
+    const delivery = await waitForMessage(fixture.messages, 'delivery')
+    assert.equal(delivery.payload.content, '<quote id="raw-77"/>\u200b', '数组逐段 join(\'\')，无逗号混入')
+    assert.equal(delivery.payload.replyTo, 'raw-77', '实时回复携带 replyTo 供宿主还原引用')
   } finally {
     await fixture.restore()
   }

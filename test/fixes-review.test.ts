@@ -178,6 +178,7 @@ test('fix#10 flush failure schedules a narrative retry when nothing committed', 
     serial: async () => { throw new Error('persist boom') },
     scheduleNarrativeRetry: async (storyId: string, participantId: string) => { retries.push([storyId, participantId]); return true },
     reportStandalone: () => {},
+    reportOperation: () => {},
   } as unknown as InterludeService
   await (InterludeService.prototype as any).flushBufferedNarrative.call(svc, 'p1', 1)
   assert.deepEqual(retries, [['s', 'p1']], 'uncommitted failure must schedule a retry')

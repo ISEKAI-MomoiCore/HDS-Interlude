@@ -1,8 +1,8 @@
 # 当前架构
 
-适用版本：`1.0.1-rc52`
+适用版本：`1.0.1-rc56`
 
-当前文档已同步至 2026-10-15 的 rc52，累计变更以 rc50 发布包为基线。发布流程已执行源码构建，rc51 由本次生成的 `lib/` 与 `release/koishi-plugin-hds-interlude-1.0.1-rc52.tgz` 交付；旧安装包不会自动获得这些修改，运行实例须安装并重载后才生效。
+当前文档已同步至 2026-10-15 的 rc56，累计变更以 rc55 发布包为基线。发布流程已执行源码构建，rc56 由本次生成的 `lib/` 与 `release/koishi-plugin-hds-interlude-1.0.1-rc56.tgz` 交付；旧安装包不会自动获得这些修改，运行实例须安装并重载后才生效。
 
 历史增量（证据层）：事实/工作细节使用 knowledge 保存认知主体、证据角色与条件来源；contactThreads 给主叙事和时间导演提供同事项原始联系链。派生记录、主角相信的事与实际沟通结果分开解释，原文不裁写为第二份剧本。发送端将同一动作的完整分隔块映射至原有逐段回执链。详见 [实现报告](development/BETA6_EVIDENCE_DELIVERY_REPAIR.md)。
 
@@ -41,7 +41,10 @@ HDS Interlude 1.0 以持续剧本为唯一叙事主链：原始剧本保存生�
 | `src/types.ts` | 当前跨模块数据协议 |
 | `src/anthropic.ts` / `src/gemini-interactions.ts` | Anthropic Messages 与 Gemini Interactions 协议请求及流式适配 |
 | `src/world-seeder.ts` / `src/long-arc.ts` | 世界事件播种与长线指导的校验、上下文与进展管理 |
-| `src/group-willingness.ts` / `src/urge.ts` | 群聊本地意愿门和可选弹性推进；不是第二叙事发送链 |
+| `src/group-willingness.ts` / `src/urge.ts` | 群聊本地意愿门（五档 preset + 数值 custom + 回复后跳过抖动）和可选弹性推进（乘法模型：对话密度 × 五档生活节奏）；不是第二叙事发送链 |
+| `src/weather.ts` | 运行时天气（Open-Meteo 拉取、地理编码缓存、快照注入 [世界事件]；架空世界可配置跳过） |
+| `src/http-proxy.ts` | undici ProxyAgent 统一代理出口（普通与流式模型请求共用） |
+| `src/qq-face.ts` / `src/specialization.ts` / `src/works.ts` | QQ 原生表情语义映射、模型特化档位与家族块、作品任务表访问 |
 | `src/forward-message.ts` | 合并转发结构读取、来源标注及预算控制 |
 | `src/share-sync.ts` | 预设分享码预览、应用与同步 |
 | `src/health.ts` / `src/desktop-bridge.ts` / `src/processing-context.ts` | 内存健康指标、可选桌面 bridge 与跨后台投递的 trace/processing 关联 |
@@ -49,13 +52,13 @@ HDS Interlude 1.0 以持续剧本为唯一叙事主链：原始剧本保存生�
 
 ## 主叙事数据流
 
-1. 私聊或群聊事件先写入 `interlude_script_entry`；启用 SnowLuma 语音转写时，私聊 `record` 先转为带来源标记的文本，并与当前文字、图片合并为同一个事件。
+1. 私聊或群聊事件先写入 `interlude_script_entry`；开启原生音频理解（`model.audio`）时，私聊语音由 SnowLuma 服务端转码后作为原生音频附件直传主模型，不做文本转写；未开启时仅保留“用户发送了语音”的事实。
 2. 同一关系分支的连续消息在短时间内合并；过期模型结果不会落库。
 3. 服务从已有 scene、在场表、working details、Agency 与近期可见剧本确定性投影只读 `SceneFrame`；同一 scene 的消息共享 `DialogueBurst`，时间间隔和消息数量都不改变其身份。
 4. 上下文编译器把事实组织为 `storyIdentity → relevantEstablishedEpisodes → currentSceneEvidence → ongoingThreads → availableNearFuture → incomingEvent → authoringWindow`。近期剧本原文仍然保留，当前消息只出现于 incomingEvent。
 5. 需要导演的自动窗口先生成 1–4 个建议 beats；短且无结构边界的后续窗口直接续写。宿主仍拥有时间边界，主模型写出实际生活。新计划不自动晋升为历史；旧版自动条目继续保留 legacy ledger 的时间解释。
 6. 主模型按兼容 JSON 返回一次结果；即时通信优先在正文内使用 say 标记并由 transport.actionId 引用。解析后原话进入原始正文与既有发送器，宿主提交带 frameId/burstId 的 `ScriptCommit`。lifeHandoff 只引用本轮原文，不要求模型再编写一份场景摘要。
-7. 提交成功后，SceneDelta 只追加本轮事件和 prose；同一事件的气泡、贴图、原生表情与群反应登记为投递 segment，并在平台执行后回写 `pending | delivered | partial | failed | cancelled`。共享 SceneFrame 不保存私聊或群聊 prose 措辞，避免跨关系泄漏。
+7. 提交成功后，SceneDelta 只追加本轮事件和 prose；同一事件的气泡、贴图、原生表情与群反应登记为投递 segment，并在平台执行后回写 `pending | delivered | failed | cancelled`（分段链部分成功由 partialDelivery 元数据标记，不是独立状态）。共享 SceneFrame 不保存私聊或群聊 prose 措辞，避免跨关系泄漏。
 8. 后台扫描处理自动生活推进、到期意图、记忆压缩、Schedule Preplan 每日审查、Overlay 压缩、网页观察和旧事实向量补齐。
 
 两种 payload 模式都使用同一个七段式上下文协议。`mainPayloadOrder=cache-first` 会把 recentScript 元数据投影为紧凑标签，并在 established episodes 内增加 `recentExchange`；其余事实与普通模式一致，追加式历史仍位于当前 SceneFrame 和当前事件之前。
@@ -81,6 +84,7 @@ Alter 达到阈值时，本轮只保存累计状态并安排后台分析。分�
 | Alter System | 当前氛围的临时惯性；不替代以上任何一层 |
 | Agency Window | 日程、隐私和设备构成的外部行动容量；只约束联系行动，不控制文风或情绪 |
 | Schedule Preplan | 未来近期的计划结构；程序保存多日，主叙事只读取未来约半天，且不得把计划当成已发生事实 |
+| lifeRhythm | 五档生活节奏（关注手机/空闲/忙碌/休息/入睡）：压缩器主写、主叙事交接可覆盖、用户消息即时提升；超过 2 小时未更新视为过期，退回休息窗口兜底倍率 |
 | 场景在场表 | 压缩时按来源条目确认的少量配角在场、离场或待会合状态；Canon 配角始终只是可用角色，不自动视为在场 |
 | 自动投递摘要 | 仅后台自动回合读取的已完成沟通摘要，用于让下一次自动推进只表达新增进展 |
 | 承诺回访 | 用户回合中说出口的“想想再答复”等未来承诺；复用 intent 表并要求可见履行、延期说明或取消说明 |
@@ -119,4 +123,5 @@ Schedule Preplan 使用独立的单行表，避免频繁故事状态写入覆盖
 3. **投递后刷新到期快照。** 最后一条气泡可同时结算旧承诺；随后重读待办，避免将投递前的旧任务快照再次交给模型。等待分段不增加 deferredChecks；承诺到期仍优先退役，最多五次未结算顺延，且显式改期不能超过硬截止。
 4. **补偿与分段只有一个发送归属。** 启动延迟扫描、端点上线和周期扫描恢复源账本中的 pending 消息 segment，经原投递路径发送，不重跑主叙事，不整体重放剧本。存在 pending 分段意图时只安排原执行器；终态分段意图修复账本而不再发，分段执行器也先检查 delivered/cancelled 账本以跳过陈旧意图。扫描不自动重放 failed/cancelled 的原生平台动作；分段传输未确认时仍按其既有重查路径处理。
 5. **在线证据与行动许可分开。** 识别 Koishi/Satori 数字 ONLINE 状态和兼容字符串；启动同步当前 bot，连接生命周期及入站继续刷新端点。在线不绕过端点启用、TTL/冷却、Agency 或渠道主动联系许可。
-6. **唯一投递路径不是 exactly-once 保证。** “不自动重发”只适用于已确认/明确取消的 segment，不能用于描述当前所有 pending。此轮针对跨回合重复生成和分段/补偿竞争，并非跨任意时间的全文去重；平台已接受而回执/本地写入丢失时，仍存在投递不确定性。没有多进程锁或平台幂等键保证，真实 QQ/模型验收需另行执行。
+6. **typ-0 桌面桥接的结果未知语义。** 宿主 echo 超时/桥关闭时，投递回执带 `transportTimeout` 标记——私聊与群消息路径按"结果未知"记 pending 交补偿（intentKey 幂等键挡住重复投递），不判定终态失败；桌面动作代理（贴纸/原生表情/QQ 空间）的 `ambiguous` 结果同样只记 pending 且不自动重试。表情包 HTTP 回源路由注册在 `ctx.server`（cordis 的 router 别名从未建立，读取它恒为 undefined）。
+7. **唯一投递路径不是 exactly-once 保证。** “不自动重发”只适用于已确认/明确取消的 segment，不能用于描述当前所有 pending。此轮针对跨回合重复生成和分段/补偿竞争，并非跨任意时间的全文去重；平台已接受而回执/本地写入丢失时，仍存在投递不确定性。没有多进程锁或平台幂等键保证，真实 QQ/模型验收需另行执行。

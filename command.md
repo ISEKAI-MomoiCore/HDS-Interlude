@@ -1,6 +1,6 @@
 # HDS Interlude 管理与查看指令
 
-适用版本：`1.0.1-rc52`
+适用版本：`1.0.1-rc56`
 ## 使用前先看这里
 
 - 新手安装和首次测试：`BEGINNER_GUIDE.md`
@@ -54,7 +54,7 @@ sharedStory:
 | `interlude.init [旧名称]` | 管理员 | 兼容别名；名称参数已忽略，请改用 `interlude.story.start` |
 | `interlude.status` | 白名单用户 | 查看故事状态、运行游标、主动消息与 Agency Window |
 | `interlude.setup <JSON>` | 管理员 | 修改当前故事的基础设定（Canon） |
-| `interlude.qzone <内容>` | 管理员 | 经限流门以她本人身份发一条 QQ 空间说说（需 Console 启用【扩展 17】且 SnowLuma 在线；默认好友可见） |
+| `interlude.qzone <内容>` | 管理员 | 经限流门以她本人身份发一条 QQ 空间说说（需 Console 启用【扩展 18】且 SnowLuma 在线；默认好友可见） |
 | `interlude.story.alias [remove <别名ID>]` | 管理员 | 查看/回滚剧本别名重定向（单剧本多通道 M1b；回滚写审计） |
 | `interlude.story.endpoint [add <平台> <账号> [qq\|wechat] \| disable <端点ID>]` | 管理员 | 管理剧本的角色端点（账号迁移唯一显式途径；多通道 M2：注册/停用/列出） |
 | `interlude.reset` | 管理员 | 询问 y/n 后完全重置——清空数据库并将故事设定重置为 Console 档案当前值 |
@@ -404,7 +404,7 @@ interlude.schedule.refresh
 
 ### `interlude.preset.sync`
 
-使用 Console【扩展 18】配置的分享码手动触发同步：revision 未变也会强制重新应用（含配置模板与故事设定），适合清库重建或配置漂移后恢复。自动路径只在重载时检查且有 revision 幂等闸。
+使用 Console【扩展 19】配置的分享码手动触发同步：revision 未变也会强制重新应用（含配置模板与故事设定），适合清库重建或配置漂移后恢复。自动路径只在重载时检查且有 revision 幂等闸。
 
 ### `interlude.preset.rollback`
 

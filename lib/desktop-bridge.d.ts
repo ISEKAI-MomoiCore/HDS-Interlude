@@ -1,6 +1,8 @@
 import type { InterludeService } from './service';
 export type DesktopRuntimePhase = 'running' | 'muted' | 'paused';
-export type DesktopDeliveryStatus = 'sent' | 'retryable-failed' | 'permanent-failed';
+/** `unknown` = 宿主回执超时/连接断开等"请求已写出、结果不可知"——与
+ *  retryable/permanent 失败语义不同，插件侧按 pending（待补偿）分类。 */
+export type DesktopDeliveryStatus = 'sent' | 'retryable-failed' | 'permanent-failed' | 'unknown';
 /** W3 桥接动作代理结果帧（宿主 → worker）。ambiguous 与插件 QzoneActionError 同族：
  * 传输异常/超时时可能已到达服务端，调用方必须保守处理（计入配额、禁止自动重试）。 */
 export interface DesktopOnebotActionResult {

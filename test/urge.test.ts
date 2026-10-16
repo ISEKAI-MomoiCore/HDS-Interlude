@@ -32,7 +32,7 @@ test('dense real turns shorten cadence, split messages merge, silence decays', (
   state = urgeUserEvent(state, now + 1000)
   assert.equal(state.buckets.length, 6)
   assert.equal(urgeDensity(state, now, c), 1)
-  assert.equal(urgeDensity(state, now + 45 * minute, c), .5)
+  assert.equal(urgeDensity(state, now + 90 * minute, c), .5)  // 半衰期 90min
   assert.ok(planUrge(state, now, c, 0, false, () => .5).minutes < planUrge(state, now + 90 * minute, c, 0, false, () => .5).minutes)
 })
 test('only committed quoted script can supply Urge, never a missing/imagined quote', () => {
@@ -75,7 +75,8 @@ test('low Urge stops acceleration without inventing density', () => {
 test('slow/rest/device constraints win over high urge, real input clears slow', () => {
   const slow = commitUrge(fresh(), { ...high, pace: 'slow', suggestedDelayMinutes: 120 }, high.basisQuote, 10, 'alice', now, c)
   assert.equal(planUrge(slow, now, c, 0, false, () => .5).minutes, 120)
-  assert.equal(planUrge(slow, now, c, 180, false, () => .5).minutes, 180)
+  // 乘法模型:restMinutes 不再替换 slow 的绝对间隔,只影响正常分支的密度因子
+  assert.equal(planUrge(slow, now, c, 1, false, () => .5).minutes, 120)
   const active = acknowledgeUrge(arm(), 'alice', 9, now)
   assert.equal(planUrge(active, now, c, 0, true).state.burst, undefined)
   assert.equal(urgeUserEvent(slow, now).pace, 'normal')
