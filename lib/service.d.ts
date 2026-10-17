@@ -8,7 +8,7 @@ import { GroupWillingnessConfig } from './group-willingness';
 /** Koishi/Satori uses numeric Universal.Status values; keep legacy string adapters compatible. */
 export declare function isBotOnlineStatus(status: unknown): boolean;
 import { SchedulePreplanConfig } from './schedule-preplan';
-import { InterludeArc, InterludeScene, InterludeParticipant, InterludeStory, NarrativeDecision, NarrativeFact, NarrativeIntent, GroupContext, NarrativeInteraction, NarrativeProvider, NarrativeRequest, NarrativeCompactor, NarrativeEmbedder, OutgoingMessageDraft, ParticipantState, ScriptEntry, StatePatchProposal, StorySetting, StoryState, BrowserIntentDraft, OverlaySnapshot, AlterSystemConfig, ChatRhythmConfig, AgencyConfig, AgencyWindowState, ProactiveContactDraft, ScenePresenceState, ChatActionCapabilities, ChatReactionName, FollowUpCommitmentDraft, FollowUpResolutionDraft, MessageReactionDraft, NativeFaceSemantic, QuotedMessageContext, SchedulePreplanRecord, TimelinePlan, UserReportedTime } from './types';
+import { InterludeArc, InterludeScene, InterludeParticipant, InterludeStory, NarrativeDecision, NarrativeFact, NarrativeIntent, GroupContext, NarrativeInteraction, NarrativeProvider, NarrativeRequest, NarrativeCompactor, NarrativeEmbedder, OutgoingMessageDraft, ParticipantState, ScriptEntry, StatePatchProposal, StorySetting, StoryState, BrowserIntentDraft, OverlaySnapshot, AlterSystemConfig, ChatRhythmConfig, AgencyConfig, AgencyWindowState, ProactiveContactDraft, ScenePresenceState, ChatActionCapabilities, ChatReactionName, FollowUpCommitmentDraft, FollowUpResolutionDraft, MessageReactionDraft, NativeFaceSemantic, QuotedMessageContext, SchedulePreplanRecord, TimelinePlan, UserReportedTime, NarrativeContractFeatures } from './types';
 import type { DesktopInboundEvent, DesktopRuntimePhase } from './desktop-bridge';
 export type DesktopTimelineTrack = 'script' | 'messages' | 'system' | 'scenes' | 'facts' | 'preplan' | 'alter' | 'compaction';
 export interface DesktopTimelineRangeRequest {
@@ -1660,6 +1660,25 @@ export interface ManageSessionDenial {
     /** 供命令回复、doctor 与日志共用的完整原因（含可操作指引）。 */
     detail: string;
 }
+/** 合约自动拼装的纯信号解析（可单测）。每条门控都是"配置 OR 窗口数据"：
+ * 功能关闭后，窗口内的历史条目与待办意图仍会保留对应解释行，直到它们
+ * 自然滚出上下文——模型永远不该看到无合约解释的 payload 字段。 */
+export declare function resolveNarrativeContractFeatures(signals: {
+    qzoneEnabled: boolean;
+    pendingQzoneActionIntents: boolean;
+    windowHasQzoneFeedEntries: boolean;
+    groupTargetsPresent: boolean;
+    anyGroupEnabled: boolean;
+    windowHasGroupEntries: boolean;
+    hasWechatEndpoint: boolean;
+    browserActive: boolean;
+    webContextPresent: boolean;
+    semanticRecallEnabled: boolean;
+    recallQueryActive: boolean;
+    worldEventsEnabled: boolean;
+    windowHasWorldEventEntries: boolean;
+    windowHasAdminNotes: boolean;
+}): NarrativeContractFeatures;
 /** 管理权限判定的纯函数核心（可单测）。返回 undefined = 允许。
  * 此前两层失败共用一句"需要 HDSI 管理员权限"，用户给了管理员仍被拒时
  * 排障方向完全被带偏；实际原因必须在消息与默认日志里直接可读。 */

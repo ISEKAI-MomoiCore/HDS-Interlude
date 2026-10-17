@@ -44,7 +44,7 @@ import {
 } from './alter'
 import { buildEpisodeIndex, episodeExcerpt, groundedEpisodeTags, episodeTagScore } from './script/episode-index'
 import { indexOriginal, scoreOriginal, recallKeys, recallFocus, type RecallSpan } from './script/recall-navigation'
-import { developmentDimension, developmentScenes, developmentContextQuery, promptReadyDevelopment, reviewedDevelopmentSupport } from './script/development'
+import { developmentDimension, developmentScenes, developmentTurns, developmentContextQuery, promptReadyDevelopment, reviewedDevelopmentSupport } from './script/development'
 import { reconcileTransportReferences } from './script/authored-actions'
 import { normalizeLifeHandoff, entryLifeHandoff } from './script/life-handoff'
 import { needsTimelineDirector } from './script/timeline-routing'
@@ -98,7 +98,7 @@ import {
   ChatActionCapabilities, ChatReactionName, FollowUpCommitmentDraft, FollowUpResolutionDraft, LocalMediaDraft, MessageReactionDraft, NativeFaceSemantic, StickerAsset, StickerCatalogEntry,
   EarlyNarrativeReply, IndexedQuotedMessageContext, QuotedMessageContext, SchedulePreplanRecord, SchedulePreplanReviewRequest,
   PreviousSceneSummary, RecalledMoment, WorkingDetail, TimelinePlan, TimelinePlanRequest, UserReportedTime,
-  DialogueBurstState, SceneFrame, NarrativeChannelData, NarrativeEndpointOption,
+  DialogueBurstState, SceneFrame, NarrativeChannelData, NarrativeEndpointOption, NarrativeContractFeatures,
 } from './types'
 import type { DesktopInboundEvent, DesktopRuntimePhase } from './desktop-bridge'
 
@@ -1682,8 +1682,11 @@ export class InterludeService extends Service {
           if (this.endpointRegistryReady) {
             // v3 §三边界行为：陌生账号不自动挂载。注册表就绪意味着所有既有
             // 故事的账号都已登记——此刻的 miss 是真正的未知账号。
+            // 例外：注册表为空（database clear 之后或全新部署）时 miss 不构成
+            // 陌生账号证据——没有任何故事存在，autoCreate 随即接管建本。
+            const knownDeployment = this.endpointRows.some(row => row.ownerKind === 'story-role')
             const warnKey = `unknown-account:${session.platform}:${session.selfId}`
-            if (!this.storyAliasProblems.has(warnKey)) {
+            if (knownDeployment && !this.storyAliasProblems.has(warnKey)) {
               this.storyAliasProblems.add(warnKey)
               this.reportStandalone('warn', '未注册的 OneBot 账号发来消息，已拒绝挂载到主剧本（如需迁移账号请用 interlude.story.endpoint add）账号=%s 平台=%s', session.selfId, session.platform)
             }
@@ -2301,6 +2304,9 @@ export class InterludeService extends Service {
       'interlude_scene', 'interlude_arc', 'interlude_fact', 'interlude_state_patch', 'interlude_overlay_snapshot', 'interlude_web_observation', 'interlude_schedule_preplan',
       'interlude_participant', 'interlude_seeded_event', 'interlude_story',
       'interlude_long_arc_guidance', 'interlude_long_arc_progress',
+      // 端点注册表/别名与故事同生命周期：残留行会指向已删除的故事，让
+      // findStory 把自家账号误判成"未注册的 OneBot 账号"。
+      'interlude_endpoint', 'interlude_endpoint_state', 'interlude_story_alias',
     ] as const
     // 长线催化器的内存态随全库清理一并失效,避免同进程内旧指导继续投影
     this.activeLongArcGuidanceCache.clear()
@@ -2321,10 +2327,21 @@ export class InterludeService extends Service {
         this.reportStandalone('warn', 'SQLite 清空表失败，改用逻辑清空 表=%s 错误=%s', table, error)
         for (const row of rows) {
           const id = (row as any).id
-          const key = table === 'interlude_schedule_preplan' ? { storyId: (row as any).storyId } : { id }
+          const key = table === 'interlude_schedule_preplan' ? { storyId: (row as any).storyId }
+            : table === 'interlude_endpoint_state' ? { endpointId: (row as any).endpointId }
+            : table === 'interlude_story_alias' ? { aliasStoryId: (row as any).aliasStoryId }
+            : { id }
           const fallback: any = table === 'interlude_story'
             ? { status: 'archived', setting: this.initialStorySetting(), state: emptyStoryState() }
-            : table === 'interlude_participant'
+            : table === 'interlude_endpoint'
+              // enabled=false 让入站解析（按 enabled 过滤）与投递门同时失效。
+              ? { enabled: false }
+              : table === 'interlude_endpoint_state'
+                ? { state: freshEndpointState(String((row as any).endpointId ?? '')) }
+                : table === 'interlude_story_alias'
+                  // 规范化为无效行：resolveStoryAlias 对空 canonicalStoryId 不再重定向。
+                  ? { canonicalStoryId: '', reason: '[HDSI 数据库已清空]' }
+                  : table === 'interlude_participant'
               ? { status: 'paused', profile: '', relationship: '', state: emptyParticipantState() }
               : table === 'interlude_script_entry'
                 ? { kind: 'redacted', actor: 'system', content: '[HDSI 数据库已清空]', metadata: { redacted: true } }
@@ -2348,6 +2365,16 @@ export class InterludeService extends Service {
         }
       }
     }
+    // 端点注册表与剧本别名的内存快照随全库清理一并失效。先等在途 reconcile
+    // 结束，防止它晚到把旧行和 ready 标志写回刚重置的状态；随后清零注册表、
+    // 别名与告警去重集合并置 not-ready——下一条消息经 ensureEndpointRegistry
+    // 从空库重建，autoCreate 建故事后正常登记，全程不再误报陌生账号。
+    if (this.endpointRegistryInFlight) await this.endpointRegistryInFlight.catch(() => {})
+    this.endpointRows = []
+    this.endpointStates.clear()
+    this.storyAliasRows = []
+    this.storyAliasProblems.clear()
+    this.endpointRegistryReady = false
     return { removed, logicallyCleared }
     } finally {
       this.databaseResetting = false
@@ -5144,14 +5171,50 @@ export class InterludeService extends Service {
         .map(group => ({ participantId: `group:${normalizeGroupId(group.groupId)}`, groupId: normalizeGroupId(group.groupId), label: group.label || '' }))
       : []
     const endpointSelection = this.narrativeEndpointSelection(story, allParticipants, availableGroupTargets)
+    const turnBrowserMode = !this.browserConfig.enabled || (groupContext && !this.browserConfig.allowGroupTriggeredResearch)
+      ? 'disabled' as const : phase === 'user-message' && participant && !groupContext ? this.browserConfig.mode : 'deferred-only' as const
+    // 合约自动拼装：一次窗口扫描按"配置 OR 数据"判定功能板块去留；开关关闭时
+    // 不发送信号对象，系统合约回退到完整原样。
+    const anyGroupEnabled = (this.config.onebot?.groupChats ?? []).some(group => group.enabled !== false && normalizeGroupId(group.groupId))
+    let windowHasGroupEntries = false
+    let windowHasAdminNotes = false
+    let windowHasWorldEventEntries = false
+    let windowHasQzoneFeedEntries = false
+    for (const entry of promptEntries) {
+      if (entry.kind === 'group-message' || entry.kind === 'character-group-message') windowHasGroupEntries = true
+      else if (entry.kind === 'admin-note') windowHasAdminNotes = true
+      const text = typeof entry.content === 'string' ? entry.content : ''
+      if (text.startsWith('[世界事件]')) windowHasWorldEventEntries = true
+      else if (text.startsWith('[空间动态]') || text.startsWith('[好友动态]')) windowHasQzoneFeedEntries = true
+    }
+    const recallQueryText = memoryEnabled
+      ? recallFocus(userMessage,
+        facts.filter(fact => fact.unresolved).map(fact => fact.knowledge?.topic ?? '').filter(Boolean),
+        visibleDueIntents.map(intent => intent.summary)).trim()
+      : ''
+    const contractFeatures = this.config.model.specializationAutoTrim === false ? undefined : resolveNarrativeContractFeatures({
+      qzoneEnabled: this.qzoneRuntime.enabled,
+      pendingQzoneActionIntents: visibleDueIntents.some(intent => intent.type === 'qzone-action'),
+      windowHasQzoneFeedEntries,
+      groupTargetsPresent: availableGroupTargets.length > 0,
+      anyGroupEnabled,
+      windowHasGroupEntries,
+      hasWechatEndpoint: this.endpointRows.some(row => row.enabled && row.channelKind === 'wechat'),
+      browserActive: turnBrowserMode !== 'disabled',
+      webContextPresent: mergedWebContext.length > 0,
+      semanticRecallEnabled: this.config.model.embedding?.enabled === true && this.config.model.embedding?.semanticHistory === true,
+      recallQueryActive: !!recallQueryText,
+      worldEventsEnabled: this.worldSeederRuntime.enabled || this.weatherConfig.enabled,
+      windowHasWorldEventEntries,
+      windowHasAdminNotes,
+    })
     const narrated = await this.narrator.decide({
       urgeEnabled: this.urgeConfig.enabled && !dueIntents.some(intent => intent.type === 'narrative-retry'),
       phase, refreshContinuity, outputRecovery, story, from, now, userMessage, userReportedTimes, images, audio, visualObservations, historicalGroupImages, timelinePlan, developmentTendencies,
       writingOptions: {
         messageSeparator: this.config.runtime.messageSeparator?.trim() || '<sep/>',
         splitReplyMessages: this.config.runtime.splitReplyMessages !== false,
-        browserMode: !this.browserConfig.enabled || (groupContext && !this.browserConfig.allowGroupTriggeredResearch)
-          ? 'disabled' : phase === 'user-message' && participant && !groupContext ? this.browserConfig.mode : 'deferred-only',
+        browserMode: turnBrowserMode,
         ...(messageRepetition ? { messageRepetition } : {}),
       },
       participant: phase === 'advance' ? null : participant,
@@ -5165,6 +5228,7 @@ export class InterludeService extends Service {
         channelSelectionEnabled: true,
       } : {}),
       ...(this.longHorizonConfig.enabled ? { longHorizonGuidance: this.longHorizonPromptProjection(story.id) } : {}),
+      contractFeatures,
       dueIntents: visibleDueIntents, upcomingIntents: visibleUpcomingIntents, activeConsequences: visibleConsequences, supersededIntents,
       shareParticipantDetails: this.sharedStoryConfig.shareParticipantDetails,
       recentEntries: promptEntries, memories, sceneContext: { scene, arc: this.trimArcForPrompt(arc), ...(previousScenes.length ? { previousScenes } : {}) }, facts, groupContext, chatCapabilities,
@@ -5275,15 +5339,15 @@ export class InterludeService extends Service {
               visibleDueIntents.map(intent => intent.summary)),
             resolvedTurnEmbedding ?? [],
             new Set(compactPromptEntries(promptEntries, 24_000,
-              (this.config.runtime.contextTimeWindowMinutes ?? 60) > 0
-                ? new Date(now.getTime() - Math.min(this.config.runtime.contextTimeWindowMinutes ?? 60, 1_440) * Time.minute)
+              (this.config.runtime.contextTimeWindowMinutes ?? 6) > 0
+                ? new Date(now.getTime() - Math.min(this.config.runtime.contextTimeWindowMinutes ?? 6, 1_440) * Time.minute)
                 : undefined).map(entry => entry.id)),
             new Set(facts.filter(fact => userMessage?.trim() || fact.unresolved && fact.knowledge?.topic).flatMap(fact => fact.sourceEntryIds ?? [])),
             userMessage?.trim() ? 3 : 1,
           )
         : undefined,
-      recentProtectionSince: (this.config.runtime.contextTimeWindowMinutes ?? 60) > 0
-        ? new Date(now.getTime() - Math.min(this.config.runtime.contextTimeWindowMinutes ?? 60, 1_440) * Time.minute)
+      recentProtectionSince: (this.config.runtime.contextTimeWindowMinutes ?? 6) > 0
+        ? new Date(now.getTime() - Math.min(this.config.runtime.contextTimeWindowMinutes ?? 6, 1_440) * Time.minute)
         : undefined,
       ...(quotedMessages.length ? { quotedMessages } : {}),
       ...(stickerCatalog.length && phase === 'user-message' ? { stickerCatalog } : {}),
@@ -6760,7 +6824,7 @@ export class InterludeService extends Service {
     // 重载/停机期间的失败不是提供商故障：重试意图持久化在数据库里，会在
     // 新实例上以 userInitiated 投递一条过期回复——直接放弃本轮调度。
     if (this.disposed) return false
-    const delaySeconds = Math.max(5, this.config.runtime.narrativeRetryDelaySeconds ?? 60)
+    const delaySeconds = Math.max(5, this.config.runtime.narrativeRetryDelaySeconds ?? 15)
     const maxAttempts = Math.max(0, this.config.runtime.narrativeRetryMaxAttempts ?? 6)
     const pending = await this.dbGet('interlude_intent', { storyId, participantId, status: 'pending' })
     const existing = pending.filter(intent => intent.type === 'narrative-retry')
@@ -10278,7 +10342,7 @@ export class InterludeService extends Service {
   private async scheduleStreamScriptRecovery(storyId: string, participantId: string, now: Date, previousAttempts = 0) {
     // 与 scheduleNarrativeRetry 同理：重载/停机期间失败不排持久化恢复任务。
     if (this.disposed) return false
-    const delaySeconds = Math.max(5, this.config.runtime.narrativeRetryDelaySeconds ?? 60)
+    const delaySeconds = Math.max(5, this.config.runtime.narrativeRetryDelaySeconds ?? 15)
     const maxAttempts = Math.min(2, Math.max(0, this.config.runtime.narrativeRetryMaxAttempts ?? 6))
     if (!participantId || previousAttempts >= maxAttempts) return false
     const pending = await this.dbGet('interlude_intent', { storyId, participantId, status: 'pending', type: 'narrative-retry' }) as NarrativeIntent[]
@@ -10938,8 +11002,14 @@ export class InterludeService extends Service {
     const minimumTurns = Math.max(1, this.memoryConfig.statePatchMinTurns ?? this.memoryConfig.statePatchMinEvidence)
     const minimumDays = Math.max(1, this.memoryConfig.statePatchMinDays ?? 2)
     const minimum = impact === 'major' ? this.memoryConfig.majorStatePatchConfidenceThreshold : this.memoryConfig.statePatchConfidenceThreshold
-    const oldScenes = developmentScenes(sourceRows.filter(entry => candidate?.sourceEntryIds.includes(entry.id)))
-    const mergedConfidence = candidate ? Math.min(confidence, candidate.confidence + (receptionSupported && evidence.scenes > oldScenes ? 0.05 : 0)) : confidence
+    const oldSourceRows = sourceRows.filter(entry => (candidate?.sourceEntryIds ?? []).includes(entry.id))
+    const oldEvidence = statePatchEvidence(oldSourceRows, story.setting.timezone)
+    const hasNewTurnEvidence = evidence.turns > oldEvidence.turns
+    const hasNewSceneEvidence = evidence.scenes > oldEvidence.scenes
+    const hasNewEvidence = impact === 'major' ? hasNewTurnEvidence || hasNewSceneEvidence : hasNewTurnEvidence
+    const mergedConfidence = candidate
+      ? Math.min(confidence, candidate.confidence + (receptionSupported && hasNewEvidence ? 0.05 : 0))
+      : confidence
     const mergedEvidenceText = mergeNote(candidate?.evidence, draft.evidence)
     const proposal = candidate ?? await this.dbCreate('interlude_state_patch', {
       storyId: story.id, participantId, target: draft.target, path, proposedValue,
@@ -10952,16 +11022,25 @@ export class InterludeService extends Service {
       })
     }
 
-    // Ordinary changes require independent narrative turns on different days.
+    // Ordinary changes use distinct narrative turns, not scene boundaries. This
+    // lets a long-lived everyday scene accumulate gradual evidence; major
+    // changes retain the stricter independent-scene safeguard below.
     if (!receptionSupported) return
-    if (!candidate || evidence.scenes <= oldScenes || !this.memoryConfig.autoApplyStatePatches || (impact === 'major' && !this.memoryConfig.allowMajorStateChanges)) return
+    if (!candidate || !hasNewEvidence || !this.memoryConfig.autoApplyStatePatches || (impact === 'major' && !this.memoryConfig.allowMajorStateChanges)) return
     const majorMinScenes = Math.max(1, this.memoryConfig.statePatchMajorMinScenes ?? 2)
     const stableEvidence = impact === 'major'
       ? mergedConfidence >= minimum && evidence.scenes >= majorMinScenes
-      : mergedConfidence >= minimum && evidence.scenes >= minimumTurns && evidence.days >= minimumDays
+      : mergedConfidence >= minimum && evidence.turns >= minimumTurns && evidence.days >= minimumDays
     if (!stableEvidence) {
-      this.reportOperation('diagnostic', 'debug', story, 'advance',
-        'Overlay 候选继续累计 目标=%s/%s 回合=%d/%d 日期=%d/%d', draft.target, path, evidence.turns, minimumTurns, evidence.days, minimumDays)
+      if (impact === 'major') {
+        this.reportOperation('diagnostic', 'debug', story, 'advance',
+          'Overlay 候选继续累计 目标=%s/%s 影响=major 场景=%d/%d 回合=%d 日期=%d 置信度=%.2f/%.2f',
+          draft.target, path, evidence.scenes, majorMinScenes, evidence.turns, evidence.days, mergedConfidence, minimum)
+      } else {
+        this.reportOperation('diagnostic', 'debug', story, 'advance',
+          'Overlay 候选继续累计 目标=%s/%s 影响=minor 回合=%d/%d 场景=%d 日期=%d/%d 置信度=%.2f/%.2f',
+          draft.target, path, evidence.turns, minimumTurns, evidence.scenes, evidence.days, minimumDays, mergedConfidence, minimum)
+      }
       return
     }
 
@@ -12216,8 +12295,8 @@ function normalizeAccountId(value: unknown) {
  * 条目并入，即使超过条数）。 */
 export function resolveScriptContextBudget(runtime: Pick<RuntimeConfig, 'contextEntryLimit' | 'contextTimeWindowMinutes'>): { count: number, minutes: number } {
   return {
-    count: Math.max(1, Math.min(Math.floor(runtime.contextEntryLimit ?? 35), 200)),
-    minutes: Math.max(0, Math.min(Math.floor(runtime.contextTimeWindowMinutes ?? 45), 1_440)),
+    count: Math.max(1, Math.min(Math.floor(runtime.contextEntryLimit ?? 17), 200)),
+    minutes: Math.max(0, Math.min(Math.floor(runtime.contextTimeWindowMinutes ?? 6), 1_440)),
   }
 }
 
@@ -12226,6 +12305,37 @@ export interface ManageSessionDenial {
   layer: 'onebot' | 'managers'
   /** 供命令回复、doctor 与日志共用的完整原因（含可操作指引）。 */
   detail: string
+}
+
+/** 合约自动拼装的纯信号解析（可单测）。每条门控都是"配置 OR 窗口数据"：
+ * 功能关闭后，窗口内的历史条目与待办意图仍会保留对应解释行，直到它们
+ * 自然滚出上下文——模型永远不该看到无合约解释的 payload 字段。 */
+export function resolveNarrativeContractFeatures(signals: {
+  qzoneEnabled: boolean
+  pendingQzoneActionIntents: boolean
+  windowHasQzoneFeedEntries: boolean
+  groupTargetsPresent: boolean
+  anyGroupEnabled: boolean
+  windowHasGroupEntries: boolean
+  hasWechatEndpoint: boolean
+  browserActive: boolean
+  webContextPresent: boolean
+  semanticRecallEnabled: boolean
+  recallQueryActive: boolean
+  worldEventsEnabled: boolean
+  windowHasWorldEventEntries: boolean
+  windowHasAdminNotes: boolean
+}): NarrativeContractFeatures {
+  return {
+    qzone: signals.qzoneEnabled || signals.pendingQzoneActionIntents || signals.windowHasQzoneFeedEntries,
+    groupDelivery: signals.groupTargetsPresent || signals.anyGroupEnabled,
+    groupHistory: signals.anyGroupEnabled || signals.windowHasGroupEntries,
+    multiPlatform: signals.hasWechatEndpoint,
+    webObservation: signals.browserActive || signals.webContextPresent,
+    semanticRecall: signals.semanticRecallEnabled || signals.recallQueryActive,
+    worldEvents: signals.worldEventsEnabled || signals.windowHasWorldEventEntries,
+    adminNotes: signals.windowHasAdminNotes,
+  }
 }
 
 /** 管理权限判定的纯函数核心（可单测）。返回 undefined = 允许。
@@ -13206,7 +13316,7 @@ function statePatchEvidence(entries: ScriptEntry[], timezone: string) {
   const narrative = entries.filter(entry => entry.kind === 'script' || entry.actor === 'narrator')
   // Use the narrative timestamp as the turn key. Duplicate rows created at
   // the same instant must not count as independent evidence.
-  const turns = new Set(narrative.map(entry => entry.occurredAt.getTime())).size
+  const turns = developmentTurns(narrative)
   const days = new Set(narrative.map(entry => calendarDayKey(entry.occurredAt, timezone))).size
   return { turns, days, scenes: developmentScenes(narrative) }
 }

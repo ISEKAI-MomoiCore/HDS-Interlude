@@ -174,6 +174,7 @@ const Model: Schema<ModelConfig> = Schema.object({
     Schema.const('glm'), Schema.const('kimi'), Schema.const('deepseek'), Schema.const('grok'),
     Schema.const('generic').description('不套用任何家族特化块'),
   ]).default('auto').description('特化家族：模型名无法识别时（如中转自定义别名）在此显式指定。'),
+  specializationAutoTrim: Schema.boolean().default(true).description('合约自动拼装：按已启用的功能裁剪系统合约（如未启用 QQ 空间、无群投递或单平台时移除对应板块，可降低每轮输入体积）。窗口内仍有对应数据或待办意图时保留解释行；关闭则始终输出完整合约。'),
   vision: Vision.default({ enabled: false, mode: 'native', detail: 'auto', maxImageDimension: 1024 }).description('图片理解设置。'),
   audio: AudioUnderstanding.default({ enabled: false, outFormat: 'mp3', maxFileSizeMB: 10, maxPerMessage: 1 }).description('语音/音频理解设置。'),
   mainPrompt: Schema.string().role('textarea').default('Continue the character-centered life script with grounded actions, motives, relationships, and ordinary time passing.').description('已迁移到配置页最底部的主提示词分区；此处保留仅为兼容旧配置的自定义值。').hidden(),
@@ -229,16 +230,16 @@ const Runtime: Schema<RuntimeConfig> = Schema.object({
   forwardMessage: Schema.object({
     enabled: Schema.boolean().default(true).description('是否读取 QQ 合并转发正文；关闭时保留原有转发卡片文本行为。'),
     maxNodes: Schema.natural().min(1).max(100).default(30).description('单条合并转发最多读取的节点数。'),
-    maxCharacters: Schema.natural().min(500).max(32_000).default(8_000).description('合并转发注入当前事件的最大字符数。'),
+    maxCharacters: Schema.natural().min(500).max(32_000).default(2_000).description('合并转发注入当前事件的最大字符数。'),
     maxDepth: Schema.natural().max(8).default(3).description('嵌套合并转发最多展开层数。'),
-  }).default({ enabled: true, maxNodes: 30, maxCharacters: 8_000, maxDepth: 3 }).description('【消息扩展】QQ 合并转发读取预算。'),
-  narrativeRetryDelaySeconds: Schema.natural().min(5).max(3_600).default(60).description('叙事模型请求失败后，自动再次尝试处理该用户回合前等待的秒数。'),
+  }).default({ enabled: true, maxNodes: 30, maxCharacters: 2_000, maxDepth: 3 }).description('【消息扩展】QQ 合并转发读取预算。'),
+  narrativeRetryDelaySeconds: Schema.natural().min(5).max(3_600).default(15).description('叙事模型请求失败后，自动再次尝试处理该用户回合前等待的秒数。'),
   narrativeRetryMaxAttempts: Schema.natural().min(0).max(50).default(6).description('单次用户回合因模型失败可自动重试的最多次数；0 表示关闭。'),
-  contextEntryLimit: Schema.natural().min(1).max(200).default(35).description('写入主叙事上下文的近期原始剧本条目数。小模型可调小（如 15）；注意与下方时间窗叠加——时间窗内条目会全部并入，需要更小上下文时请同时调小或关闭时间窗。'),
-  contextTimeWindowMinutes: Schema.natural().min(0).max(1_440).default(45).description('额外并入最近多少分钟内的全部条目（上限 500）；0 关闭，仅按条数保留。小模型建议与条数一起调小。'),
+  contextEntryLimit: Schema.natural().min(1).max(200).default(17).description('写入主叙事上下文的近期原始剧本条目数。小模型可调小（如 15）；注意与下方时间窗叠加——时间窗内条目会全部并入，需要更小上下文时请同时调小或关闭时间窗。'),
+  contextTimeWindowMinutes: Schema.natural().min(0).max(1_440).default(6).description('额外并入最近多少分钟内的全部条目（上限 500）；0 关闭，仅按条数保留。小模型建议与条数一起调小。'),
   memoryLimit: Schema.natural().min(1).max(200).default(20).description('主叙事读取的长期事实数量；会经过相关性重排。'),
-  maxScriptCharacters: Schema.natural().min(500).max(12_000).default(8_000).description('单次写作允许追加的剧本文本上限。'),
-  maxMessageCharacters: Schema.natural().min(1).max(12_000).default(2_000).description('单条可见消息的最大字符数。'),
+  maxScriptCharacters: Schema.natural().min(500).max(12_000).default(1_400).description('单次写作允许追加的剧本文本上限。'),
+  maxMessageCharacters: Schema.natural().min(1).max(12_000).default(1_500).description('单条可见消息的最大字符数。'),
   minimumDelayedReplySeconds: Schema.natural().min(0).max(86_400).default(10).description('模型允许设置的最短延迟，单位秒。'),
   maximumDelayedReplyMinutes: Schema.natural().min(1).max(43_200).default(1_440).description('模型允许设置的最长延迟，单位分钟。'),
   cancelDelayedRepliesOnUserMessage: Schema.boolean().default(true).description('新消息到达时取消普通延迟回复。'),
@@ -534,6 +535,14 @@ const UrgeAdvanced = Schema.object({
 }).collapse(true)
 
 export const Config: Schema<InterludeConfig> = Schema.object({
+  presetSync: Schema.object({
+    enabled: Schema.boolean().default(false).description('启用预设同步：从 typ0.space 直接拉取并应用角色人设与配置。需填写预设分享码；默认关闭。'),
+    baseUrl: Schema.string().default('https://typ0.space').description('预设站地址。局域网自托管可填 http://192.168.x.x:5177。'),
+    shareCode: Schema.string().default('').description('8 位预设分享码(大小写均可,可带连字符)。在 typ0.space 人设/预设详情页获取。'),
+    autoUpdate: Schema.boolean().default(false).description('自动更新：重载时检查远端 revision,有新版本才应用。关闭时仅通过 interlude.preset.sync 手动触发。'),
+    sections: Schema.array(Schema.string()).role('table').default([]).description('要同步的分区(留空 = 预设里有什么就同步什么)。可选:storyDefaults(配合"应用到当前故事"),runtime,urge,agency,memory,alterSystem,schedulePreplan,timelineDirector,chatActions,stickers,sharedStory,browser,worldSeeder,weather,longHorizon,qzone,blindMode,logging。'),
+    applyToCurrentStory: Schema.boolean().default(false).description('同时将 storyDefaults 应用到当前运行中的故事(修改角色名/人设/世界等)。'),
+    }).collapse(true).description('【预设入口】从 typ0.space 直接拉取角色人设/配置；默认关闭。'),
   storyDefaults: StoryDefaults.description('【必填 1】故事档案：主角、世界、默认关系、地点、时区与叙事风格。'),
   model: Model.description('【必填 2】模型中心：先添加连接并勾选用途；主叙事参数与高级模块保持在同一处。'),
   onebot: OneBot.description('【必填 3】QQ 接入：机器人账号、私聊白名单、群聊与语音。'),
@@ -588,17 +597,8 @@ export const Config: Schema<InterludeConfig> = Schema.object({
     minIntervalMinutes: Schema.natural().min(10).max(1_440).default(90).description('任意两次空间动作的最小间隔（分钟），跨类型共享。'),
     feedWindowMinutes: Schema.natural().min(15).max(720).default(120).description('好友动态轮询只消费该时间窗内的新鲜说说（分钟）；轮询节律为窗口的一半（15~60 分钟），单轮最多入账 2 条。'),
   }).collapse(true).description('【扩展 18】QQ 空间：说说/评论/点赞通道（需 SnowLuma；默认关闭）。'),
-  presetSync: Schema.object({
-    enabled: Schema.boolean().default(false).description('启用预设同步：从 typ0-site 分享站自动拉取并应用配置。需填写分享码。'),
-    baseUrl: Schema.string().default('https://typ0.space').description('分享站地址。局域网自托管可填 http://192.168.x.x:5177。'),
-    shareCode: Schema.string().default('').description('8 位分享码(大小写均可,可带连字符)。在 typ0-site 详情页获取。'),
-    autoUpdate: Schema.boolean().default(false).description('自动更新：重载时检查远端 revision,有新版本才应用。关闭时仅通过 interlude.preset.sync 手动触发。'),
-    sections: Schema.array(Schema.string()).role('table').default([]).description('要同步的分区(留空 = 预设里有什么就同步什么)。可选:storyDefaults(配合"应用到当前故事"),runtime,urge,agency,memory,alterSystem,schedulePreplan,timelineDirector,chatActions,stickers,sharedStory,browser,worldSeeder,weather,longHorizon,qzone,blindMode,logging。'),
-    applyToCurrentStory: Schema.boolean().default(false).description('同时将 storyDefaults 应用到当前运行中的故事(修改角色名/人设/世界等)。'),
-    }).collapse(true).description('【扩展 19】预设同步：从 typ0-site 分享站自动拉取配置(默认关闭)。'),
-
-  blindMode: BlindMode.description('【维护 20】盲区模式：低频心跳的最小运行形态。'),
-  logging: Logging.description('【维护 21】日志：级别、信息密度、布局和隐私预览。'),
+  blindMode: BlindMode.description('【维护 19】盲区模式：低频心跳的最小运行形态。'),
+  logging: Logging.description('【维护 20】日志：级别、信息密度、布局和隐私预览。'),
   mainPrompt: Schema.string().role('textarea').default('').description('⚠️ 除非有把握，否则不要修改。系统主提示词（主叙事行为指令）：与固定合约、文风和特化块协作，塑造全部回合的写作行为；留空使用内置默认，改动下回合立即生效，出问题清空即可恢复默认。'),
   chatRhythm: ChatRhythm.description('【已弃用】对话节奏：仅兼容旧配置，不再统计、干预写作或重试。').hidden(),
 })
@@ -731,7 +731,7 @@ function registerCommands(ctx: Context, service: InterludeService, config: Inter
       if (typeof story === 'string') return story
       const text = String(content ?? '').trim()
       if (!text) return '说说内容不能为空。'
-      if (!(await service.qzoneAvailable())) return 'QQ 空间通道不可用：请确认 Console 已启用 QQ 空间(qzone.enabled,【扩展 17】)且 SnowLuma 连接在线。'
+      if (!(await service.qzoneAvailable())) return 'QQ 空间通道不可用：请确认 Console 已启用 QQ 空间(qzone.enabled,【扩展 18】)且 SnowLuma 连接在线。'
       const result = await service.qzoneExecute(story, 'post', { content: text, ugcRight: 4 }, session?.bot?.selfId)
       return result.ok ? `已发表说说（tid=${result.tid}，好友可见）。` : `发表失败：${result.error}`
     })
@@ -1354,7 +1354,7 @@ function registerPresetCommands(ctx: Context, service: InterludeService) {
       if (!sync?.enabled || !sync.shareCode?.trim()) {
         return [
           '预设同步未启用。',
-          '请在 Console → 【扩展 19】预设同步 中配置:',
+          '请在 Console 第一项“预设同步”中配置:',
           '  1. 启用预设同步',
           '  2. 填写分享码(8 位,在 typ0-site 详情页获取)',
           `  3.${sync?.autoUpdate ? ' 自动更新已开启(重载时检查)' : ' 自动更新未开启(仅手动触发)'}`,

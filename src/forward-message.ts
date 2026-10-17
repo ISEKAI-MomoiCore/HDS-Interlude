@@ -129,7 +129,7 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
   })
 }
 
-const DEFAULT_LIMITS: ForwardReadLimits = { maxNodes: 30, maxCharacters: 8_000, maxDepth: 3 }
+const DEFAULT_LIMITS: ForwardReadLimits = { maxNodes: 30, maxCharacters: 2_000, maxDepth: 3 }
 
 export function forwardReadLimits(value?: Partial<ForwardReadLimits>): ForwardReadLimits {
   return {

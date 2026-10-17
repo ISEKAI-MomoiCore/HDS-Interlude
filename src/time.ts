@@ -85,6 +85,15 @@ export function localClockMinutes(value: Date, timezone: string) {
   return hour * 60 + minute
 }
 
+/** Prompt-side compact clock (HH:mm, story timezone) for pointers such as
+ * delivery receipts. Returns '' for absent or invalid dates and timezones. */
+export function formatStoryClock(value: Date | null | undefined, timezone: string | undefined) {
+  if (!value || !timezone?.trim() || Number.isNaN(value.getTime())) return ''
+  return formatter('clock-text', 'en-GB', timezone, {
+    hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+  }).format(value)
+}
+
 export function calendarDayKey(value: Date, timezone: string) {
   return formatter('day', 'en-CA', timezone, {
     year: 'numeric', month: '2-digit', day: '2-digit',

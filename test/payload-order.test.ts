@@ -86,13 +86,48 @@ test('recentExchange anchors only transport exchanges, excludes the live message
   const payload = toPromptPayload(req, { cacheFirst: true }) as any
   const items = payload.relevantEstablishedEpisodes.recentExchange
   assert.equal(items.length, 3)
-  const received = items.find((item: any) => item.content === '拿到了。确实挺大杯。')
+  // 已在 recentScript 内的条目以指针锚定：带 id/tag/head，不再携带第二份全文。
+  for (const item of items) {
+    assert.ok(Number.isInteger(item.id), '指针必须携带 recentScript 定位 id')
+    assert.ok(typeof item.tag === 'string' && item.tag)
+    assert.ok(typeof item.head === 'string' && item.head)
+    assert.ok(!('content' in item), '常态条目不应重复全文')
+    assert.ok(!('soleCopy' in item))
+  }
+  const received = items.find((item: any) => item.head.includes('拿到了'))
   assert.equal(received?.tag, 'protagonist')
   assert.ok(!JSON.stringify(items).includes('你健忘吗'))
   assert.ok(!JSON.stringify(items).includes('剧'.repeat(20)), '剧本文字不应进入 transport 尾部锚点')
-  const total = items.reduce((sum: number, item: any) => sum + item.content.length, 0)
-  assert.ok(total <= 1_600)
-  assert.ok(items.some((item: any) => item.content.includes('旧的一句')), '跳过剧本文字后，最近三条真实收发消息应补足尾部块')
+  assert.ok(items.some((item: any) => item.head.includes('旧的一句')), '跳过剧本文字后，最近三条真实收发消息应补足尾部块')
+})
+
+test('recentExchange keeps full text only for messages the recentScript budget dropped', () => {
+  const dropped = '很久之前的一条消息，它会被字符预算挤出 recentScript，但在锚点里保留全文'
+  const req = request([
+    entry(1, 'user-message', dropped, 300),
+    entry(2, 'script', '剧'.repeat(12_500), 200),
+    entry(3, 'character-message', '嗯。', 100),
+    entry(4, 'user-message', '在吗', 5),
+  ], '在吗')
+  const payload = toPromptPayload(req, { cacheFirst: true }) as any
+  const recentIds = payload.relevantEstablishedEpisodes.recentScript.map((item: any) => item.id)
+  assert.ok(!recentIds.includes(1), '预算应把最老的消息挤出 recentScript')
+  const items = payload.relevantEstablishedEpisodes.recentExchange
+  const sole = items.find((item: any) => item.id === 1)
+  assert.equal(sole?.soleCopy, true)
+  assert.equal(sole?.content, dropped)
+  assert.ok(!('head' in sole!))
+  const pointer = items.find((item: any) => item.id === 3)
+  assert.ok(!('content' in pointer!))
+  assert.equal(pointer?.head, '嗯。')
+  // 长消息的指针按码点截断
+  assert.ok(sole!.content.length > 12)
+})
+
+test('independent-life turns carry no recentExchange anchor', () => {
+  const req = request([entry(1, 'character-message', '拿到了。', 50)], undefined, { phase: 'advance' })
+  const payload = toPromptPayload(req, { cacheFirst: true }) as any
+  assert.deepEqual(payload.relevantEstablishedEpisodes.recentExchange, [])
 })
 
 test('consecutive user turns keep append-only history at the cacheable front of the compiled context', () => {
@@ -132,6 +167,26 @@ test('group turns keep recentExchange empty because groupContext already ends ne
   })
   const payload = toPromptPayload(req, { cacheFirst: true }) as any
   assert.deepEqual(payload.relevantEstablishedEpisodes.recentExchange, [])
+})
+
+test('group turns teach a private reply channel alongside groupReply', () => {
+  const groupCall = (specialty?: any) => systemPrompt('user-message', '', '', '', '', '',
+    false, false, false, false, false, undefined, false, undefined, false, false, false, true, undefined, specialty)
+  const full = groupCall()
+  // 群回合的 transport 合约声明私聊通道：私聊事务走 crossConversationActions。
+  assert.match(full, /This turn also carries her private channel/)
+  assert.match(full, /send it through crossConversationActions with that participant's exact id from participants/)
+  // phase 指令：带 user/其它 participantId 标签的条目是私聊,回应走私聊 action。
+  assert.match(full, /belongs in a private crossConversationAction/)
+  assert.match(full, /keeping the group post about the group/)
+  // CROSS-CHANNEL DELIVERY 对称句
+  assert.match(full, /pair any private reply with crossConversationActions using the participant id from participants/)
+  const standard = groupCall({ tier: 'standard', family: 'generic', source: 'auto', probe: 'x' })
+  assert.match(standard, /A private reply in this group turn travels through crossConversationActions/)
+  // 私聊回合不带群专属句
+  const privateTurn = systemPrompt('user-message', '', '', '', '', '')
+  assert.doesNotMatch(privateTurn, /carries her private channel/)
+  assert.doesNotMatch(privateTurn, /belongs in a private crossConversationAction/)
 })
 
 test('compact tags collapse kind/actor triples and keep group and action distinctions', () => {
@@ -200,5 +255,8 @@ test('the fixed contract explains recentExchange only for cache-first payloads',
   const plain = systemPrompt(...args)
   const cacheAware = systemPrompt(...args, false, false, false, false, false, undefined, false, undefined, false, false, true)
   assert.doesNotMatch(plain, /recentExchange/)
-  assert.match(cacheAware, /recentExchange at the end duplicates the tail of recentScript/)
+  assert.match(cacheAware, /recentExchange at the end re-anchors the latest exchanged messages/)
+  assert.match(cacheAware, /head is a truncated pointer/)
+  assert.match(cacheAware, /soleCopy/)
+  assert.match(cacheAware, /Independent-life turns carry no recentExchange/)
 })

@@ -15,10 +15,10 @@ const entry = (id: number, content = `原始记录 ${id}`, participantId = 'alic
   occurredAt: now, createdAt: now, metadata: {},
 })
 
-test('provisional development reaches the compactor only after independent scenes', () => {
+test('provisional development reaches the compactor after repeated turns in one scene', () => {
   const candidate: any = { status: 'proposed', sourceEntryIds: [1, 2, 3] }
-  const script = (id: number, frame: string) => ({ ...entry(id), kind: 'script', actor: 'narrator', metadata: { frameId: frame } })
-  assert.equal(promptReadyDevelopment(candidate, [script(1, 'same'), script(2, 'same'), script(3, 'same')]), false)
+  const script = (id: number, frame: string) => ({ ...entry(id), kind: 'script', actor: 'narrator', occurredAt: new Date(now.getTime() + id * 1_000), metadata: { frameId: frame } })
+  assert.equal(promptReadyDevelopment(candidate, [script(1, 'same'), script(2, 'same'), script(3, 'same')]), true)
   assert.equal(promptReadyDevelopment(candidate, [script(1, 'a'), script(2, 'b'), script(3, 'b')]), true)
   assert.equal(promptReadyDevelopment({ ...candidate, status: 'applied' }, [script(1, 'same')]), true)
 })

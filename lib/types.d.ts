@@ -799,8 +799,33 @@ export interface NarrativeAudio {
     format: string;
     base64: string;
 }
+/** Auto-assembled system-contract gating (specializationAutoTrim). Each flag
+ * keeps a feature-specific instruction block only while the feature is
+ * enabled or its data still appears in this turn's window, so the model never
+ * receives syntax for capabilities it cannot use, nor unexplained payload
+ * fields. An absent object on the request means the full legacy contract. */
+export interface NarrativeContractFeatures {
+    /** qzone-action intent syntax plus [空间动态]/[好友动态] semantics. */
+    qzone: boolean;
+    /** availableGroupTargets / crossConversationActions delivery path. */
+    groupDelivery: boolean;
+    /** Speaker-label reading rules for group history entries. */
+    groupHistory: boolean;
+    /** Dual-platform (QQ + WeChat) writer rules; single platform uses a short variant. */
+    multiPlatform: boolean;
+    /** webContext observations and browserIntent affordance. */
+    webObservation: boolean;
+    /** recalledScript recall-excerpt semantics. */
+    semanticRecall: boolean;
+    /** [世界事件] entry semantics. */
+    worldEvents: boolean;
+    /** [管理员注记] entry semantics. */
+    adminNotes: boolean;
+}
 export interface NarrativeRequest {
     urgeEnabled?: boolean;
+    /** 合约自动拼装：按功能开关与窗口数据裁剪系统合约板块；缺省 = 完整合约。 */
+    contractFeatures?: NarrativeContractFeatures;
     contactThreads?: import('./script/knowledge-evidence').ContactEvidenceThread[];
     /** 主模型只读取经过预算控制的连续性包，不读取完整历史。 */
     phase: NarrativePhase;

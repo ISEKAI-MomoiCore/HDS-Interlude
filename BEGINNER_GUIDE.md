@@ -1,8 +1,8 @@
 # HDS Interlude 新手引导
 
-适用版本：`1.0.1-rc56`
+适用版本：`1.0.1-rc57`
 
-当前文档已同步至 2026-10-15 的 rc56，累计变更以 rc55 发布包为基线。发布流程已执行源码构建，rc54 由本次生成的 `lib/` 与 `release/koishi-plugin-hds-interlude-1.0.1-rc56.tgz` 交付；旧安装包不会自动获得这些修改，运行实例须安装并重载后才生效。
+当前文档已同步至 2026-10-17 的 rc57，累计变更以 rc56 发布包为基线。已完成源码构建、类型检查、回归测试与 rc57 安装包打包；发布包与校验信息见发行记录。旧安装包不会自动获得这些修改，运行实例须安装并重载后才生效。
 
 HDS Interlude 是 Koishi 的持续叙事聊天插件。插件使用共享主剧本保存角色状态、关系分支、已发生事件、待处理计划和长期记忆。用户消息会进入当前活动场景；主模型在同一次请求中续写已经发生的生活，并决定是否发送、延迟发送或暂不发送消息。实时写作读取一条按时间排序的活动场景记录：最近剧本文字、真实用户消息和已经成功投递的角色消息在同一条线上。剧本引子、场景外近期事实和长期记忆负责更早的历史。
 
@@ -26,7 +26,7 @@ interlude.doctor
 interlude.story.start
 ```
 
-Console 配置页已按【必填→结构→节奏→表达→内在→扩展→维护】分组编号：先完成必填三项（故事档案 → 模型中心 → QQ 接入），再按需开启共享主剧本与节奏类（运行时/Urge/日程预排/时间导演/行动窗口）；表达（聊天动作/表情包）、内在（记忆/Alter）、扩展与维护项在基础私聊稳定后逐项开启。`blindMode`（盲区模式）首次保持关闭。
+Console 配置页第一项是可选的 `presetSync` 预设同步：可通过 typ0.space 分享码直接拉取角色人设/配置（默认关闭）。其后按【必填→结构→节奏→表达→内在→扩展→维护】分组编号；不使用在线预设时可跳过首项，先完成必填三项（故事档案 → 模型中心 → QQ 接入），再按需开启共享主剧本与节奏类（运行时/Urge/日程预排/时间导演/行动窗口）；表达（聊天动作/表情包）、内在（记忆/Alter）、扩展与维护项在基础私聊稳定后逐项开启。`blindMode`（盲区模式）首次保持关闭。
 
 6. 发送一条普通消息，确认模型调用、日志和消息投递正常。
 
@@ -64,7 +64,7 @@ model.embedding.enabled: false
 model.vision.enabled: false # 视觉主模型用 native；纯文本主模型可改为 true 并配置 sidecar + useForVision
 ```
 
-主叙事把 `runtime.contextEntryLimit` 的条目下限与 `contextTimeWindowMinutes` 的时间窗口取并集。默认至少保留 35 条，并额外保护最近 45 分钟的真实用户/角色消息；普通剧本文字仍受固定字符预算约束。更早内容由 continuity、场景摘要和长期事实衔接。
+主叙事把 `runtime.contextEntryLimit` 的条目下限与 `contextTimeWindowMinutes` 的时间窗口取并集。默认至少保留 17 条，并额外保护最近 6 分钟的真实用户/角色消息；普通剧本文字仍受固定字符预算约束。更早内容由 continuity、场景摘要和长期事实衔接。
 
 
 每条模型连接只配置一次；用用途开关决定它服务哪些任务：
@@ -172,7 +172,7 @@ runtime.ignoreCommandMessages: true
 runtime.userMessageDebounceSeconds: 2
 runtime.forwardMessage.enabled: true # 读取 QQ 合并转发正文；需要时可关闭
 runtime.forwardMessage.maxNodes: 30
-runtime.forwardMessage.maxCharacters: 8000
+runtime.forwardMessage.maxCharacters: 2000
 runtime.forwardMessage.maxDepth: 3
 runtime.cancelDelayedRepliesOnUserMessage: true
 runtime.splitReplyMessages: true
@@ -181,11 +181,13 @@ runtime.typingBaseDelaySeconds: 1
 runtime.typingCharactersPerSecond: 8
 runtime.typingMaxDelaySeconds: 12
 runtime.typingJitterRatio: 0.3
-runtime.narrativeRetryDelaySeconds: 60
+runtime.narrativeRetryDelaySeconds: 15
 runtime.narrativeRetryMaxAttempts: 6
-runtime.contextEntryLimit: 35
-runtime.contextTimeWindowMinutes: 45
+runtime.contextEntryLimit: 17
+runtime.contextTimeWindowMinutes: 6
 runtime.memoryLimit: 20
+runtime.maxScriptCharacters: 1400
+runtime.maxMessageCharacters: 1500
 
 runtime.autoAdvanceEnabled: true
 runtime.autoAdvanceIntervalMinutes: 40

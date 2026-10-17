@@ -1,6 +1,6 @@
 # HDS Interlude 管理与查看指令
 
-适用版本：`1.0.1-rc56`
+适用版本：`1.0.1-rc57`
 ## 使用前先看这里
 
 - 新手安装和首次测试：`BEGINNER_GUIDE.md`
@@ -404,7 +404,7 @@ interlude.schedule.refresh
 
 ### `interlude.preset.sync`
 
-使用 Console【扩展 19】配置的分享码手动触发同步：revision 未变也会强制重新应用（含配置模板与故事设定），适合清库重建或配置漂移后恢复。自动路径只在重载时检查且有 revision 幂等闸。
+使用 Console 首位的 presetSync 配置的分享码手动触发同步：revision 未变也会强制重新应用（含配置模板与故事设定），适合清库重建或配置漂移后恢复。自动路径只在重载时检查且有 revision 幂等闸。
 
 ### `interlude.preset.rollback`
 

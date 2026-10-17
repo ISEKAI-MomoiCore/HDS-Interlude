@@ -121,8 +121,8 @@ function learningHarness(rows: ScriptEntry[]) {
   return { proposals, service, call }
 }
 
-test('development requires an observation cycle and independent scenes, then counter-evidence retires projection', async () => {
-  const h = learningHarness([source(1, 'a'), source(2, 'b'), source(3, 'c'), source(4, 'd')])
+test('development requires an observation cycle, and same-scene turns can promote it', async () => {
+  const h = learningHarness([source(1), source(2), source(3), source(4)])
   await h.call([1, 2, 3])
   assert.equal(h.proposals[0].status, 'proposed')
   await h.call([1, 2, 3])
@@ -135,11 +135,11 @@ test('development requires an observation cycle and independent scenes, then cou
   assert.ok(h.proposals[0].confidence < 0.8)
 })
 
-test('dense same-scene evidence and private evidence cannot promote global personality', async () => {
+test('dense same-scene evidence can promote gradual personality while private evidence remains blocked', async () => {
   const h = learningHarness(Array.from({ length: 10 }, (_, index) => source(index + 1)))
   await h.call([1, 2, 3])
   await h.call([4, 5, 6])
-  assert.equal(h.proposals[0].status, 'proposed')
+  assert.equal(h.proposals[0].status, 'applied')
   const privateH = learningHarness([source(1, 'a', 'friend')])
   await privateH.call([1])
   assert.equal(privateH.proposals.length, 0)

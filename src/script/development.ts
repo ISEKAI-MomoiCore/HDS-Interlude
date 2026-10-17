@@ -49,9 +49,17 @@ export function developmentDimension(target: StatePatchDraft['target'], path: st
   return dimensions[target]?.includes(normalized) ? normalized : undefined
 }
 
+/** Count distinct narrative turns by their occurrence timestamp.
+ * Multiple storage rows emitted for the same turn count once, while repeated
+ * turns in one long-lived scene remain valid evidence for gradual evolution. */
+export function developmentTurns(entries: ScriptEntry[]) {
+  const narrative = entries.filter(entry => entry.kind === 'script' || entry.actor === 'narrator')
+  return new Set(narrative.map(entry => entry.occurredAt.getTime())).size
+}
+
 /** One completed scene contributes once regardless of prose length or turns.
  * Legacy rows without scene provenance remain readable but cannot multiply
- * confidence by their timestamps. */
+ * scene evidence by their timestamps. */
 export function developmentScenes(entries: ScriptEntry[]) {
   const checkpoints = entries.flatMap(entry => {
     const checkpoint = entry.metadata?.sceneCheckpoint
@@ -74,11 +82,12 @@ export function developmentScenes(entries: ScriptEntry[]) {
   return scenes.size
 }
 
-/** Provisional learning remains auditable in storage, but does not become a
- * prompt-side expectation until it has crossed a scene boundary. Applied
- * tendencies already passed the host's stricter evidence gate. */
+/** Provisional learning remains auditable in storage, but repeated narrative
+ * turns in one long-lived scene are also valid evidence. A scene boundary is
+ * still sufficient, but it is no longer the only way to project a proposal. */
 export function promptReadyDevelopment(candidate: StatePatchProposal, entries: ScriptEntry[]) {
   if (candidate.status === 'applied') return true
   const sources = new Set(candidate.sourceEntryIds)
-  return developmentScenes(entries.filter(entry => sources.has(entry.id))) >= 2
+  const sourceEntries = entries.filter(entry => sources.has(entry.id))
+  return developmentScenes(sourceEntries) >= 2 || developmentTurns(sourceEntries) >= 2
 }

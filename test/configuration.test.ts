@@ -10,24 +10,24 @@ const now = new Date('2026-09-09T12:00:00Z')
 
 test('Console sections follow the documented setup order', () => {
   assert.deepEqual(Object.keys(Config.dict), [
-    'storyDefaults', 'model', 'onebot', 'sharedStory', 'runtime', 'urge', 'schedulePreplan', 'timelineDirector', 'agency',
-    'chatActions', 'stickers', 'memory', 'alterSystem', 'browser', 'worldSeeder', 'weather', 'longHorizon', 'qzone', 'presetSync', 'blindMode', 'logging', 'mainPrompt', 'chatRhythm',
+    'presetSync', 'storyDefaults', 'model', 'onebot', 'sharedStory', 'runtime', 'urge', 'schedulePreplan', 'timelineDirector', 'agency',
+    'chatActions', 'stickers', 'memory', 'alterSystem', 'browser', 'worldSeeder', 'weather', 'longHorizon', 'qzone', 'blindMode', 'logging', 'mainPrompt', 'chatRhythm',
   ])
   // 分类前缀让配置页按 必填→结构→节奏→表达→内在→扩展→维护 分组可读。
   const headers = Object.values(Config.dict).map((item: any) => String(item.meta?.description ?? ''))
-  assert.match(headers[0], /^【必填 1】/)
-  assert.match(headers[3], /^【结构 4】/)
-  assert.match(headers[4], /^【节奏 5】/)
-  assert.match(headers[9], /^【表达 10】/)
-  assert.match(headers[11], /^【内在 12】/)
-  assert.match(headers[13], /^【扩展 14】/)
-  assert.match(headers[14], /^【扩展 15】/)
-  assert.match(headers[15], /^【扩展 16】运行时天气/)
-  assert.match(headers[16], /^【扩展 17】长线叙事催化器/)
-  assert.match(headers[17], /^【扩展 18】QQ 空间/)
-  assert.match(headers[18], /^【扩展 19】预设同步/)
-  assert.match(headers[19], /^【维护 20】/)
-  assert.match(headers[20], /^【维护 21】/)
+  assert.match(headers[0], /^【预设入口】.*typ0\.space/)
+  assert.match(headers[1], /^【必填 1】/)
+  assert.match(headers[4], /^【结构 4】/)
+  assert.match(headers[5], /^【节奏 5】/)
+  assert.match(headers[10], /^【表达 10】/)
+  assert.match(headers[12], /^【内在 12】/)
+  assert.match(headers[14], /^【扩展 14】/)
+  assert.match(headers[15], /^【扩展 15】/)
+  assert.match(headers[16], /^【扩展 16】运行时天气/)
+  assert.match(headers[17], /^【扩展 17】长线叙事催化器/)
+  assert.match(headers[18], /^【扩展 18】QQ 空间/)
+  assert.match(headers[19], /^【维护 19】/)
+  assert.match(headers[20], /^【维护 20】/)
 })
 
 test('chat actions are opt-in and platform-scoped', () => {
@@ -65,7 +65,7 @@ test('ignored compatibility switches stay out of the active Console', () => {
 
 test('runtime and plugin exports share one version constant', () => {
   assert.equal(version, HDS_INTERLUDE_VERSION)
-  assert.equal(version, '1.0.1-rc56')
+  assert.equal(version, '1.0.1-rc57')
 })
 
 test('layered colored logs are the Console default and remain optional', () => {
@@ -205,10 +205,19 @@ test('memory compaction defaults leave a slightly wider short-conversation buffe
   assert.equal(memory.sceneCharacterThreshold.meta.default, 10_000)
 })
 
-test('recent context combines a thirty-five-entry floor with a 45-minute raw-message window', () => {
+test('RC57 runtime defaults match the reviewed compact-context profile', () => {
   const runtime = Config.dict.runtime.dict
-  assert.equal(runtime.contextEntryLimit.meta.default, 35)
-  assert.equal(runtime.contextTimeWindowMinutes.meta.default, 45)
+  assert.equal(runtime.forwardMessage.dict.enabled.meta.default, true)
+  assert.equal(runtime.forwardMessage.dict.maxNodes.meta.default, 30)
+  assert.equal(runtime.forwardMessage.dict.maxCharacters.meta.default, 2_000)
+  assert.equal(runtime.forwardMessage.dict.maxDepth.meta.default, 3)
+  assert.equal(runtime.narrativeRetryDelaySeconds.meta.default, 15)
+  assert.equal(runtime.narrativeRetryMaxAttempts.meta.default, 6)
+  assert.equal(runtime.contextEntryLimit.meta.default, 17)
+  assert.equal(runtime.contextTimeWindowMinutes.meta.default, 6)
+  assert.equal(runtime.memoryLimit.meta.default, 20)
+  assert.equal(runtime.maxScriptCharacters.meta.default, 1_400)
+  assert.equal(runtime.maxMessageCharacters.meta.default, 1_500)
 })
 
 test('Console exposes a separate, optional protagonist perspective layer', () => {
@@ -303,7 +312,7 @@ test('visible Console section numbers are unique and continuous', () => {
     const match = String(item.meta?.description ?? '').match(/^【[^】]+ (\d+)】/)
     return match ? [Number(match[1])] : []
   })
-  assert.deepEqual(numbers, Array.from({ length: 21 }, (_, index) => index + 1))
+  assert.deepEqual(numbers, Array.from({ length: 20 }, (_, index) => index + 1))
 })
 
 test('candidate reveal description distinguishes inactive, vague and revealed candidates', () => {

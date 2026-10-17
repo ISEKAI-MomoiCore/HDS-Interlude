@@ -5,23 +5,23 @@
 > 聊天在幕前发生，生活在幕间继续。
 
 <p>
-  <a href="https://gitee.com/MomoiCore/HDS-Interlude/releases"><img src="docs/assets/readme/version.png" alt="当前版本 1.0.1-rc56" width="176" height="30"></a>
+  <a href="https://gitee.com/MomoiCore/HDS-Interlude/releases"><img src="docs/assets/readme/version.png" alt="当前版本 1.0.1-rc57" width="176" height="30"></a>
   <a href="https://koishi.chat/"><img src="docs/assets/readme/koishi.png" alt="适用于 Koishi 4" width="122" height="30"></a>
   <a href="https://www.typescriptlang.org/"><img src="docs/assets/readme/typescript.png" alt="使用 TypeScript 编写" width="152" height="30"></a>
   <a href="LICENSE"><img src="docs/assets/readme/license.png" alt="许可证 AGPL-3.0" width="170" height="30"></a>
 </p>
 
-**[快速开始](BEGINNER_GUIDE.md) · [一条龙向导](新人上手一条龙配置服务v1.0.1-rc56.html) · [下载发行版](https://gitee.com/MomoiCore/HDS-Interlude/releases) · [更新记录](docs/CHANGELOG.md)**
+**[快速开始](BEGINNER_GUIDE.md) · [一条龙向导](新人上手一条龙配置服务v1.0.1-rc57.html) · [下载发行版](https://gitee.com/MomoiCore/HDS-Interlude/releases) · [更新记录](docs/CHANGELOG.md)**
 
 交流群：421430402，群主24小时解答，欢迎来玩！
 
 HDS Interlude 是一个面向 Koishi 一对一与多参与者场景的持续叙事聊天框架。它让用户消息、角色的沉默、延迟回复、主动联系和自动推进，都成为同一段生活剧本中自然可见的部分，并由一次主叙事写作连贯地决定。
 
-当前版本：`1.0.1-rc56`。
+当前版本：`1.0.1-rc57`。
 
-当前文档已同步至 2026-10-15 的 rc56，累计变更以 rc55 发布包为基线。发布流程已执行源码构建与验包，rc56 由本次生成的 `lib/` 与 `release/koishi-plugin-hds-interlude-1.0.1-rc56.tgz` 交付；旧安装包不会自动获得这些修改，运行实例须安装并重载后才生效。
+当前文档已同步至 2026-10-17 的 rc57，累计变更以 rc56 发布包为基线。已完成源码构建、类型检查、回归测试与 rc57 安装包打包；发布包与校验信息见发行记录。旧安装包不会自动获得这些修改，运行实例须安装并重载后才生效。
 
-rc56 相对 rc55 汇总：静态审查批次——桌面桥接群消息的 transportTimeout（结果未知）此前被降级为确定失败（账本 failed 而非 pending），现随异常上抛并映射为 pending 补偿；贴纸与原生表情的桌面动作 ambiguous 同样保留（账本 pending，不自动重试，对齐 Qzone 语义）；表情包回源路由 realpath 边界加固（拦截 root 内符号链接指向目录外）、注册失败不再永久跳过、流错误在响应头发出后销毁流；清理未用导入使严格 typecheck 通过；proxyAgent 配置说明更新为实际覆盖范围（含全部流式通道）。详见 [更新记录](docs/CHANGELOG.md)。
+rc57 相对 rc56 汇总：修复部署向导（一条龙页）自 rc52 起的整页脚本报错；将 Console 首位预设同步明确为可从 typ0.space 直接拉取人设/配置；修复 Overlay 普通演化在单场景长故事中被错误场景门槛永久拦截的问题，并补齐诊断指标。全套版本串、构建产物与发布包对齐 rc57。详见 [更新记录](docs/CHANGELOG.md)。
 
 沿用 rc48 及此前能力：分享码同步会将 `storyDefaults` 同步写入配置模板；清库重建或新故事不会回退到旧人设；`interlude.preset.sync` 可强制重新应用预设；`database clear` 会重置同步状态；群音频可以直接触发携带原生音频的写作；跨会话投递能力继续保留。
 
@@ -236,7 +236,7 @@ HDSI 按用途分层组织信息，让每次请求获得恰当的连续性，同
 
 较早的场景和 Overlay 会在后台分档压缩：保留因果、承诺、大事件与关系变化，减少重复性叙述。压缩以异步整理的方式运行，与用户回合的主叙事调用保持轻量协作。
 
-近期上下文同时使用条目下限与时间窗口：默认至少保留 35 条，并保护最近 45 分钟的真实收发消息。长期事实检索分别为最近已完成事件和未完成承诺保留位置；承诺兑现后可显式关闭旧 fact，并促使 continuity 提前刷新。Continuity 不再保存容易过期的自由文本未来计划，未来安排由 intent 与 Schedule Preplan 提供。
+近期上下文同时使用条目下限与时间窗口：默认至少保留 17 条，并保护最近 6 分钟的真实收发消息。长期事实检索分别为最近已完成事件和未完成承诺保留位置；承诺兑现后可显式关闭旧 fact，并促使 continuity 提前刷新。Continuity 不再保存容易过期的自由文本未来计划，未来安排由 intent 与 Schedule Preplan 提供。
 
 ### 修改设定时的建议
 
@@ -355,29 +355,29 @@ OneBot 模式采用显式白名单：启用后，绑定的机器人 QQ 账号和
 ```bash
 npm install koishi-plugin-hds-interlude@beta
 # 或使用 corepack yarn（Koishi 官方推荐）：
-corepack yarn add "koishi-plugin-hds-interlude@file:./koishi-plugin-hds-interlude-1.0.1-rc56.tgz" --exact
+corepack yarn add "koishi-plugin-hds-interlude@file:./koishi-plugin-hds-interlude-1.0.1-rc57.tgz" --exact
 ```
 
 稳定版发布后可省略 `@beta`。然后在 Koishi Console 添加 `hds-interlude` 插件并完成配置。
 
 ### 本地 tgz 安装
 
-rc56 安装包由本次发布流程生成；安装前请确认实际 tgz 路径，必要时核对同目录的 SHA-256 校验文件。使用本地预发布包时，Koishi Desktop 实例必须使用 Yarn 4 更新 package.json 与 yarn.lock；不要用 npm 安装：
+rc57 安装包由发布流程生成；安装前请确认实际 tgz 路径，必要时核对同目录的 SHA-256 校验文件。使用本地预发布包时，Koishi Desktop 实例必须使用 Yarn 4 更新 package.json 与 yarn.lock；不要用 npm 安装：
 
 ```bash
-node .yarn/releases/yarn-4.12.0.cjs add "koishi-plugin-hds-interlude@file:C:/absolute/path/to/koishi-plugin-hds-interlude-1.0.1-rc56.tgz" --exact
+node .yarn/releases/yarn-4.12.0.cjs add "koishi-plugin-hds-interlude@file:C:/absolute/path/to/koishi-plugin-hds-interlude-1.0.1-rc57.tgz" --exact
 ```
 
 Windows 示例：
 
 ```powershell
-node .yarn/releases/yarn-4.12.0.cjs add "koishi-plugin-hds-interlude@file:C:/dev/HDS-Interlude/plugins/hds-interlude/release/koishi-plugin-hds-interlude-1.0.1-rc56.tgz" --exact
+node .yarn/releases/yarn-4.12.0.cjs add "koishi-plugin-hds-interlude@file:C:/dev/HDS-Interlude/plugins/hds-interlude/release/koishi-plugin-hds-interlude-1.0.1-rc57.tgz" --exact
 ```
 
 Koishi Desktop 的实例使用 Yarn 4。请在实例目录执行以下命令，并在完成后重载插件或重启 Desktop：
 
 ```powershell
-node .yarn/releases/yarn-4.12.0.cjs add "koishi-plugin-hds-interlude@file:C:/dev/HDS-Interlude/plugins/hds-interlude/release/koishi-plugin-hds-interlude-1.0.1-rc56.tgz" --exact
+node .yarn/releases/yarn-4.12.0.cjs add "koishi-plugin-hds-interlude@file:C:/dev/HDS-Interlude/plugins/hds-interlude/release/koishi-plugin-hds-interlude-1.0.1-rc57.tgz" --exact
 ```
 
 安装后重新加载 Koishi，再在 Console 启用插件。

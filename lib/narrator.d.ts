@@ -1,6 +1,6 @@
 import { Context } from 'koishi';
 import { type ContractTier, type ModelFamily, type SpecialtyProfile } from './specialization';
-import { AlterAnalysisDecision, AlterAnalysisRequest, AlterSystemConfig, ChatActionCapabilities, CompactionDecision, CompactionRequest, NarrativeDecision, NarrativeProvider, OverlayCompactionDecision, OverlayCompactionRequest, EarlyNarrativeReply, LongArcGuidanceRequest, NarrativeCompactor, NarrativeEmbedder, NarrativeImage, NarrativeRequest, SchedulePreplanProposal, SchedulePreplanReviewRequest, ScriptEntry, StickerCatalogEntry, TimelinePlan, TimelinePlanRequest } from './types';
+import { AlterAnalysisDecision, AlterAnalysisRequest, AlterSystemConfig, ChatActionCapabilities, CompactionDecision, CompactionRequest, NarrativeContractFeatures, NarrativeDecision, NarrativeProvider, OverlayCompactionDecision, OverlayCompactionRequest, EarlyNarrativeReply, LongArcGuidanceRequest, NarrativeCompactor, NarrativeEmbedder, NarrativeImage, NarrativeRequest, SchedulePreplanProposal, SchedulePreplanReviewRequest, ScriptEntry, StickerCatalogEntry, TimelinePlan, TimelinePlanRequest } from './types';
 import { ModelRoutingTable } from './model-routing';
 export { configuredProviders, effectiveMainModelId, resolveModelRouting, usesRemoteProviders, ZHIPU_OFFICIAL_CHAT_ENDPOINT, } from './model-routing';
 /** 插件作用域已销毁（HMR 重载/停机）时的失败签名：在途 ctx.http 请求被
@@ -101,6 +101,9 @@ export interface ModelConfig {
     specialization?: 'off' | ContractTier;
     /** 特化家族：auto（默认，按模型名识别，仅决定特化块）或显式指定（中转别名场景）。 */
     specializationFamily?: 'auto' | ModelFamily;
+    /** 合约自动拼装（默认开启）：未启用的功能板块（QQ 空间、群投递、双平台等）
+     * 从系统合约中裁剪；窗口内仍有对应数据或待办意图时保留对应解释行。 */
+    specializationAutoTrim?: boolean;
     /** Manual opt-in for streaming JSON transport; unavailable providers remain on full-response mode. */
     mainStreamingMode?: 'off' | 'experimental';
     /** cache-first reorders the user payload so stable blocks (history, memory layers) precede
@@ -321,7 +324,7 @@ export declare function formatTokenUsageLine(record: TokenUsageRecord): string;
  * systemPrompt 空值兜底共用同一常量——两处漂移会造成"清空后文风不一致"。
  * 2026-10-15：默认从英文一句话恢复为完整的中文生活剧本写作指引。 */
 export declare const DEFAULT_STYLE_PROMPT: string;
-export declare function systemPrompt(phase: NarrativeRequest['phase'], mainPrompt: string | undefined, formatPrompt: string | undefined, fixedPrompt: string, baseStylePrompt: string, storyStylePrompt: string, refreshContinuity?: boolean, alterEnabled?: boolean, agencyEnabled?: boolean, perspectiveEnabled?: boolean, outputRecovery?: boolean, chatCapabilities?: ChatActionCapabilities, hasQuotedMessage?: boolean, stickerCatalog?: StickerCatalogEntry[], schedulePreplanEnabled?: boolean, streamingReplyFirst?: boolean, cacheFirstPayload?: boolean, groupTurn?: boolean, writingOptions?: NarrativeRequest['writingOptions'], specialty?: SpecialtyProfile, proactiveContactMode?: 'strict' | 'natural' | 'balanced', channelSelectionEnabled?: boolean, longHorizonGuidance?: string): string;
+export declare function systemPrompt(phase: NarrativeRequest['phase'], mainPrompt: string | undefined, formatPrompt: string | undefined, fixedPrompt: string, baseStylePrompt: string, storyStylePrompt: string, refreshContinuity?: boolean, alterEnabled?: boolean, agencyEnabled?: boolean, perspectiveEnabled?: boolean, outputRecovery?: boolean, chatCapabilities?: ChatActionCapabilities, hasQuotedMessage?: boolean, stickerCatalog?: StickerCatalogEntry[], schedulePreplanEnabled?: boolean, streamingReplyFirst?: boolean, cacheFirstPayload?: boolean, groupTurn?: boolean, writingOptions?: NarrativeRequest['writingOptions'], specialty?: SpecialtyProfile, proactiveContactMode?: 'strict' | 'natural' | 'balanced', channelSelectionEnabled?: boolean, longHorizonGuidance?: string, features?: Partial<NarrativeContractFeatures>): string;
 export declare function writingAffordances(options?: NarrativeRequest['writingOptions']): string;
 /** A guard paragraph rendered into the writing affordances when the host has
  * detected a fixed bubble-count run in her recent delivered replies. */

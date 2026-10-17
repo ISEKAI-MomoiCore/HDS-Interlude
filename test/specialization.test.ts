@@ -67,6 +67,8 @@ test('STANDARD keeps the full contract with content-only transport and family ex
   assert.doesNotMatch(glm, /say id=/)
   assert.doesNotMatch(glm, /SCRIPT-FIRST TRANSPORT MIRROR/)
   assert.match(glm, /Emotional register: let mood follow its actual causes/)
+  // 发送配对纪律是 claude 家族特化，其它家族不带
+  assert.doesNotMatch(glm, /A send always travels as a pair/)
 
   const kimi = systemPrompt('user-message', '', '', '', '', '', false, false, false, false, false, undefined, false, undefined, false, false, false, false, undefined,
     { tier: 'standard', family: 'kimi', source: 'auto', probe: 'kimi-k3' })
@@ -94,11 +96,15 @@ test('FULL tier applies claude/gpt blocks with simple protocol', () => {
     { tier: 'full', family: 'claude', source: 'auto', probe: 'claude-opus-5' })
   assert.match(claude, /When interaction is permitted/)
   assert.match(claude, /Scenes do not need tidy closure/)
-  assert.match(claude, /Scenes do not need tidy closure/)
+  // claude 特化的发送配对纪律：散文发送必须与结构化字段成对出现
+  assert.match(claude, /A send always travels as a pair/)
+  assert.match(claude, /an unpaired send becomes a false memory later turns treat as delivered/)
+  assert.match(claude, /Reference a past send only beside recentScript or deliveryReality evidence/)
 
   const gpt = systemPrompt('user-message', '', '', '', '', '', false, false, false, false, false, undefined, false, undefined, false, false, false, false, undefined,
     { tier: 'full', family: 'gpt', source: 'auto', probe: 'gpt-5.5' })
   assert.match(gpt, /each passage keeps moving/)
+  assert.doesNotMatch(gpt, /A send always travels as a pair/)
 })
 
 test('LITE group turns get the groupReply channel and grok gets the single-focus block', () => {
@@ -110,6 +116,12 @@ test('LITE group turns get the groupReply channel and grok gets the single-focus
     { tier: 'lite', family: 'grok', source: 'auto', probe: 'grok-4.5' })
   assert.match(grok, /One scene, one or two things happening/)
   assert.match(grok, /finish an action, then let time advance/)
+
+  // claude 家族的发送配对纪律随 extraAfterPhase 进入 lite 档（content-only 协议下同样成立）
+  const liteClaude = systemPrompt('user-message', '', '', '', '', '', false, false, false, false, false, undefined, false, undefined, false, false, false, false, undefined,
+    { tier: 'lite', family: 'claude', source: 'auto', probe: 'claude-opus-5' })
+  assert.match(liteClaude, /A send always travels as a pair/)
+  assert.match(liteClaude, /TRANSPORT: reply\.content/)
 })
 
 test('decide() applies the manually selected tier with family auto-detection', async () => {
@@ -150,4 +162,92 @@ test('side-task prompts follow the same manual tier (lite compaction and timelin
   assert.doesNotMatch(tl, /recentScriptContinuation/)
   assert.match(timelineDirectorPrompt(full), /recentScriptContinuation/)
   assert.match(timelineDirectorPrompt(undefined), /recentScriptContinuation/)
+})
+
+const allOff = { qzone: false, groupDelivery: false, groupHistory: false, multiPlatform: false, webObservation: false, semanticRecall: false, worldEvents: false, adminNotes: false } as const
+
+test('contract auto-trim removes disabled feature blocks while defaults stay byte-identical', () => {
+  const args = ['user-message', '', '', '', '', ''] as const
+  const baseline = systemPrompt(...args)
+  const trimmed = systemPrompt(...args, false, false, false, false, false, undefined, false, undefined, false, false, false, false, undefined, undefined, undefined, false, undefined, allOff)
+  // 默认（无 features）= 完整合约：全部板块在场
+  for (const block of [/qzone-action intent records/, /SOCIAL SURFACE/, /CROSS-CHANNEL DELIVERY/, /CHANNEL CONTEXT \(host metadata\)/, /When groupContext is present/, /webContext contains bounded/, /recalledScript, when supplied/, /WORLD EVENTS: entries/, /ADMIN NOTES: entries/, /simultaneously use QQ and WeChat/]) {
+    assert.match(baseline, block)
+    assert.doesNotMatch(trimmed, block)
+  }
+  // 单平台短句替换双平台全文；核心合约不受影响
+  assert.match(trimmed, /single registered chat platform/)
+  assert.match(trimmed, /Never invent an incoming message/)
+  assert.match(trimmed, /FORMAT AND REALITY CONTRACT/)
+  // 实际体积收缩（回归护栏：本配置形态下至少省 2500 字符）
+  assert.ok(baseline.length - trimmed.length >= 2500, `expected >=2500 char saving, got ${baseline.length - trimmed.length}`)
+  // Partial 合并：只关 qzone 时其它板块保留
+  const qzoneOnly = systemPrompt(...args, false, false, false, false, false, undefined, false, undefined, false, false, false, false, undefined, undefined, undefined, false, undefined, { qzone: false })
+  assert.doesNotMatch(qzoneOnly, /qzone-action intent records/)
+  assert.match(qzoneOnly, /CROSS-CHANNEL DELIVERY/)
+  assert.match(qzoneOnly, /ADMIN NOTES: entries/)
+})
+
+test('LITE tier honours multiPlatform gating for its channel lines', () => {
+  const liteProfile = { tier: 'lite', family: 'gemini-flash', source: 'auto' as const, probe: 'gemini-3.7-flash' }
+  const liteCall = (features: { multiPlatform: boolean }) => systemPrompt('user-message', '', '', '', '', '',
+    false, false, false, false, false, undefined, false, undefined, false, false, false, false, undefined,
+    liteProfile, undefined, false, undefined, features)
+  const dual = liteCall({ multiPlatform: true })
+  assert.match(dual, /protagonist may use QQ and WeChat/)
+  assert.match(dual, /CHANNEL CONTEXT \(host metadata\)/)
+  const single = liteCall({ multiPlatform: false })
+  assert.match(single, /single registered chat platform/)
+  assert.doesNotMatch(single, /CHANNEL CONTEXT \(host metadata\)/)
+  assert.doesNotMatch(single, /WeChat/)
+})
+
+test('resolveNarrativeContractFeatures keeps blocks alive while their data stays in the window', async () => {
+  const { resolveNarrativeContractFeatures } = await import('../src/service')
+  const off = resolveNarrativeContractFeatures({
+    qzoneEnabled: false, pendingQzoneActionIntents: false, windowHasQzoneFeedEntries: false,
+    groupTargetsPresent: false, anyGroupEnabled: false, windowHasGroupEntries: false,
+    hasWechatEndpoint: false, browserActive: false, webContextPresent: false,
+    semanticRecallEnabled: false, recallQueryActive: false,
+    worldEventsEnabled: false, windowHasWorldEventEntries: false, windowHasAdminNotes: false,
+  })
+  assert.deepEqual(off, allOff)
+  // 数据 OR：功能关闭后，待办意图与窗口条目仍保留解释行
+  assert.equal(resolveNarrativeContractFeatures({
+    qzoneEnabled: false, pendingQzoneActionIntents: true, windowHasQzoneFeedEntries: false,
+    groupTargetsPresent: false, anyGroupEnabled: false, windowHasGroupEntries: false,
+    hasWechatEndpoint: false, browserActive: false, webContextPresent: false,
+    semanticRecallEnabled: false, recallQueryActive: false,
+    worldEventsEnabled: false, windowHasWorldEventEntries: false, windowHasAdminNotes: false,
+  }).qzone, true)
+  const historyKept = resolveNarrativeContractFeatures({
+    qzoneEnabled: false, pendingQzoneActionIntents: false, windowHasQzoneFeedEntries: true,
+    groupTargetsPresent: false, anyGroupEnabled: false, windowHasGroupEntries: true,
+    hasWechatEndpoint: false, browserActive: false, webContextPresent: false,
+    semanticRecallEnabled: false, recallQueryActive: true,
+    worldEventsEnabled: false, windowHasWorldEventEntries: true, windowHasAdminNotes: true,
+  })
+  assert.equal(historyKept.qzone, true)
+  assert.equal(historyKept.groupHistory, true)
+  // 群历史保留解释行，但群投递路径仍随 targets 缺席关闭
+  assert.equal(historyKept.groupDelivery, false)
+  assert.equal(historyKept.semanticRecall, true)
+  assert.equal(historyKept.worldEvents, true)
+  assert.equal(historyKept.adminNotes, true)
+  assert.equal(historyKept.webObservation, false)
+})
+
+test('decide() forwards request contractFeatures into the assembled system prompt', async () => {
+  const bodies: any[] = []
+  const narrator = new OpenAICompatibleNarrator({ http: { post: async (_url: string, body: any) => {
+    bodies.push(body)
+    return { choices: [{ message: { content: JSON.stringify({ script: '她继续着手头的事。', interaction: { seen: true, reply: { mode: 'none' } } }) } }] }
+  } } } as any, { providers: [{ id: 't', label: 'test', enabled: true, useForMain: true, endpoint: 'https://example.test/chat', model: 'claude-opus-5', temperature: 0.8, topP: 1, maxTokens: 2048, timeout: 1000, responseFormat: 'json-object' }], failover: { enabled: false, strategy: 'priority', maxAttemptsPerProvider: 1, cooldownMinutes: 5 } } as any, true)
+  const now = new Date()
+  const base = { phase: 'user-message', from: now, now, story: { setting: { timezone: 'Asia/Shanghai' } as any, state: {} as any }, participant: null, participants: [], recentEntries: [], memories: [], dueIntents: [], supersededIntents: [], activeConsequences: [] } as any
+  await narrator.decide(base)
+  assert.match(bodies[0].messages[0].content, /qzone-action intent records/)
+  await narrator.decide({ ...base, contractFeatures: allOff })
+  assert.doesNotMatch(bodies[1].messages[0].content, /qzone-action intent records/)
+  assert.match(bodies[1].messages[0].content, /single registered chat platform/)
 })

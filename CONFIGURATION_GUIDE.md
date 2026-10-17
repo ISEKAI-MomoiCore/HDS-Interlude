@@ -1,40 +1,40 @@
 # HDS Interlude 配置指南
 
-适用版本：`1.0.1-rc56`
+适用版本：`1.0.1-rc57`
 
-当前文档已同步至 2026-10-15 的 rc56，累计变更以 rc55 发布包为基线。发布流程已执行源码构建，rc54 由本次生成的 `lib/` 与 `release/koishi-plugin-hds-interlude-1.0.1-rc56.tgz` 交付；旧安装包不会自动获得这些修改，运行实例须安装并重载后才生效。
+当前文档已同步至 2026-10-17 的 rc57，累计变更以 rc56 发布包为基线。已完成源码构建、类型检查、回归测试与 rc57 安装包打包；发布包与校验信息见发行记录。旧安装包不会自动获得这些修改，运行实例须安装并重载后才生效。
 
 第一次安装先看 `BEGINNER_GUIDE.md`。本文件按配置依赖关系组织字段；下方先列出当前 Console 的实际顺序，旧版本已经移除或隐藏的字段集中列在末尾，不再混入正常配置流程。
 
 ## Console 顺序
 
-配置页按 必填 → 结构 → 节奏 → 表达 → 内在 → 扩展 → 维护 分组编号：
+`presetSync`（预设同步）现置于 Console 配置页第一项，作为可选的快速人设入口；其后仍按 必填 → 结构 → 节奏 → 表达 → 内在 → 扩展 → 维护 分组编号：
 
-| 分组 | 序号 | 键 | 名称 |
-| --- | --- | --- | --- |
-| 【必填】 | 1 | `storyDefaults` | 故事档案 |
-| 【必填】 | 2 | `model` | 模型中心 |
-| 【必填】 | 3 | `onebot` | QQ 接入 |
-| 【结构】 | 4 | `sharedStory` | 共享主剧本 |
-| 【节奏】 | 5 | `runtime` | 运行时与节奏 |
-| 【节奏】 | 6 | `urge` | Urge 弹性推进 |
-| 【节奏】 | 7 | `schedulePreplan` | 日程预排 |
-| 【节奏】 | 8 | `timelineDirector` | 时间导演 |
-| 【节奏】 | 9 | `agency` | 行动窗口 |
-| 【表达】 | 10 | `chatActions` | 聊天动作 |
-| 【表达】 | 11 | `stickers` | 本地表情包 |
-| 【内在】 | 12 | `memory` | 记忆与连续性 |
-| 【内在】 | 13 | `alterSystem` | Alter 情绪 |
-| 【扩展】 | 14 | `browser` | 网页观察 |
-| 【扩展】 | 15 | `worldSeeder` | 世界事件播种器 |
-| 【扩展】 | 16 | `weather` | 运行时天气 |
-| 【扩展】 | 17 | `longHorizon` | 长线叙事指导 |
-| 【扩展】 | 18 | `qzone` | QQ 空间通道 |
-| 【扩展】 | 19 | `presetSync` | 预设同步 |
-| 【维护】 | 20 | `blindMode` | 盲区模式 |
-| 【维护】 | 21 | `logging` | 日志 |
+| 顺序 | 分组 | 序号 | 键 | 名称 |
+| ---: | --- | ---: | --- | --- |
+| **首位** | 【预设入口】 | — | `presetSync` | typ0.space 人设/预设同步 |
+| 1 | 【必填】 | 1 | `storyDefaults` | 故事档案 |
+| 2 | 【必填】 | 2 | `model` | 模型中心 |
+| 3 | 【必填】 | 3 | `onebot` | QQ 接入 |
+| 4 | 【结构】 | 4 | `sharedStory` | 共享主剧本 |
+| 5 | 【节奏】 | 5 | `runtime` | 运行时与节奏 |
+| 6 | 【节奏】 | 6 | `urge` | Urge 弹性推进 |
+| 7 | 【节奏】 | 7 | `schedulePreplan` | 日程预排 |
+| 8 | 【节奏】 | 8 | `timelineDirector` | 时间导演 |
+| 9 | 【节奏】 | 9 | `agency` | 行动窗口 |
+| 10 | 【表达】 | 10 | `chatActions` | 聊天动作 |
+| 11 | 【表达】 | 11 | `stickers` | 本地表情包 |
+| 12 | 【内在】 | 12 | `memory` | 记忆与连续性 |
+| 13 | 【内在】 | 13 | `alterSystem` | Alter 情绪 |
+| 14 | 【扩展】 | 14 | `browser` | 网页观察 |
+| 15 | 【扩展】 | 15 | `worldSeeder` | 世界事件播种器 |
+| 16 | 【扩展】 | 16 | `weather` | 运行时天气 |
+| 17 | 【扩展】 | 17 | `longHorizon` | 长线叙事指导 |
+| 18 | 【扩展】 | 18 | `qzone` | QQ 空间通道 |
+| 19 | 【维护】 | 19 | `blindMode` | 盲区模式 |
+| 20 | 【维护】 | 20 | `logging` | 日志 |
 
-首次测试先完成 `storyDefaults`、`model`、`onebot`、`sharedStory` 和 `runtime`；`blindMode` 保持关闭。Embedding、网页观察、主动联系和内容日志应在基础私聊稳定后逐项开启。
+不使用在线预设时可保持首位的 `presetSync` 关闭；使用 typ0.space 分享码可直接拉取角色人设并按分区应用。首次测试再完成 `storyDefaults`、`model`、`onebot`、`sharedStory` 和 `runtime`；`blindMode` 保持关闭。Embedding、网页观察、主动联系和内容日志应在基础私聊稳定后逐项开启。
 
 
 ## 1. storyDefaults：故事档案（【必填 1】）
@@ -140,6 +140,7 @@
 - `mainPayloadOrder`：主叙事 payload 字段顺序，默认 `cache-first`；遇到服务商兼容性或上下文质量问题时可切回 `legacy`
 - `specialization`：模型特化档位，默认 `off`（rc12 原始完整合约，行为与未特化一致）；可选 `lite`（flash 级小模型精简合约）/`standard`（content-only 协议标准合约）/`full`（完整合约），同时作用于主叙事与压缩/时间导演等侧端提示词，改配置后下回合生效
 - `specializationFamily`：特化家族，默认 `auto` 按模型名识别；中转自定义别名无法识别时可显式指定（gemini-flash/gemini/claude/gpt/glm/kimi/deepseek/grok/generic）
+- `specializationAutoTrim`：合约自动拼装，默认开启。按本实例已启用的功能裁剪主叙事系统合约中无关板块（未启用 QQ 空间时移除其语法与说明行；无群投递、单平台时移除跨渠道/双平台规则等），可降低每轮输入体积。窗口内仍存在对应数据（如历史 `[空间动态]` 条目、待办 qzone 意图）或功能启用时，对应解释行保留；关闭后始终输出完整合约。
 
 `mainPayloadOrder=cache-first` 重排用户 payload：对话历史（recentScript）与低频记忆层（长期事实、记忆、Overlay、场景摘要；有原文时不注入旧连续性快照）前置，每轮变化的字段（时钟、当前事件、参与者状态、意图账本）后置。对支持自动前缀缓存的服务商（DeepSeek 官方、GLM 官方、Kimi/Moonshot、硅基流动等），连续对话轮命中稳定前缀后输入成本与 prefill 延迟显著下降；群聊回合与 advance 回合的历史视图不同，缓存命中率会低于私聊连续对话。payload 末尾附带 `recentExchange` 最近交换块（最多 3 条、1600 字符，排除当前消息本身），把最后几条交互重新锚定在生成点旁，避免历史前置稀释语境显著性；固定合约会同步告知模型该块是既定过去的强调而非新事件。默认 `legacy` 使用常规字段顺序，两种模式都使用 beta6 的原文与执行语义。开启后建议先在沙盒观察若干轮回复质量与日志中的`回复模式`分布，不适配随时切回。
 
@@ -248,20 +249,20 @@ Embedding 地址留空时，插件会尝试从标准 `/chat/completions` 地址�
 
 ### 5.2 QQ 合并转发读取
 
-`runtime.forwardMessage` 默认开启。收到 QQ `forward` segment 时，HDSI 会通过当前 SnowLuma/OneBot 账号调用 `get_forward_msg`，把转发节点中的文字、@、回复关系和媒体类型占位符并入同一条当前用户事件；普通文本、图片和语音消息不会额外发起请求。
+`runtime.forwardMessage` 默认开启，默认预算为每条最多 30 个节点、2000 字符、嵌套深度 3。收到 QQ `forward` segment 时，HDSI 会通过当前 SnowLuma/OneBot 账号调用 `get_forward_msg`，把转发节点中的文字、@、回复关系和媒体类型占位符并入同一条当前用户事件；普通文本、图片和语音消息不会额外发起请求。
 
 | 字段 | 默认值 | 说明 |
 | --- | ---: | --- |
 | `enabled` | `true` | 关闭后不读取正文，保留原有转发卡片行为。 |
 | `maxNodes` | `30` | 单条转发最多读取的节点数。 |
-| `maxCharacters` | `8000` | 注入当前事件的最大字符数。 |
+| `maxCharacters` | `2000` | 注入当前事件的最大字符数。 |
 | `maxDepth` | `3` | 嵌套合并转发的最大展开层数。 |
 
 读取失败、资源标识缺失或达到预算时会保留占位事实，不根据卡片摘要猜测正文。转发节点中的第三方发言属于“被转交内容”，不会自动创建参与者或绕过现有白名单。
-| `narrativeRetryDelaySeconds` / `narrativeRetryMaxAttempts` | 叙事服务失败后的重试节奏。 |
+| `narrativeRetryDelaySeconds` / `narrativeRetryMaxAttempts` | 叙事服务失败后的重试节奏，默认等待 15 秒、最多 6 次。 |
 | `cancelDelayedRepliesOnUserMessage` | 是否同时取消普通延迟回复和跨关系计划；未发送的 `<sep/>` 分段始终会被新消息截断。 |
 | `minimumDelayedReplySeconds` / `maximumDelayedReplyMinutes` | 模型允许计划的延迟范围。 |
-| `maxScriptCharacters` / `maxMessageCharacters` | 单回合剧本和单条可见消息的字符上限。 |
+| `maxScriptCharacters` / `maxMessageCharacters` | 单回合剧本和单条可见消息的字符上限，默认分别为 1400 / 1500。 |
 
 ### 5.3 分段消息
 
@@ -287,8 +288,8 @@ Embedding 地址留空时，插件会尝试从标准 `/chat/completions` 地址�
 | `minimumAdvanceMinutes` | 手动推进在没有到期任务时需要的最小时间差。 |
 | `allowProactiveMessages` | 是否允许无新消息时产生可见主动联系。 |
 | `proactiveWillingnessThreshold` | 主模型主动联系意愿门槛。 |
-| `contextEntryLimit` | 写入主叙事上下文的近期原始剧本条目数，默认 `35`。小模型可调小（如 `15`）——低于 35 的设置真实生效（旧版的 35 硬地板已移除）。 |
-| `contextTimeWindowMinutes` | 与条目数取并集的时间窗口，默认 `45` 分钟（窗口内条目全部并入，上限 500）；`0` 关闭。小模型收缩上下文时需与条数一起调小或关闭。 |
+| `contextEntryLimit` | 写入主叙事上下文的近期原始剧本条目数，默认 `17`。小模型可调小（如 `15`）——低于默认值的设置真实生效（旧版的 35 硬地板已移除）。 |
+| `contextTimeWindowMinutes` | 与条目数取并集的时间窗口，默认 `6` 分钟（窗口内条目全部并入，上限 500）；`0` 关闭。小模型收缩上下文时需与条数一起调小或关闭。 |
 | `memoryLimit` | 主叙事携带的长期事实数量。 |
 
 ### 5.5 承诺回访的调度终止
@@ -495,9 +496,9 @@ Alter 模型由上方 `useForAlter` 选择。`temperature`、`topP`、`maxTokens
 
 以她本人身份发说说/评论/点赞（经 SnowLuma 的 qzone 扩展动作；需连接在线）。默认关闭；高频会被 Qzone 风控，保持保守上限。启用后可用 `interlude.qzone <内容>` 直接发说说；满足运行条件时，叙事会自动读取好友动态，并在限流内执行模型安排的发帖、评论和点赞意图。键：`enabled`（false）、`dailyPostCap`（3）、`dailyCommentCap`（6）、`dailyLikeCap`（12）、`minIntervalMinutes`（90，跨类型共享）、`feedWindowMinutes`（120，好友动态只消费窗口内新鲜说说）。设计见 `docs/QZONE_FEED_DESIGN.md`。
 
-## 19. presetSync：预设同步（【扩展 19】）
+## presetSync：预设同步（Console 首位，可选入口）
 
-从 typ0-site 分享站拉取并应用预设，默认关闭。分享码可在预设详情页获取；模型连接凭据不属于此同步分区。
+从 [typ0.space](https://typ0.space) 直接拉取并应用角色人设/配置，默认关闭。分享码可在站点的人设/预设详情页获取；模型连接凭据不属于此同步分区。
 
 | 键 | 默认 | 说明 |
 | --- | --- | --- |
@@ -523,13 +524,13 @@ Alter 模型由上方 `useForAlter` 选择。`temperature`、`topP`、`maxTokens
 | `skipFantasyWorld` | `false` | 手动开关：架空世界（异世界/精灵/幻想设定）跳过天气注入。 |
 | `cadenceMinutes` | `30` | 拉取间隔（分钟）。注入为纯数据格式（如"环境：22°C 小毛毛雨。"），不带建议句。 |
 
-## 20. blindMode：盲区模式（【维护 20】）
+## 19. blindMode：盲区模式（【维护 19】）
 
 开启 `blindMode.enabled` 后，HDSI 不注册自己的管理指令，并静默拦截当前 Koishi 实例中所有已经识别的指令；普通聊天仍会进入叙事。HDSI 的普通运行日志、错误详情和消息预览都会隐藏，只按 `healthReportMinutes` 输出一次不含故事或账户内容的运行状态心跳；其它插件仍遵循各自的日志配置。
 
 它适合追求高度沉浸感，并且模型、账号白名单和故事档案已经稳定正常的环境。关闭此模式需要在 Console 修改配置并重载插件；失明模式开启期间无法通过聊天指令恢复管理能力。旧 `blackBox` 配置仍可兼容读取，但 Console 只显示 `blindMode`。
 
-## 21. logging：日志（【维护 21】）
+## 20. logging：日志（【维护 20】）
 
 | 字段 | 说明 |
 | --- | --- |

@@ -8,7 +8,7 @@ declare module 'koishi' {
     }
 }
 export declare const name = "hds-interlude";
-export declare const version = "1.0.1-rc56";
+export declare const version = "1.0.1-rc57";
 export declare const inject: {
     required: string[];
     optional: string[];
