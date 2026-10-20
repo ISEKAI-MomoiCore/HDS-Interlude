@@ -1,5 +1,22 @@
 # 更新记录
 
+## 下一版（未发布，Issue #10 修复批次）
+
+修复主动消息在 proactive-check 相位被静默撤回、且剧本与意图按"已发出"继续推进的问题。
+
+### 主要变更
+
+- **根因 A：host 合成 Agency 候选（Issue #10）**：proactive-check（intent-due）相位下，模型已按契约把消息写进 `interaction.reply(mode=immediate)` 但 `proactiveContact` 缺失或不规范时，不再以 `no-agency-candidate` 整条静默撤回——host 合成 `send-now` 候选，全部真实风控（容量窗口/日上限/端点门/全局开关）照常生效，仅意愿门对合成候选跳过（`interaction.reply` 本身即"现在发"的声明，无意愿数值可依据）。参与者不在白名单时合成失败，回落既有撤回行为；审计日志标记 `候选=host合成`；配额预记（ref）与失败作废语义不变。容量/端点等真实拦截照旧撤回并安排重查，撤回原因从 `no-agency-candidate` 变为真实风控原因。
+- **根因 B：撤回轮意图中和注记（Issue #10）**：本轮可见投递被撤回时，同一轮新写、指向同一参与者的模型意图（提醒/余波/后续）此前会带着"已发出"的中毒前提进入后续 `dueIntents`。现在按"本轮创建 + 参与者一致"圈定风险集，注入显式注记（summary 尾缀"［注：同轮拟发送消息从未发出…］"+ `payload.sendWithdrawnTurn`）；不删除、不改 status，到期轮次由模型结合注记自行决断；幂等不叠加。
+- **根因 C：`minimumProactiveIntervalMinutes` 描述修正（Issue #10）**：实现自始以"距她上次向该参与者发出任何消息（含普通回复）"计时（`lastCharacterMessageAt`），与旧描述"两次主动联系之间"不符。按用户决策保持实现不变，配置描述改为如实描述；natural 模式的 `naturalMinimumIntervalMinutes` 取小行为不变。
+- **`saveWebObservation` 主键回归 AUTOINCREMENT + 观察失败域收窄（Issue #14）**：落库 candidate 此前硬编码 `id: 0`，首次占用 0 后第 2 次网页观察必然 `UNIQUE constraint failed`，异常沿即时观察落库点直穿 `flushBufferedNarrative` 外层 catch——整轮已生成的回复被丢弃并排重试，日志仅见"合并写作任务失败"无法定位。修复三处：① candidate 不再携带 id，交给 `autoInc`（内存 persist=false 路径保留占位 id:0，无消费方）；② 即时观察落库抽为 `persistImmediateObservations`，单条失败降级为 warn 并继续其余观察——旁路增强信息不再拥有否决整轮回复的权力；③ 延迟浏览意图 `executeDeferredBrowserIntent` 执行失败按失败完成（intent 标 completed），杜绝"每个 sweep 重撞一次"的 pending 无限重试。核查确认全库仅此一处 `id: 0` 硬编码、无第二写入路径、无 id 值消费方（observationId 均取落库返回值），无需数据迁移。
+
+### 验证
+
+- 新增 `test/issue-10-proactive-withdrawal.test.ts`：A1 合成放行（消息进入投递 + 配额 ref + 审计标记）、A2 真实风控拦截（真实原因撤回 + 重查 + 同轮意图注记 + 幂等 + 无关参与者不动）、A3 白名单外回落旧行为。
+- 新增 `test/issue-14-web-observation.test.ts`：连续落库自增不冲突且 candidate 无 id、persist=false 占位、落库失败逐条降级不上抛、延迟意图失败按失败完成。
+- 全量 `npm test`：921 通过 / 0 失败 / 4 跳过（既有真实 API 项）；`npm run typecheck` 通过。
+
 ## 1.0.1-rc57（2026-10-17，发布候选）
 
 RC57 在 rc56 发布包基础上完成配置面、Overlay 演化层、部署向导和发布产物同步。源码、类型声明、bundle、文档与安装包版本统一为 `1.0.1-rc57`。

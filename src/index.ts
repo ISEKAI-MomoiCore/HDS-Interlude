@@ -276,7 +276,7 @@ const SchedulePreplan: Schema<SchedulePreplanConfig> = Schema.object({
 const Agency: Schema<AgencyConfig> = Schema.object({
   enabled: Schema.boolean().default(false).description('启用主体行动窗口。它只判断日程、隐私、设备和生活来源的联系理由，不读取或复用 Alter 情绪值。'),
   maxWindowMinutes: Schema.natural().min(5).max(1_440).default(240).description('一张 Agency Window 最长有效时间；过期后必须由新的生活回合重新判断。'),
-  minimumProactiveIntervalMinutes: Schema.natural().min(0).max(10_080).default(60).description('同一参与者两次普通主动联系之间的安全间隔；承诺型联系可以绕过。'),
+  minimumProactiveIntervalMinutes: Schema.natural().min(0).max(10_080).default(60).description('距她上次向该参与者发出任何消息（含普通回复）的安全间隔；间隔内的普通主动联系会被拦下并安排重查，承诺型联系可以绕过。'),
   maxCandidateHours: Schema.natural().min(1).max(168).default(24).description('生活产生的主动联系候选最长保留时间；过期后自然放下。'),
   contactMode: Schema.union([
     Schema.const('strict').description('严格（默认）：现状行为——沉默本身不是理由，动机须落在她的生活事实上'),

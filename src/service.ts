@@ -4556,7 +4556,7 @@ export class InterludeService extends Service {
         // Persist a successful/failed immediate observation only after this
         // request has survived debounce invalidation. This keeps an obsolete
         // result from contaminating the next combined user turn.
-        for (const observation of immediateObservations) await this.persistCollectedWebObservation(observation)
+        await this.persistImmediateObservations(current, currentParticipant.id, immediateObservations, 'user-message')
         if (early.delivered && !succeeded) {
           await this.appendEntry(current.id, {
             kind: 'stream-finalization-failed', actor: 'system',
@@ -5787,6 +5787,11 @@ export class InterludeService extends Service {
       )
     }
     const resolvedConsequences = await this.applyIntentUpdates(story.id, decision.intentUpdates, now, participant?.id)
+    // Issue #10 根因 B：记录本轮新意图的 id 上界。若本轮稍后发生可见投递撤回
+    //（Agency/策略拦截），以此圈定"以已发出为前提"的同轮新意图做中和注记
+    //（annotateWithdrawnTurnIntents）——它们 otherwise 会带着中毒前提进入后续
+    // dueIntents（summary 与 payload 都会再进 prompt）。
+    const turnIntentIdCeiling = Number(((await this.dbGet('interlude_intent', { storyId: story.id }, { sort: { id: 'desc' }, limit: 1 }))[0] as NarrativeIntent | undefined)?.id ?? 0)
     for (const memory of decision.memories) await this.appendMemory(story.id, memory, now, memory.participantId ?? participant?.id ?? '', scriptEntry?.id)
     for (const intent of decision.intents) {
       // A reminder or promise created while handling a user's message is a
@@ -5882,6 +5887,32 @@ export class InterludeService extends Service {
           scriptEntry?.id,
         )
         if (isAgencyCheck && agencyCandidate?.participantId !== participant?.id) agencyCandidate = undefined
+        // Issue #10 根因 A：proactive-check 相位模型已按契约把话写进
+        // interaction.reply(mode=immediate)，但 proactiveContact 缺失或写得
+        // 不规范时，此前整条已写好的可见回复以 no-agency-candidate 被静默
+        // 撤回——reply 本身就是模型对"现在发"的明确声明，系统在此之上要求
+        // 第二次同义声明，缺失时选择丢弃而非放行。host 在此合成 send-now
+        // 候选：全部真实风控（容量/日上限/端点/全局开关）照常全过，仅意愿
+        // 门跳过（合成路径没有意愿数值可依据）；normalize 校验照走，参与者
+        // 不在白名单则合成失败、回落既有撤回行为。
+        let synthesizedAgencyCandidate = false
+        if (isAgencyCheck && !agencyCandidate && participant
+          && decision.interaction?.reply?.mode === 'immediate' && decision.interaction.reply.content) {
+          const synthesized = normalizeProactiveContact({
+            participantId: participant.id,
+            origin: 'life-event',
+            motive: 'Host-synthesized candidate: the authored immediate reply is the send-now declaration itself.',
+            disclosure: 'ordinary',
+            outcome: 'send-now',
+            ...(scriptEntry?.id ? { sourceEntryIds: [scriptEntry.id] } : {}),
+          }, now, this.agencyConfig, permittedParticipantIds, validSourceEntryIds, scriptEntry?.id)
+          if (synthesized) {
+            agencyCandidate = synthesized
+            synthesizedAgencyCandidate = true
+            this.reportOperation('standard', 'info', story, phase,
+              'Agency 候选由 host 合成（interaction.reply 已就绪但 proactiveContact 缺失） 参与者=%s', participant.id)
+          }
+        }
         if (agencyCandidate && agencyWindow) {
           const target = allParticipants.find(item => item.id === agencyCandidate!.participantId)
           // 联系温度：natural/balanced 只放宽意愿阈值与安全间隔；Urge 爆发间隔
@@ -5902,7 +5933,9 @@ export class InterludeService extends Service {
           )
           const willingness = agencyCandidate.willingness ?? 0
           const willingnessThreshold = modeRelaxed ? this.agencyConfig.naturalWillingnessThreshold! : (this.effectiveUrgeRuntime.proactiveWillingnessThreshold ?? 0.65)
-          const willingnessPasses = willingness >= willingnessThreshold
+          // 合成候选（Issue #10 根因 A）无意愿数值：interaction.reply(immediate)
+          // 即"现在发"的声明本身，意愿门不重复设卡；其余风控照常生效。
+          const willingnessPasses = synthesizedAgencyCandidate || willingness >= willingnessThreshold
           // 每日上限（全模式）：防自然模式下的高频打扰；触顶不排重查，交由下一次推进自然判断。
           const dailyCap = Math.max(0, this.agencyConfig.proactiveDailyCap ?? 3)
           const capPasses = dailyCap <= 0 || countProactiveContactsInWindow(state.proactiveContactLog, agencyCandidate.participantId, now) < dailyCap
@@ -5967,13 +6000,14 @@ export class InterludeService extends Service {
             }
           }
           this.reportOperation('standard', 'info', story, phase,
-            'Agency 主动联系判断 参与者=%s 结果=%s 原因=%s 意愿=%s 阈值=%s 模式=%s',
+            'Agency 主动联系判断 参与者=%s 结果=%s 原因=%s 意愿=%s 阈值=%s 模式=%s%s',
             agencyCandidate.participantId,
             agencyAllowsSend ? '立即联系' : agencyRecheck ? '稍后重查' : '自然放下',
             agencyEndpointReason ?? capacity.reason,
             willingness.toFixed(2),
             willingnessThreshold.toFixed(2),
-            this.agencyConfig.contactMode)
+            this.agencyConfig.contactMode,
+            synthesizedAgencyCandidate ? ' 候选=host合成' : '')
         }
         if (agencyWindow) {
           this.reportOperation('diagnostic', 'debug', story, phase,
@@ -6075,6 +6109,9 @@ export class InterludeService extends Service {
           ? 'proactive-messages-not-allowed'
           : agencyBlockReason ?? (agencyCandidate ? 'not-selected-by-agency' : 'no-agency-candidate')
         await this.recordWithdrawnOutgoingEvents(story, withdrawn, commit, scriptEntry, reason, now, phase)
+        await this.annotateWithdrawnTurnIntents(story, turnIntentIdCeiling,
+          new Set([...(decision.droppedProactiveActions ?? []).map(item => item.participantId), ...withdrawn.map(item => item.participantId)]
+            .filter(id => !!id && !id.startsWith('group:'))), reason, now)
       }
       // 解析层丢弃补偿：意愿门丢掉的主动行动从未生成事件（commit 构建在
       // 归一化之后），无账本可撤——只补"从未发送"历史条目。不传 commit，
@@ -6117,6 +6154,7 @@ export class InterludeService extends Service {
             ? agencyBlockReason ?? (agencyCandidate ? 'not-selected-by-agency' : 'no-agency-candidate')
             : 'proactive-delayed-reply-not-scheduled'
         await this.recordWithdrawnOutgoingEvents(story, withdrawn, commit, scriptEntry, reason, now, phase)
+        await this.annotateWithdrawnTurnIntents(story, turnIntentIdCeiling, new Set([participant.id]), reason, now)
       }
     }
     const approvedAutomaticOutgoingActions = phase === 'advance'
@@ -6680,7 +6718,15 @@ export class InterludeService extends Service {
    * blocks later dialogue or background life updates. */
   private async executeDeferredBrowserIntent(story: InterludeStory, intent: NarrativeIntent, now: Date) {
     const payload = browserIntentFromPayload(intent.payload)
-    const observation = await this.collectWebObservation(story, payload, intent.participantId, intent.id, now)
+    let observation: WebObservation | undefined
+    try {
+      observation = await this.collectWebObservation(story, payload, intent.participantId, intent.id, now)
+    } catch (error) {
+      // Issue #14：观察执行/落库失败不得让 browser intent 永远停在 pending
+      //（那会变成每个 sweep 重撞一次的无限重试）。按失败完成并留可定位日志。
+      this.reportOperation('standard', 'warn', story, 'advance',
+        '延迟网页观察执行失败，意图按失败完成 意图=%s 错误=%s', intent.id, error instanceof Error ? error.message : String(error))
+    }
     await this.dbSet('interlude_intent', { id: intent.id }, { status: 'completed', updatedAt: new Date() })
     return observation
   }
@@ -6758,12 +6804,15 @@ export class InterludeService extends Service {
   }
 
   private async saveWebObservation(storyId: string, participantId: string, intentId: number | null, mode: 'search' | 'visit', query: string, url: string, title: string, excerpt: string, summary: string, status: WebObservation['status'], now: Date, persist = true): Promise<WebObservation> {
-    const candidate: WebObservation = {
-      id: 0, storyId, participantId, intentId, mode, query: clip(query, 500), url: clip(url, 2_000), title: clip(title, 500),
+    // Issue #14：主键交给 AUTOINCREMENT。此前 candidate 硬编码 id:0——首次落库
+    // 占用 0 后，第 2 次起必然 UNIQUE constraint failed 并沿调用链炸掉整轮
+    // 已生成的回复。内存路径（persist=false）仍带占位 id:0，无消费方读取。
+    const candidate: Omit<WebObservation, 'id'> = {
+      storyId, participantId, intentId, mode, query: clip(query, 500), url: clip(url, 2_000), title: clip(title, 500),
       excerpt: clip(excerpt, this.browserConfig.maxExcerptCharacters), summary: clip(summary, this.browserConfig.maxExcerptCharacters),
       status, accessedAt: now, createdAt: now,
     }
-    if (!persist) return candidate
+    if (!persist) return { ...candidate, id: 0 }
     const observation = await this.dbCreate('interlude_web_observation', candidate) as WebObservation
     await this.appendEntry(storyId, {
       kind: 'web-observation', actor: 'system',
@@ -6782,6 +6831,20 @@ export class InterludeService extends Service {
       observation.query, observation.url, observation.title, observation.excerpt, observation.summary,
       observation.status, observation.accessedAt,
     )
+  }
+
+  /** Issue #14：网页观察是旁路增强信息——单条落库失败只降级为 warn 并继续
+   * 其余观察，绝不否决本轮已生成、可能已计费的回复投递。抽成独立方法以便
+   * 直接回归（dbCreate 注入抛错 → 不上抛、逐条继续、留下可定位日志）。 */
+  private async persistImmediateObservations(story: InterludeStory, participantId: string, observations: WebObservation[], phase: NarrativeRequest['phase']) {
+    for (const observation of observations) {
+      try {
+        await this.persistCollectedWebObservation(observation)
+      } catch (error) {
+        this.reportOperation('standard', 'warn', story, phase,
+          '网页观察落库失败（已跳过该条，不影响本轮回复） 参与者=%s 错误=%s', participantId, error instanceof Error ? error.message : String(error))
+      }
+    }
   }
 
   private async findCachedWebObservation(storyId: string, participantId: string, draft: BrowserIntentDraft, now: Date) {
@@ -7802,6 +7865,39 @@ export class InterludeService extends Service {
         },
       }, now, participantId)
     })
+  }
+
+  /** Issue #10 根因 B：本轮可见投递被整体撤回时，同一轮新写、指向同一参与者
+   * 的模型意图（提醒/余波/后续）可能携带"已发出"的中毒前提进入后续轮次——
+   * dueIntents 的 summary 与 payload 都会再进 prompt，而剧本正文里的既成叙述
+   * 不会回改。host 无法语义判别哪些意图预设了发送，按"本轮创建 + 参与者与
+   * 被撤回行动一致"圈定风险集，注入显式中和注记：不删除、不改 status，到
+   * 期轮次仍由模型结合注记自行决断。幂等：已注记的意图不重复加尾缀。 */
+  private async annotateWithdrawnTurnIntents(
+    story: InterludeStory,
+    turnIntentIdCeiling: number,
+    participantIds: ReadonlySet<string>,
+    reason: string,
+    now: Date,
+  ) {
+    if (!participantIds.size) return
+    const rows = await this.dbGet('interlude_intent', {
+      storyId: story.id, status: 'pending', id: { $gt: turnIntentIdCeiling }, participantId: { $in: [...participantIds] },
+    }) as NarrativeIntent[]
+    let annotated = 0
+    for (const intent of rows) {
+      if (isRecord(intent.payload) && intent.payload.sendWithdrawnTurn) continue
+      await this.dbSet('interlude_intent', { id: intent.id }, {
+        summary: `${intent.summary}［注：同轮拟发送消息从未发出（${clip(reason, 80)}），不要假定对方已收到］`,
+        payload: { ...(isRecord(intent.payload) ? intent.payload : {}), sendWithdrawnTurn: clip(reason, 200), sendWithdrawnAt: now.toISOString() },
+        updatedAt: now,
+      })
+      annotated += 1
+    }
+    if (annotated) {
+      this.reportOperation('standard', 'info', story, 'advance',
+        '已为同轮新意图注入未发送中和注记 数量=%d 参与者=%s 原因=%s', annotated, [...participantIds].join(','), clip(reason, 120))
+    }
   }
 
   /** Agency/策略拦截补偿：未进入投递管线的私聊行动统一记为 cancelled，
