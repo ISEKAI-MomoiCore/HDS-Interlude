@@ -11,7 +11,7 @@ const now = new Date('2026-09-09T12:00:00Z')
 test('Console sections follow the documented setup order', () => {
   assert.deepEqual(Object.keys(Config.dict), [
     'presetSync', 'storyDefaults', 'model', 'onebot', 'sharedStory', 'runtime', 'urge', 'schedulePreplan', 'timelineDirector', 'agency',
-    'chatActions', 'stickers', 'memory', 'alterSystem', 'browser', 'worldSeeder', 'weather', 'longHorizon', 'qzone', 'blindMode', 'logging', 'mainPrompt', 'chatRhythm',
+    'chatActions', 'stickers', 'memory', 'alterSystem', 'browser', 'worldSeeder', 'weather', 'longHorizon', 'qzone', 'blindMode', 'logging', 'modelCapture', 'mainPrompt', 'chatRhythm',
   ])
   // 分类前缀让配置页按 必填→结构→节奏→表达→内在→扩展→维护 分组可读。
   const headers = Object.values(Config.dict).map((item: any) => String(item.meta?.description ?? ''))
@@ -28,6 +28,7 @@ test('Console sections follow the documented setup order', () => {
   assert.match(headers[18], /^【扩展 18】QQ 空间/)
   assert.match(headers[19], /^【维护 19】/)
   assert.match(headers[20], /^【维护 20】/)
+  assert.match(headers[21], /^【维护 21】/)
 })
 
 test('chat actions are opt-in and platform-scoped', () => {
@@ -56,6 +57,12 @@ test('Blind Mode defaults to a minimal ten-minute heartbeat', () => {
   assert.deepEqual(resolveBlindModeConfig({ enabled: true, healthReportMinutes: 2 }), { enabled: true, healthReportMinutes: 2 })
 })
 
+test('main-narrative fine-tuning capture stays opt-in with a local JSONL directory', () => {
+  const modelCapture = Config.dict.modelCapture.dict
+  assert.equal(modelCapture.enabled.meta.default, false)
+  assert.equal(modelCapture.directory.meta.default, 'data/hds-interlude/model-capture')
+})
+
 test('ignored compatibility switches stay out of the active Console', () => {
   assert.equal('enabled' in Config.dict.sharedStory.dict, false)
   assert.equal('pauseAfterConversationMinutes' in Config.dict.runtime.dict, false)
@@ -65,7 +72,7 @@ test('ignored compatibility switches stay out of the active Console', () => {
 
 test('runtime and plugin exports share one version constant', () => {
   assert.equal(version, HDS_INTERLUDE_VERSION)
-  assert.equal(version, '1.0.1-rc57')
+  assert.equal(version, '1.0.1-rc58')
 })
 
 test('layered colored logs are the Console default and remain optional', () => {
@@ -312,7 +319,7 @@ test('visible Console section numbers are unique and continuous', () => {
     const match = String(item.meta?.description ?? '').match(/^【[^】]+ (\d+)】/)
     return match ? [Number(match[1])] : []
   })
-  assert.deepEqual(numbers, Array.from({ length: 20 }, (_, index) => index + 1))
+  assert.deepEqual(numbers, Array.from({ length: 21 }, (_, index) => index + 1))
 })
 
 test('candidate reveal description distinguishes inactive, vague and revealed candidates', () => {

@@ -1,6 +1,6 @@
 import type { NarrativeDecision, NarrativePhase } from '../types';
 import { type AuthoredAction } from './authored-actions';
-import { ScriptCommitDraft, ScriptDeliveryMode, ScriptEventDraft } from './contract';
+import { ScriptActionBinding, ScriptCommitDraft, ScriptDeliveryMode, ScriptEventDraft } from './contract';
 export interface ScriptFirstDecisionInput {
     storyId: string;
     participantId?: string;
@@ -23,8 +23,12 @@ export interface ScriptFirstDecisionInput {
 export declare function decisionToScriptCommit(input: ScriptFirstDecisionInput): ScriptCommitDraft;
 export declare function findPrivateOutgoingMessageEvent(commit: ScriptCommitDraft, participantId: string, mode?: ScriptDeliveryMode, content?: string, separator?: string): ScriptEventDraft;
 export declare function findGroupScriptEvent(commit: ScriptCommitDraft): ScriptEventDraft;
-/** Bind an immediate transport action to the unique literal message text in
- * the current script without interpreting prose or adding another model task.
- * Ambiguous/missing text stays diagnostic and never rewrites the script. */
-export declare function bindImmediateMessageAction(prose: string, bubbles: string[], actions?: AuthoredAction[]): any;
+/** Bind an immediate transport action to the literal message text in the
+ * current script without interpreting prose or adding another model task.
+ * Candidates are tiered: a complete quoted segment (“早”/「早」) outranks a
+ * bare standalone occurrence, and occurrences inside other words (今早/早饭)
+ * never qualify. Equal-tier duplicates stay unbound — the prose mentions the
+ * same text twice without singling out a send — while a quote-anchored match
+ * beside weaker decoys binds (issue #15: 单字问候被词内巧合否决)。 */
+export declare function bindImmediateMessageAction(prose: string, bubbles: string[], actions?: AuthoredAction[]): ScriptActionBinding;
 export declare function unboundImmediateMessageEvents(commit: ScriptCommitDraft): ScriptEventDraft[];

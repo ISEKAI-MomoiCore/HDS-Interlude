@@ -1,4 +1,5 @@
 import { Context, Logger } from 'koishi'
+import { captureEndpointHost, type MainCaptureSink, sanitizeCapturedMessages } from './capture'
 import { anthropicBody, anthropicHeaders, anthropicResponse, requestAnthropicStreaming } from './anthropic'
 import { geminiInteractionsBody, geminiInteractionsHeaders, geminiInteractionsResponse } from './gemini-interactions'
 import { describeHttpError, postJsonViaProxy, withProviderStream } from './http-proxy'
@@ -264,6 +265,8 @@ interface ChatRequestOverrides {
   maxTokens?: number
   timeout?: number
   responseFormat?: ProviderResponseFormat
+  /** 采集元数据：decide() 重试循环中的第几次尝试（1 起）。只进采集记录，不进请求体。 */
+  attemptIndex?: number
 }
 
 export class SilentNarrator implements NarrativeProvider {
@@ -372,7 +375,7 @@ export class OpenAICompatibleNarrator implements NarrativeProvider {
   private readonly logger?: Logger
   private readonly routing: ModelRoutingTable
 
-  constructor(private ctx: Context, private config: ModelConfig, silentLogs = false, private onUsage?: (record: TokenUsageRecord) => void, routing?: ModelRoutingTable) {
+  constructor(private ctx: Context, private config: ModelConfig, silentLogs = false, private onUsage?: (record: TokenUsageRecord) => void, routing?: ModelRoutingTable, private captureSink?: MainCaptureSink) {
     // Context-bound loggers are registered with Koishi's logger service;
     // constructing Logger directly can bypass Console/runtime log targets.
     if (!silentLogs) this.logger = ctx.logger('hds-interlude')
@@ -430,7 +433,7 @@ export class OpenAICompatibleNarrator implements NarrativeProvider {
         }
         for (let attempt = 1; attempt <= attempts; attempt++) {
           try {
-            const decision = await this.requestProvider(provider, requestWithEarlyReply, overrides, usages, '主叙事')
+            const decision = await this.requestProvider(provider, requestWithEarlyReply, { ...overrides, attemptIndex: attempt }, usages, '主叙事')
             // A provider that recovers should be eligible immediately; do not
             // retain an earlier failure's cooldown after a successful response.
             this.cooldownUntil.delete(providerKey(provider))
@@ -449,7 +452,7 @@ export class OpenAICompatibleNarrator implements NarrativeProvider {
               && /invalid JSON|Unterminated|Unexpected token|empty response|输出未完成|incomplete/i.test(detail)) {
               this.logger?.warn?.('主叙事疑似被思考预算截断(%s),去掉 max_tokens 重试一次', detail.slice(0, 160))
               try {
-                const retried = await this.requestProvider(provider, requestWithEarlyReply, { ...overrides, maxTokens: 0 }, usages, '主叙事')
+                const retried = await this.requestProvider(provider, requestWithEarlyReply, { ...overrides, maxTokens: 0, attemptIndex: attempt }, usages, '主叙事')
                 this.cooldownUntil.delete(providerKey(provider))
                 return retried
               } catch (retryError) {
@@ -958,8 +961,14 @@ export class OpenAICompatibleNarrator implements NarrativeProvider {
   }
 
   private async requestProvider(provider: ProviderConfig, request: NarrativeRequest, overrides: ChatRequestOverrides = {}, usages: TokenUsageRecord[] = [], task = '主叙事'): Promise<NarrativeDecision> {
+    const captureStartedAt = Date.now()
     const cacheFirstPayload = this.config.mainPayloadOrder === 'cache-first'
-    const collect = (raw: unknown) => this.collectUsage(usages, task, provider, overrides.model || provider.model, raw)
+    let capturedUsage: TokenUsageRecord | undefined
+    const collect = (raw: unknown) => {
+      const before = usages.length
+      this.collectUsage(usages, task, provider, overrides.model || provider.model, raw)
+      if (usages.length > before) capturedUsage = usages[usages.length - 1]
+    }
     const payload = JSON.stringify(toPromptPayload(request, { cacheFirst: cacheFirstPayload }))
     const streamingEarlyReply = this.config.mainStreamingMode === 'experimental'
       && request.phase === 'user-message'
@@ -1044,6 +1053,32 @@ export class OpenAICompatibleNarrator implements NarrativeProvider {
       this.logger?.debug('叙事模型返回了无效 JSON：%s 原文(截断)=%s', error, text.slice(0, 800))
       throw new Error('Narrative provider returned invalid JSON.')
     }
+    // 微调数据采集：只记录解析成功的往返（HTTP 失败/无效 JSON 在到达前已抛出，
+    // 符合"报错即弃"策略）。写盘异步进行，任何失败都不得影响叙事结果。
+    if (this.captureSink) {
+      try {
+        const maxTokens = (overrides.maxTokens ?? provider.maxTokens) > 0 ? overrides.maxTokens ?? provider.maxTokens : undefined
+        this.captureSink.record({
+          capturedAt: new Date().toISOString(),
+          task: 'main',
+          phase: request.phase,
+          storyId: request.story.id,
+          participantId: request.participant?.id ?? null,
+          provider: { id: provider.id, label: provider.label, model: overrides.model || provider.model, host: captureEndpointHost(provider.endpoint) },
+          attemptIndex: overrides.attemptIndex,
+          latencyMs: Date.now() - captureStartedAt,
+          request: {
+            messages: sanitizeCapturedMessages(requestBody.messages),
+            responseFormat: (overrides.responseFormat ?? provider.responseFormat) || 'prompt-only',
+            temperature: overrides.temperature ?? provider.temperature,
+            topP: overrides.topP ?? provider.topP,
+            maxTokens,
+          },
+          responseText: text,
+          usage: capturedUsage ? { inputTokens: capturedUsage.inputTokens, outputTokens: capturedUsage.outputTokens, cachedInputTokens: capturedUsage.cachedInputTokens } : undefined,
+        })
+      } catch { /* 采集失败不影响已成功的叙事。 */ }
+    }
     // Observability must not fail a valid generation or activate provider retry.
     try {
       const previous = request.recentEntries.filter(entry => entry.kind === 'script' && entry.occurredAt <= request.from).at(-1)
@@ -1056,10 +1091,10 @@ export class OpenAICompatibleNarrator implements NarrativeProvider {
   }
 }
 
-export function createNarrator(ctx: Context, config: ModelConfig, silentLogs = false, onUsage?: (record: TokenUsageRecord) => void, routing?: ModelRoutingTable): NarrativeProvider {
+export function createNarrator(ctx: Context, config: ModelConfig, silentLogs = false, onUsage?: (record: TokenUsageRecord) => void, routing?: ModelRoutingTable, captureSink?: MainCaptureSink): NarrativeProvider {
   const resolved = routing ?? resolveModelRouting(config)
   return resolved.main.available
-    ? new OpenAICompatibleNarrator(ctx, config, silentLogs, onUsage, resolved)
+    ? new OpenAICompatibleNarrator(ctx, config, silentLogs, onUsage, resolved, captureSink)
     : new SilentNarrator()
 }
 

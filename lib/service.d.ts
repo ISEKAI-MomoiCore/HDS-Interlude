@@ -4,6 +4,7 @@ import { type EndpointRow, type StoryAliasRecord } from './endpoints';
 import { HealthMonitor } from './health';
 import { UrgeConfig } from './urge';
 import { ModelConfig } from './narrator';
+import { ModelCaptureConfig } from './capture';
 import { GroupWillingnessConfig } from './group-willingness';
 /** Koishi/Satori uses numeric Universal.Status values; keep legacy string adapters compatible. */
 export declare function isBotOnlineStatus(status: unknown): boolean;
@@ -128,6 +129,8 @@ export interface Config {
     agency?: AgencyConfig;
     urge?: UrgeConfig;
     schedulePreplan?: SchedulePreplanConfig;
+    /** 实验性：主叙事微调数据采集（原始输入/输出 JSONL）；盲模式下强制关闭。 */
+    modelCapture?: ModelCaptureConfig;
 }
 export interface BlindModeConfig {
     enabled: boolean;
@@ -526,6 +529,7 @@ export declare class InterludeService extends Service {
     private cachedAgencyConfig?;
     private cachedSchedulePreplanConfig?;
     private cachedBlindModeConfig?;
+    private cachedModelCaptureConfig?;
     /** P3: Console 健康面板的内存滚动指标（重载后归零）。 */
     readonly health: HealthMonitor;
     /** Token 用量到达时可能尚未有 canonical story——用最近活跃的 storyId 记账。
@@ -1090,6 +1094,7 @@ export declare class InterludeService extends Service {
     private get agencyConfig();
     private get schedulePreplanConfig();
     private get blindModeConfig();
+    private get modelCaptureConfig();
     private emotionalOffsetForPrompt;
     private updateAlterSystem;
     private scheduleAlterAnalysis;
@@ -1138,6 +1143,10 @@ export declare class InterludeService extends Service {
      * final narrator result survives the stale-request check. This prevents an
      * obsolete two-second message burst from leaving a durable web event behind. */
     private persistCollectedWebObservation;
+    /** Issue #14：网页观察是旁路增强信息——单条落库失败只降级为 warn 并继续
+     * 其余观察，绝不否决本轮已生成、可能已计费的回复投递。抽成独立方法以便
+     * 直接回归（dbCreate 注入抛错 → 不上抛、逐条继续、留下可定位日志）。 */
+    private persistImmediateObservations;
     private findCachedWebObservation;
     private withBrowserSlot;
     /** Persist a bounded retry so a transient provider failure cannot strand a user turn. */
@@ -1199,6 +1208,13 @@ export declare class InterludeService extends Service {
      * when an adapter fails after it has already accepted a request. */
     private confirmOutgoingDeliveries;
     private recordOutgoingDeliveryFailure;
+    /** Issue #10 根因 B：本轮可见投递被整体撤回时，同一轮新写、指向同一参与者
+     * 的模型意图（提醒/余波/后续）可能携带"已发出"的中毒前提进入后续轮次——
+     * dueIntents 的 summary 与 payload 都会再进 prompt，而剧本正文里的既成叙述
+     * 不会回改。host 无法语义判别哪些意图预设了发送，按"本轮创建 + 参与者与
+     * 被撤回行动一致"圈定风险集，注入显式中和注记：不删除、不改 status，到
+     * 期轮次仍由模型结合注记自行决断。幂等：已注记的意图不重复加尾缀。 */
+    private annotateWithdrawnTurnIntents;
     /** Agency/策略拦截补偿：未进入投递管线的私聊行动统一记为 cancelled，
      * 并追加明确的"从未发送"历史条目。deliveryReality 会把 cancelled 标注为
      * withdrawn，后续轮次的模型才能区分"想发"与"已发出"。 */

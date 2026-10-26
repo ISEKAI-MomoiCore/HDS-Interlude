@@ -2,6 +2,7 @@ import { Context, Schema, Session, h } from 'koishi'
 import { AudioConfig, CompactionConfig, DEFAULT_STYLE_PROMPT, EmbeddingConfig, FailoverConfig, ModelConfig, ProviderConfig, VisionConfig } from './narrator'
 import { BlindModeConfig, BrowserConfig, ChatActionsConfig, Config as InterludeConfig, extractSessionVoiceCount, GroupChatRule, InterludeService, LoggingConfig, MemoryConfig, OneBotAccountRule, OneBotNapCatConfig, RestWindow, RuntimeConfig, SharedStoryConfig, StickerLibraryConfig, StoryDefaults } from './service'
 import { AgencyConfig, AlterSystemConfig, ChatReactionName, ChatRhythmConfig, NativeFaceSemantic, StorySetting } from './types'
+import type { ModelCaptureConfig } from './capture'
 import { HDS_INTERLUDE_VERSION } from './meta'
 import { resolveAgencyConfig } from './agency'
 import { GroupWillingnessConfig } from './group-willingness'
@@ -534,6 +535,11 @@ const UrgeAdvanced = Schema.object({
   restMultiplier: Schema.number().min(.05).max(1).step(.05).default(.6).description('无节奏数据且在休息窗口时的兜底倍率（乘法因子，不再替换间隔）。0.6 = 推进密度打六折。'),
 }).collapse(true)
 
+const ModelCapture: Schema<ModelCaptureConfig> = Schema.object({
+  enabled: Schema.boolean().default(false).description('实验性：记录主叙事模型的原始输入与输出，作为微调数据。覆盖对话推进（用户消息、对话后续、到期意图）与自动推进全部回合；只保留解析成功的往返，HTTP 失败或无效 JSON 直接丢弃。文件包含完整聊天内容与剧本原文，仅写入本机目录；盲模式下此开关无效。'),
+  directory: Schema.path({ allowCreate: true, filters: ['directory'] }).default('data/hds-interlude/model-capture').description('采集文件输出目录；按天分文件 hdsi-capture-日期.jsonl，相对 Koishi 运行目录解析。'),
+}).collapse(true)
+
 export const Config: Schema<InterludeConfig> = Schema.object({
   presetSync: Schema.object({
     enabled: Schema.boolean().default(false).description('启用预设同步：从 typ0.space 直接拉取并应用角色人设与配置。需填写预设分享码；默认关闭。'),
@@ -599,6 +605,7 @@ export const Config: Schema<InterludeConfig> = Schema.object({
   }).collapse(true).description('【扩展 18】QQ 空间：说说/评论/点赞通道（需 SnowLuma；默认关闭）。'),
   blindMode: BlindMode.description('【维护 19】盲区模式：低频心跳的最小运行形态。'),
   logging: Logging.description('【维护 20】日志：级别、信息密度、布局和隐私预览。'),
+  modelCapture: ModelCapture.description('【维护 21】实验性：主叙事微调数据采集——原始输入/输出 JSONL 落盘（默认关闭）。'),
   mainPrompt: Schema.string().role('textarea').default('').description('⚠️ 除非有把握，否则不要修改。系统主提示词（主叙事行为指令）：与固定合约、文风和特化块协作，塑造全部回合的写作行为；留空使用内置默认，改动下回合立即生效，出问题清空即可恢复默认。'),
   chatRhythm: ChatRhythm.description('【已弃用】对话节奏：仅兼容旧配置，不再统计、干预写作或重试。').hidden(),
 })

@@ -1,4 +1,5 @@
 import { Context } from 'koishi';
+import { type MainCaptureSink } from './capture';
 import { type ContractTier, type ModelFamily, type SpecialtyProfile } from './specialization';
 import { AlterAnalysisDecision, AlterAnalysisRequest, AlterSystemConfig, ChatActionCapabilities, CompactionDecision, CompactionRequest, NarrativeContractFeatures, NarrativeDecision, NarrativeProvider, OverlayCompactionDecision, OverlayCompactionRequest, EarlyNarrativeReply, LongArcGuidanceRequest, NarrativeCompactor, NarrativeEmbedder, NarrativeImage, NarrativeRequest, SchedulePreplanProposal, SchedulePreplanReviewRequest, ScriptEntry, StickerCatalogEntry, TimelinePlan, TimelinePlanRequest } from './types';
 import { ModelRoutingTable } from './model-routing';
@@ -222,6 +223,7 @@ export declare class OpenAICompatibleNarrator implements NarrativeProvider {
     private ctx;
     private config;
     private onUsage?;
+    private captureSink?;
     /**
      * 主写作与压缩共用服务商选择、冷却和 OpenAI 兼容协议；二者的提示词和
      * token/temperature 配置不同，因此同一个实例可承担两个接口。
@@ -235,7 +237,7 @@ export declare class OpenAICompatibleNarrator implements NarrativeProvider {
     private resolveSpecialty;
     private readonly logger?;
     private readonly routing;
-    constructor(ctx: Context, config: ModelConfig, silentLogs?: boolean, onUsage?: (record: TokenUsageRecord) => void, routing?: ModelRoutingTable);
+    constructor(ctx: Context, config: ModelConfig, silentLogs?: boolean, onUsage?: (record: TokenUsageRecord) => void, routing?: ModelRoutingTable, captureSink?: MainCaptureSink);
     private assignedProviders;
     available(): boolean;
     visionAvailable(): boolean;
@@ -267,7 +269,7 @@ export declare class OpenAICompatibleNarrator implements NarrativeProvider {
     private selectRouteProviders;
     private requestProvider;
 }
-export declare function createNarrator(ctx: Context, config: ModelConfig, silentLogs?: boolean, onUsage?: (record: TokenUsageRecord) => void, routing?: ModelRoutingTable): NarrativeProvider;
+export declare function createNarrator(ctx: Context, config: ModelConfig, silentLogs?: boolean, onUsage?: (record: TokenUsageRecord) => void, routing?: ModelRoutingTable, captureSink?: MainCaptureSink): NarrativeProvider;
 export declare function createStickerDescriber(ctx: Context, config: ModelConfig, silentLogs?: boolean, onUsage?: (record: TokenUsageRecord) => void, routing?: ModelRoutingTable): StickerDescriber;
 export declare function createVisionDescriber(ctx: Context, config: ModelConfig, silentLogs?: boolean, onUsage?: (record: TokenUsageRecord) => void, routing?: ModelRoutingTable): VisionDescriber;
 /** A single enabled model preset is the natural main narrator. This keeps the

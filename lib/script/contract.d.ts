@@ -10,6 +10,17 @@ export interface ScriptActionBinding {
         start: number;
         end: number;
     }>;
+    /** Bound text also had weaker standalone occurrences elsewhere; spans are
+     * audit-only so the quote-anchored (or sole) occurrence stays authoritative. */
+    ambiguous?: boolean;
+    /** Diagnostic detail for the first bubble that could not be located safely. */
+    failed?: {
+        bubbleIndex: number;
+        bubble: string;
+        quoted: number;
+        standalone: number;
+        occurrences: number;
+    };
 }
 export interface ScriptEventDraft {
     eventId: string;

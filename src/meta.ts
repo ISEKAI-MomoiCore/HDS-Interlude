@@ -1,2 +1,2 @@
-export const HDS_INTERLUDE_VERSION = '1.0.1-rc57'
+export const HDS_INTERLUDE_VERSION = '1.0.1-rc58'
 

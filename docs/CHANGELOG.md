@@ -1,8 +1,8 @@
 # 更新记录
 
-## 下一版（未发布，Issue #10 修复批次）
+## 1.0.1-rc58（2026-10-27，发布候选）
 
-修复主动消息在 proactive-check 相位被静默撤回、且剧本与意图按"已发出"继续推进的问题。
+RC58 在 rc57 发布包基础上完成主动消息可靠性修复（Issue #10/#14/#15）并新增实验性主叙事微调数据采集。源码、类型声明、bundle、文档与安装包版本统一为 `1.0.1-rc58`。
 
 ### 主要变更
 
@@ -10,12 +10,17 @@
 - **根因 B：撤回轮意图中和注记（Issue #10）**：本轮可见投递被撤回时，同一轮新写、指向同一参与者的模型意图（提醒/余波/后续）此前会带着"已发出"的中毒前提进入后续 `dueIntents`。现在按"本轮创建 + 参与者一致"圈定风险集，注入显式注记（summary 尾缀"［注：同轮拟发送消息从未发出…］"+ `payload.sendWithdrawnTurn`）；不删除、不改 status，到期轮次由模型结合注记自行决断；幂等不叠加。
 - **根因 C：`minimumProactiveIntervalMinutes` 描述修正（Issue #10）**：实现自始以"距她上次向该参与者发出任何消息（含普通回复）"计时（`lastCharacterMessageAt`），与旧描述"两次主动联系之间"不符。按用户决策保持实现不变，配置描述改为如实描述；natural 模式的 `naturalMinimumIntervalMinutes` 取小行为不变。
 - **`saveWebObservation` 主键回归 AUTOINCREMENT + 观察失败域收窄（Issue #14）**：落库 candidate 此前硬编码 `id: 0`，首次占用 0 后第 2 次网页观察必然 `UNIQUE constraint failed`，异常沿即时观察落库点直穿 `flushBufferedNarrative` 外层 catch——整轮已生成的回复被丢弃并排重试，日志仅见"合并写作任务失败"无法定位。修复三处：① candidate 不再携带 id，交给 `autoInc`（内存 persist=false 路径保留占位 id:0，无消费方）；② 即时观察落库抽为 `persistImmediateObservations`，单条失败降级为 warn 并继续其余观察——旁路增强信息不再拥有否决整轮回复的权力；③ 延迟浏览意图 `executeDeferredBrowserIntent` 执行失败按失败完成（intent 标 completed），杜绝"每个 sweep 重撞一次"的 pending 无限重试。核查确认全库仅此一处 `id: 0` 硬编码、无第二写入路径、无 id 值消费方（observationId 均取落库返回值），无需数据迁移。
+- **主动推进短分段正文绑定误杀修复（Issue #15）**：`bindImmediateMessageAction` 此前要求每个 bubble 文本在全文后续唯一，单字或高频短词（如"早"被"今早/早饭/早起/等这一早呢"包含）必然触发唯一性否决，导致 advance 相位整组即时主动行动被取消——旁白已呈现消息但通道未投递（#413 数据：deliveryActions 为空、无 character-message 条目）。现改为候选分级绑定：引号整段匹配（“早”/「早」）为强候选，边界完整的独立出现次之，词内子串永不合格；同级多个候选仍整组取消（保留"同一引号段出现两次≠发送"的防伪记忆语义），强弱混合时绑定强候选并标记 `ambiguous`（spans 仅审计用，无位置消费方）。`unbound` 结果新增 `failed` 详情（分段序号/预览/三级候选计数），advance 相位取消警告同步点名具体分段。同一函数服务私聊回复、群聊与跨账号行动，修复对三条路径同步生效。
+- **新增实验性主叙事微调数据采集（`modelCapture`，【维护 21】）**：为微调模型收集 (输入 → 输出) 配对数据。开启后每次解析成功的主叙事往返——system 合约 + user payload + 采样参数 + 模型返回原文——按天追加为本地 JSONL（默认 `data/hds-interlude/model-capture/hdsi-capture-日期.jsonl`，目录可配）。覆盖对话推进（用户消息/对话后续/到期意图）与自动推进全部四种回合阶段，私聊群聊均含；HTTP 失败、超时或无效 JSON 按"报错即弃"直接丢弃，重试成功正常落盘。记录含 phase/storyId/participantId/provider(label/model/host，不含 Key)/attemptIndex/耗时/token 用量；多模态 base64 图片音频替换为占位标记；写盘串行异步、失败首次告警后静默、连续 3 次自动停用（重载恢复），绝不影响叙事路径；盲模式强制关闭。压缩/导演/Alter 等侧端任务不采集。
 
-### 验证
+### 验证与产物
 
-- 新增 `test/issue-10-proactive-withdrawal.test.ts`：A1 合成放行（消息进入投递 + 配额 ref + 审计标记）、A2 真实风控拦截（真实原因撤回 + 重查 + 同轮意图注记 + 幂等 + 无关参与者不动）、A3 白名单外回落旧行为。
-- 新增 `test/issue-14-web-observation.test.ts`：连续落库自增不冲突且 candidate 无 id、persist=false 占位、落库失败逐条降级不上抛、延迟意图失败按失败完成。
-- 全量 `npm test`：921 通过 / 0 失败 / 4 跳过（既有真实 API 项）；`npm run typecheck` 通过。
+- `npm run typecheck`：通过。
+- `npx yakumo build`：通过，已更新 `lib/index.js` 与声明文件。
+- 全量测试：`npm test`，942 项测试中 938 项通过、4 项跳过、0 失败（跳过项为需要真实模型 API 的既有用例）。
+- 新增回归：`test/issue-10-proactive-withdrawal.test.ts`（主动消息撤回三根因）、`test/issue-14-web-observation.test.ts`（观察落库自增与失败域）、`test/issue-15-proactive-bubble-binding.test.ts`（候选分级绑定 7 项）、`test/model-capture.test.ts`（采集 8 项）。
+- 安装包：`release/koishi-plugin-hds-interlude-1.0.1-rc58.tgz`。
+- 发布资产：同时准备 GitHub 与 Gitee release，附带 SHA-256 校验文件。
 
 ## 1.0.1-rc57（2026-10-17，发布候选）
 

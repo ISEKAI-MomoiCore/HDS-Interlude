@@ -35,6 +35,7 @@ import { UrgeConfig, resolveUrgeConfig, normalizeUrgeState, urgeUserEvent, planU
 import { extname, relative, resolve, sep } from 'node:path'
 import { createReadStream, realpathSync } from 'node:fs'
 import { AudioConfig, compactPromptEntries, createCompactor, createEmbedder, createNarrator, createStickerDescriber, createVisionDescriber, detectMessageRepetition, formatTokenUsageLine, isContextDisposedError, ModelConfig, normalizeLifeRhythmDraft, promptVisibleMessageContent, recentScriptOwnership, StickerDescriber, StickerDescription, TokenUsageRecord, VisionDescriber } from './narrator'
+import { ModelCaptureConfig, ModelCaptureSink } from './capture'
 import { formatModelRouting, ModelRoutingTable, resolveModelRouting } from './model-routing'
 import {
   advanceAlterSystem, alterHistoryForScope, alterScopeCoolingDown, alterScopeValue, calculateAlterThreshold,
@@ -407,6 +408,8 @@ export interface Config {
   agency?: AgencyConfig
   urge?: UrgeConfig
   schedulePreplan?: SchedulePreplanConfig
+  /** 实验性：主叙事微调数据采集（原始输入/输出 JSONL）；盲模式下强制关闭。 */
+  modelCapture?: ModelCaptureConfig
 }
 
 export interface BlindModeConfig {
@@ -862,6 +865,7 @@ export class InterludeService extends Service {
   private cachedAgencyConfig?: AgencyConfig
   private cachedSchedulePreplanConfig?: SchedulePreplanConfig
   private cachedBlindModeConfig?: BlindModeConfig
+  private cachedModelCaptureConfig?: ModelCaptureConfig
   /** P3: Console 健康面板的内存滚动指标（重载后归零）。 */
   readonly health = new HealthMonitor()
   /** Token 用量到达时可能尚未有 canonical story——用最近活跃的 storyId 记账。
@@ -919,7 +923,11 @@ export class InterludeService extends Service {
       }
     }
     this.modelRouting = resolveModelRouting(config.model, config.alterSystem)
-    this.narrator = createNarrator(ctx, config.model, this.blindModeConfig.enabled, onUsage, this.modelRouting)
+    // 实验性微调数据采集：仅主叙事 narrator 持有 sink；写盘失败只降级采集本身。
+    const modelCaptureDirectory = this.modelCaptureConfig.enabled ? resolve(ctx.baseDir, this.modelCaptureConfig.directory) : ''
+    const modelCapture = this.modelCaptureConfig.enabled ? new ModelCaptureSink(modelCaptureDirectory, this.serviceLogger) : undefined
+    if (modelCapture) this.serviceLogger.info('主叙事微调数据采集已开启 目录=%s（按天分 JSONL，仅记录解析成功的往返）', modelCaptureDirectory)
+    this.narrator = createNarrator(ctx, config.model, this.blindModeConfig.enabled, onUsage, this.modelRouting, modelCapture)
     this.compactor = createCompactor(ctx, config.model, this.blindModeConfig.enabled, onUsage, this.modelRouting)
     this.embedder = createEmbedder(ctx, config.model, this.modelRouting)
     this.stickerDescriber = createStickerDescriber(ctx, config.model, this.blindModeConfig.enabled, onUsage, this.modelRouting)
@@ -5747,14 +5755,24 @@ export class InterludeService extends Service {
       // 小模型仍可输出 content-only；复用最终正文/分泡绑定，不强制 say/actionId。
       // 只剔除对不上正文的即时主动行动，并在落库前重建 commit，避免留下可补投
       // 的 pending 账本。此处不合成新行动、不重试模型；私聊回复与 delayed 保持原样。
-      const rejected = new Set(decision.crossConversationActions.filter(action => action.mode === 'immediate'
+      const rejectedActions = decision.crossConversationActions.filter(action => action.mode === 'immediate'
         && (!commit || findPrivateOutgoingMessageEvent(commit, action.participantId, 'immediate', action.content,
-          this.config.runtime.messageSeparator)?.scriptBinding?.status !== 'bound')))
-      if (rejected.size) {
+          this.config.runtime.messageSeparator)?.scriptBinding?.status !== 'bound'))
+      if (rejectedActions.length) {
+        // Issue #15：诊断必须点名具体分段与候选层级，否则"唯一性否决"类误杀无从排查。
+        const rejectedDetails = rejectedActions.map(action => {
+          const failed = commit ? findPrivateOutgoingMessageEvent(commit, action.participantId, 'immediate', action.content,
+            this.config.runtime.messageSeparator)?.scriptBinding?.failed : undefined
+          return failed
+            ? `${action.participantId}:分段${failed.bubbleIndex + 1}「${failed.bubble}」引号候选=${failed.quoted} 独立候选=${failed.standalone} 原文出现=${failed.occurrences}`
+            : `${action.participantId}:无对应消息事件`
+        })
+        const rejected = new Set(rejectedActions)
         decision = { ...decision, crossConversationActions: decision.crossConversationActions.filter(action => !rejected.has(action)) }
         commit = buildCommit()
         this.reportOperation('standard', 'warn', story, phase,
-          '主动消息正文绑定缺失或不唯一，取消本轮即时行动 数量=%d；保留剧本推进，不重试模型', rejected.size)
+          '主动消息正文绑定缺失或同级不唯一，取消本轮即时行动 数量=%d 明细=%s；保留剧本推进，不重试模型',
+          rejectedActions.length, rejectedDetails.join('；'))
       }
     }
     if (commit) {
@@ -6295,6 +6313,19 @@ export class InterludeService extends Service {
 
   private get blindModeConfig(): BlindModeConfig {
     return this.cachedBlindModeConfig ??= resolveBlindModeConfig(this.config.blindMode ?? this.config.blackBox)
+  }
+
+  private get modelCaptureConfig(): ModelCaptureConfig {
+    if (this.cachedModelCaptureConfig) return this.cachedModelCaptureConfig
+    const merged: ModelCaptureConfig = {
+      enabled: false,
+      directory: 'data/hds-interlude/model-capture',
+      ...(this.config.modelCapture ?? {}),
+    }
+    // 盲模式收束模型侧调试与剧本预览；原始输入/输出采集与其边界冲突，强制关闭。
+    if (this.blindModeConfig.enabled) merged.enabled = false
+    merged.directory = String(merged.directory ?? '').trim() || 'data/hds-interlude/model-capture'
+    return this.cachedModelCaptureConfig = merged
   }
 
   private emotionalOffsetForPrompt(story: InterludeStory): EmotionalOffsetPrompt | null {

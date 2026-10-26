@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import type { NarrativeDecision, NarrativePhase } from '../types'
 import { reconcileTransportReferences, type AuthoredAction } from './authored-actions'
 import {
-  isOutgoingScriptEvent, ScriptCommitDraft, ScriptDeliveryMode, ScriptEventDraft,
+  isOutgoingScriptEvent, ScriptActionBinding, ScriptCommitDraft, ScriptDeliveryMode, ScriptEventDraft,
 } from './contract'
 
 export interface ScriptFirstDecisionInput {
@@ -185,10 +185,14 @@ function addMessageEvent(
   })
 }
 
-/** Bind an immediate transport action to the unique literal message text in
- * the current script without interpreting prose or adding another model task.
- * Ambiguous/missing text stays diagnostic and never rewrites the script. */
-export function bindImmediateMessageAction(prose: string, bubbles: string[], actions: AuthoredAction[] = []) {
+/** Bind an immediate transport action to the literal message text in the
+ * current script without interpreting prose or adding another model task.
+ * Candidates are tiered: a complete quoted segment (“早”/「早」) outranks a
+ * bare standalone occurrence, and occurrences inside other words (今早/早饭)
+ * never qualify. Equal-tier duplicates stay unbound — the prose mentions the
+ * same text twice without singling out a send — while a quote-anchored match
+ * beside weaker decoys binds (issue #15: 单字问候被词内巧合否决)。 */
+export function bindImmediateMessageAction(prose: string, bubbles: string[], actions: AuthoredAction[] = []): ScriptActionBinding {
   const matching = actions.filter(action => prose.slice(action.start, action.end) === action.content
     && bubbles.every(bubble => action.content.includes(bubble.trim())))
   if (matching.length === 1) {
@@ -197,20 +201,66 @@ export function bindImmediateMessageAction(prose: string, bubbles: string[], act
     if (binding.status === 'bound') return { ...binding, spans: binding.spans!.map(span => ({
       ...span, start: span.start + action.start, end: span.end + action.start,
     })) }
+    return binding
   }
   const spans: Array<{ bubbleIndex: number; start: number; end: number }> = []
+  const quotePairs: Array<[string, string]> = [['\u201c', '\u201d'], ['「', '」'], ['『', '』']]
+  let ambiguous = false
   let cursor = 0
   for (const [bubbleIndex, rawBubble] of bubbles.entries()) {
     const bubble = rawBubble.trim()
-    if (!bubble) return { status: 'unbound' as const }
-    const start = prose.indexOf(bubble, cursor)
-    if (start < 0 || prose.indexOf(bubble, start + 1) >= 0) return { status: 'unbound' as const }
-    const end = start + bubble.length
-    spans.push({ bubbleIndex, start, end })
-    cursor = end
+    if (!bubble) return unboundDetail(bubbleIndex, bubble, prose)
+    const quoted: number[] = []
+    for (const [open, close] of quotePairs) {
+      let at = prose.indexOf(open, cursor)
+      while (at >= 0) {
+        const innerStart = at + open.length
+        const closeAt = prose.indexOf(close, innerStart)
+        if (closeAt < 0) break
+        if (prose.slice(innerStart, closeAt).trim() === bubble) quoted.push(innerStart)
+        at = prose.indexOf(open, closeAt + close.length)
+      }
+    }
+    quoted.sort((a, b) => a - b)
+    const standalone: number[] = []
+    let occurrences = 0
+    let at = prose.indexOf(bubble, 0)
+    while (at >= 0) {
+      occurrences += 1
+      const end = at + bubble.length
+      if (at >= cursor && isBubbleBoundary(prose[at - 1]) && isBubbleBoundary(prose[end])) standalone.push(at)
+      at = prose.indexOf(bubble, at + 1)
+    }
+    const chosen = quoted.length === 1 ? quoted[0]
+      : quoted.length > 1 || standalone.length > 1 ? undefined
+      : standalone[0]
+    if (chosen === undefined) return unboundDetail(bubbleIndex, bubble, prose, { quoted: quoted.length, standalone: standalone.length, occurrences })
+    if (quoted.length === 1 && standalone.length > 1) ambiguous = true
+    spans.push({ bubbleIndex, start: chosen, end: chosen + bubble.length })
+    cursor = chosen + bubble.length
   }
-  return { status: 'bound' as const, spans }
+  return { status: 'bound' as const, spans, ...(ambiguous ? { ambiguous: true } : {}) }
 }
+
+function unboundDetail(bubbleIndex: number, bubble: string, prose: string, counts?: { quoted: number, standalone: number, occurrences: number }): ScriptActionBinding {
+  const occurrences = bubble ? (counts?.occurrences ?? prose.split(bubble).length - 1) : 0
+  return {
+    status: 'unbound' as const,
+    failed: {
+      bubbleIndex,
+      bubble: bubble.length > 16 ? `${bubble.slice(0, 16)}…` : bubble,
+      quoted: counts?.quoted ?? 0,
+      standalone: counts?.standalone ?? 0,
+      occurrences,
+    },
+  }
+}
+
+/** Message-grade edges: string boundaries, quotes, punctuation, symbols and
+ * whitespace. A CJK ideograph (今 before 早) is not an edge, so word-internal
+ * hits never become candidates. */
+const isBubbleBoundary = (char: string | undefined): boolean =>
+  char === undefined || /[\p{P}\p{S}\s]/u.test(char)
 
 export function unboundImmediateMessageEvents(commit: ScriptCommitDraft) {
   return commit.events.filter(event => isOutgoingScriptEvent(event)

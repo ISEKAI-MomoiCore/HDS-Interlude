@@ -1,6 +1,6 @@
 {
   "name": "koishi-plugin-hds-interlude",
-  "version": "1.0.1-rc57",
+  "version": "1.0.1-rc58",
   "description": "A time-aware, persistent narrative chat framework for Koishi.",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",
