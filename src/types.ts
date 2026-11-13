@@ -496,6 +496,10 @@ export interface NarrativeFact {
   embedding?: number[]
   status: 'active' | 'superseded'
   sourceEntryIds: number[]
+  /** Group ids this fact's evidence came from (normalized, deduped). Provenance
+   * only: facts remain global narrative material; this field never controls
+   * visibility. Absent on rows persisted before provenance existed. */
+  sourceGroupIds?: string[]
   lastSeenAt: Date
   createdAt: Date
   updatedAt: Date

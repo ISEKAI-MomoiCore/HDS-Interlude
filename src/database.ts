@@ -47,6 +47,9 @@ export function registerTables(ctx: Context) {
     if (existingTables.interlude_fact && !existingTables.interlude_fact.fields?.knowledge) {
       ctx.model.extend('interlude_fact', { knowledge: 'json' })
     }
+    if (existingTables.interlude_fact && !existingTables.interlude_fact.fields?.sourceGroupIds) {
+      ctx.model.extend('interlude_fact', { sourceGroupIds: 'json' })
+    }
     if (existingTables.interlude_qzone_post && !existingTables.interlude_qzone_post.fields?.endpointId) {
       ctx.model.extend('interlude_qzone_post', { endpointId: 'string(63)' })
     }
@@ -122,7 +125,7 @@ export function registerTables(ctx: Context) {
   ctx.model.extend('interlude_fact', {
     knowledge: 'json',
     id: 'unsigned', storyId: 'string(255)', participantId: 'string(255)', scope: 'string(32)', content: 'text',
-    importance: 'double', confidence: 'double', unresolved: 'boolean', embedding: 'json', status: 'string(16)', sourceEntryIds: 'json',
+    importance: 'double', confidence: 'double', unresolved: 'boolean', embedding: 'json', status: 'string(16)', sourceEntryIds: 'json', sourceGroupIds: 'json',
     lastSeenAt: 'timestamp', createdAt: 'timestamp', updatedAt: 'timestamp',
   }, { primary: 'id', autoInc: true, indexes: ['storyId', 'status', 'importance'] })
 

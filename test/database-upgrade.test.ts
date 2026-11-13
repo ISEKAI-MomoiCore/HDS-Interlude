@@ -82,6 +82,7 @@ test('knowledge evidence is an additive nullable field and reload does not rebui
   registerTables(ctx)
   assert.deepEqual(calls, [
     { name: 'interlude_fact', fields: { knowledge: 'json' } },
+    { name: 'interlude_fact', fields: { sourceGroupIds: 'json' } },
     { name: 'interlude_seeded_event', fields: {
       id: 'unsigned', storyId: 'string(255)', summary: 'text', importance: 'string(16)',
       occursAt: 'timestamp', expiresAt: 'timestamp', status: 'string(16)',
