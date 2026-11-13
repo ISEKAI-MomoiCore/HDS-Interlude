@@ -11088,6 +11088,15 @@ export class InterludeService extends Service {
     if (draft.target === 'relationship' && entries.some(entry => sourceEntryIds.includes(entry.id)
       && entry.participantId && entry.participantId !== participantId)) return
     if (draft.target !== 'relationship' && entries.some(entry => sourceEntryIds.includes(entry.id) && !!entry.participantId)) return
+    // Group material is shared-life evidence, not private adoption: it may shape
+    // global personality or world only when the compactor explicitly marks it shared.
+    if (draft.target !== 'relationship' && draft.groupShared !== true
+      && entries.some(entry => sourceEntryIds.includes(entry.id)
+        && (entry.kind === 'group-message' || entry.kind === 'character-group-message'))) {
+      this.reportOperation('diagnostic', 'debug', story, 'advance',
+        '发展提案未保留：群素材晋升全局设定需显式共享标记 目标=%s/%s', draft.target, path)
+      return
+    }
     // A relationship tendency becomes usable only when actual user feedback
     // and the protagonist's subsequent delivered answer support the same
     // reading. This prevents one scene's prose rhythm from becoming a claim

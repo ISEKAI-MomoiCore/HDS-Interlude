@@ -1103,6 +1103,10 @@ export interface StatePatchDraft {
   evidence: string
   confidence?: number
   impact?: 'minor' | 'major'
+  /** Explicit declaration that group-sourced evidence has been adopted as the
+   * protagonist's own shared outlook. Required for non-relationship patches
+   * citing group entries; ambient group mood does not qualify. */
+  groupShared?: boolean
   sourceEntryIds?: number[]
   /** Explicit counter-evidence for an existing, still provisional candidate. */
   contradictsProposalIds?: number[]
