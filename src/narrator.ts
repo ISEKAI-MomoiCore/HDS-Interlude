@@ -1837,6 +1837,11 @@ export const DEFAULT_STYLE_PROMPT = [
  * everything dual-platform (WeChat, cross-platform identity, switches) goes. */
 const SINGLE_PLATFORM_CHANNELS = 'CHANNELS (writer rule): You are the author of the protagonist\'s life, not a participant in a simulated chat. This story lives on a single registered chat platform; a host-generated tag such as [QQ·私] or [QQ·群] records where an observed event happened — factual routing context, not dialogue, and not something she mentions unless the scene naturally names the platform. Do not invent other platforms, accounts or cross-platform activity.'
 
+/** Group-sourced facts stay global narrative material; the contract only asks
+ * the model to voice them as hearsay outside the source group. Both tiers
+ * receive the same durableFacts projection, so lite carries it too. */
+const FACT_PROVENANCE_CONTRACT = 'FACT PROVENANCE: durableFacts entries carrying sourceGroupIds were learned in group chats, not established in private conversation. Outside the source group, let her refer to them as things she heard or noticed in the group (e.g. 听群里说), not as her own private knowledge; when groupContext.groupId matches a source group, she may refer to them directly.'
+
 /** Merge auto-trim gating with the all-on default so an absent features object
  * reproduces the legacy full contract byte for byte. */
 function contractFeaturesOrDefaults(features?: Partial<NarrativeContractFeatures>): NarrativeContractFeatures {
@@ -1877,6 +1882,7 @@ ${LITE_TRANSPORT_PRIVATE}`
       LITE_NEVER_INVENT,
       LITE_OWNERSHIP,
       LITE_EVENT_SOURCES,
+      FACT_PROVENANCE_CONTRACT,
       LITE_ADMIN_NOTES,
       LITE_WORLD_EVENTS,
       ...(longHorizonGuidance ? [longHorizonGuidance] : []),
@@ -1949,6 +1955,7 @@ ${LITE_TRANSPORT_PRIVATE}`
     'Create an active-consequence only when an event genuinely continues to shape the protagonist’s next choices, emotional weather, relationship judgement, practical arrangement, or attention. Let it be specific and temporary: it is a living consequence of this story, not a replacement for canon or a permanent personality label.',
     'When an activeConsequence has naturally been fulfilled, absorbed, displaced by a new development, or has become irrelevant, return intentUpdates with its visible id and status completed or cancelled, plus a brief resolution. Do not update scheduled plans through intentUpdates; their due turn resolves them.',
     'Treat currentEvent, groupContext.messages, dueIntents and webContext as the sources for events occurring in this interval. Treat recentScript, memories and facts as the established past that gives the current scene continuity.',
+    FACT_PROVENANCE_CONTRACT,
     'Original automatic passages remain in recentScript together with timelineEvidence. The original passage supplies voice and causal texture; timelineEvidence bounds its established timing. Preserve that distinction when older prose overstates a later event. Recall ownership labels identify who actually spoke; protagonist narration about the user remains the protagonist’s interpretation.',
     'developmentTendencies are a few relevant, sourced observations across scenes. Let them inform plausible choices softly, with room for the current relationship and circumstances; they describe a tendency, not a required response or an unchanging identity.',
     'timelinePlan is a proposed movement within the host-owned time window, not completed history: write the actual connected life in script, retain its time bounds, and adjust proposed beats to the established original. Ordinary protagonist actions may develop naturally; an external message still needs an observed event. proposedTimeline never proves an event occurred; timelineCarry is legacy last-known context, not proof another person is still doing something.',

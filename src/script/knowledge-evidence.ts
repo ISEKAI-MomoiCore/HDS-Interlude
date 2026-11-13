@@ -57,14 +57,30 @@ export function knowledgeRelatedIds(knowledge: KnowledgeEvidence | undefined) {
   return Array.isArray(knowledge?.relatedFactIds) ? knowledge.relatedFactIds : []
 }
 
+/** Group provenance of a fact: normalized ids of the groups its cited source
+ * entries came from. Mirrors service.ts normalizeGroupId — historical group
+ * metadata stored prefixed ("group:"/"guild:") or numeric ids. */
+export function factSourceGroupIds(entries: ScriptEntry[], sourceEntryIds: number[]): string[] {
+  const ids = new Set<string>()
+  for (const entry of entries) {
+    if (!sourceEntryIds.includes(entry.id)) continue
+    if (entry.kind !== 'group-message' && entry.kind !== 'character-group-message') continue
+    const groupId = String(entry.metadata?.groupId ?? '').trim().replace(/^(?:group|guild):/i, '')
+    if (groupId) ids.add(groupId)
+  }
+  return [...ids]
+}
+
 export function factEvidenceForPrompt(fact: NarrativeFact) {
   const knowledge = fact.knowledge && Array.isArray(fact.knowledge.clauses) ? fact.knowledge
     : fact.knowledge && Array.isArray(fact.knowledge.relatedFactIds) ? { ...fact.knowledge, clauses: [] }
     : undefined
+  const sourceGroupIds = Array.isArray(fact.sourceGroupIds) ? fact.sourceGroupIds.filter(id => typeof id === 'string' && id) : []
   return { id: fact.id, scope: fact.scope, content: fact.content,
     unresolved: fact.unresolved, status: fact.status, sourceEntryIds: fact.sourceEntryIds,
     authority: knowledge?.mode === 'belief' ? 'attributed-belief' : 'derived-record',
-    knowledge: knowledge ?? { mode: 'unclassified', clauses: [], relatedFactIds: [] } }
+    knowledge: knowledge ?? { mode: 'unclassified', clauses: [], relatedFactIds: [] },
+    ...(sourceGroupIds.length ? { sourceGroupIds } : {}) }
 }
 
 export function supportsRecordedOutcome(knowledge: KnowledgeEvidence) {

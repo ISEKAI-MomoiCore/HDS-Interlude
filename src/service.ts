@@ -25,7 +25,7 @@ import {
 } from './endpoints'
 import type { SeededWorldEvent } from './types'
 import { HealthMonitor } from './health'
-import { contactEvidenceThreads, knowledgeClauses, knowledgeRelatedIds, legacyConditionCue, normalizeKnowledgeEvidence, supportsRecordedOutcome } from './script/knowledge-evidence'
+import { contactEvidenceThreads, factSourceGroupIds, knowledgeClauses, knowledgeRelatedIds, legacyConditionCue, normalizeKnowledgeEvidence, supportsRecordedOutcome } from './script/knowledge-evidence'
 import { readFile, readdir, stat } from 'node:fs/promises'
 import { createHash, randomUUID } from 'node:crypto'
 import { createTurnEngine, shouldSupersedeRequest, type TurnEngine, type TurnBufferedNarrativeTurn as BufferedNarrativeTurn, type TurnBufferedUserMessage as BufferedUserMessage } from './turn-engine'
@@ -10995,6 +10995,7 @@ export class InterludeService extends Service {
     // 当前先做完全规范化匹配的去重；更复杂的语义去重可在检索层升级时替换。
     const matching = existing.filter(fact => normalizeFact(fact.content) === normalizeFact(content))
     const sourceEntryIds = (draft.sourceEntryIds ?? []).filter(id => entries.some(entry => entry.id === id)).slice(0, 20)
+    const sourceGroupIds = factSourceGroupIds(entries, sourceEntryIds)
     const relatedFactIds = Array.isArray(draft.knowledge?.relatedFactIds)
       ? draft.knowledge.relatedFactIds.filter(id => existing.some(fact => fact.id === id)) : []
     const knowledge = normalizeKnowledgeEvidence(draft.knowledge, entries, sourceEntryIds, relatedFactIds)
@@ -11007,6 +11008,11 @@ export class InterludeService extends Service {
     if (same && ((same.knowledge?.mode ?? 'unclassified') === knowledge.mode || !same.knowledge && canClose)) {
       const resolved = same.unresolved && draft.unresolved === false && canClose
       const embedding = same.embedding?.length ? same.embedding : preparedEmbedding
+      // 群出处只增不减：私聊确认合并时不擦除「听群里说的」这层来历。
+      const mergedGroupIds = [...new Set([
+        ...(Array.isArray(same.sourceGroupIds) ? same.sourceGroupIds.filter(id => typeof id === 'string' && id) : []),
+        ...sourceGroupIds,
+      ])]
       await this.dbSet('interlude_fact', { id: same.id }, {
         importance: Math.max(same.importance, clampNumber(draft.importance, same.importance, 0, 1)),
         confidence: knowledge.clauses.some(clause => !same.sourceEntryIds.includes(clause.sourceEntryId)
@@ -11015,6 +11021,7 @@ export class InterludeService extends Service {
           ? Math.max(same.confidence, clampNumber(draft.confidence, same.confidence, 0, 1)) : same.confidence,
         unresolved: resolved ? false : same.unresolved || unresolved,
         ...(embedding.length ? { embedding } : {}),
+        ...(mergedGroupIds.length ? { sourceGroupIds: mergedGroupIds } : {}),
         sourceEntryIds: Array.from(new Set([...same.sourceEntryIds, ...sourceEntryIds])), lastSeenAt: now, updatedAt: now,
         knowledge: { ...knowledge, clauses: [...new Map([...(same.knowledge?.clauses ?? []), ...knowledge.clauses].map(clause => [JSON.stringify(clause), clause])).values()].slice(-12),
           relatedFactIds: [...new Set([...(same.knowledge?.relatedFactIds ?? []), ...knowledge.relatedFactIds])].slice(-12) },
@@ -11028,7 +11035,7 @@ export class InterludeService extends Service {
     await this.dbCreate('interlude_fact', {
       storyId, participantId, scope: draft.scope, content, knowledge, importance: clampNumber(draft.importance, 0.5, 0, 1),
       confidence: clampNumber(draft.confidence, 0.5, 0, 1), unresolved,
-      embedding: preparedEmbedding, status: 'active', sourceEntryIds,
+      embedding: preparedEmbedding, status: 'active', sourceEntryIds, ...(sourceGroupIds.length ? { sourceGroupIds } : {}),
       lastSeenAt: now, createdAt: now, updatedAt: now,
     })
     return false
