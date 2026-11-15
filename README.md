@@ -4,20 +4,17 @@
 
 > 聊天在幕前发生，生活在幕间继续。
 
-<p>
-  <a href="https://gitee.com/MomoiCore/HDS-Interlude/releases"><img src="docs/assets/readme/version.png" alt="当前版本 1.0.1-rc60" width="176" height="30"></a>
-  <a href="https://koishi.chat/"><img src="docs/assets/readme/koishi.png" alt="适用于 Koishi 4" width="122" height="30"></a>
-  <a href="https://www.typescriptlang.org/"><img src="docs/assets/readme/typescript.png" alt="使用 TypeScript 编写" width="152" height="30"></a>
-  <a href="LICENSE"><img src="docs/assets/readme/license.png" alt="许可证 AGPL-3.0" width="170" height="30"></a>
-</p>
+<!-- 项目元信息直接编辑下表；发布时将版本号与 package.json 的 version 保持一致。 -->
+
+| 当前版本 | 适用平台 | 开发语言 | 许可证 |
+| --- | --- | --- | --- |
+| [1.0.1-rc60](https://gitee.com/MomoiCore/HDS-Interlude/releases) | [Koishi 4](https://koishi.chat/) | [TypeScript](https://www.typescriptlang.org/) | [AGPL-3.0](LICENSE) |
 
 **[快速开始](BEGINNER_GUIDE.md) · [一条龙向导](新人上手一条龙配置服务v1.0.1-rc60.html) · [下载发行版](https://gitee.com/MomoiCore/HDS-Interlude/releases) · [更新记录](docs/CHANGELOG.md)**
 
 交流群：421430402，群主24小时解答，欢迎来玩！
 
 HDS Interlude 是一个面向 Koishi 一对一与多参与者场景的持续叙事聊天框架。它让用户消息、角色的沉默、延迟回复、主动联系和自动推进，都成为同一段生活剧本中自然可见的部分，并由一次主叙事写作连贯地决定。
-
-当前版本：`1.0.1-rc60`。
 
 当前文档已同步至 2026-10-27 的 rc58，累计变更以 rc57 发布包为基线。已完成源码构建、类型检查、回归测试与 rc58 安装包打包；发布包与校验信息见发行记录。旧安装包不会自动获得这些修改，运行实例须安装并重载后才生效。
 
