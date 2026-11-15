@@ -1126,7 +1126,7 @@ export class InterludeService extends Service {
     this.weatherConfig = resolveWeatherConfig((this.config as any).weather)
     if (this.weatherConfig.enabled) {
       this.weatherTimer = this.ctx.setInterval(() => void this.weatherSweep().catch(error => this.reportStandalone('warn', '天气服务运行失败 错误=%s', error)), this.weatherConfig.cadenceMinutes * Time.minute)
-      this.reportStandaloneOperation('standard', 'info', '天气服务已启用 间隔=%d分钟 观测点=%s', this.weatherConfig.cadenceMinutes, this.weatherConfig.autoFromLocation ? '按故事地点自动解析' : `${this.weatherConfig.latitude},${this.weatherConfig.longitude}`)
+      this.reportStandaloneOperation('standard', 'info', '天气服务已启用 数据源=%s 间隔=%d分钟 观测点=%s', this.weatherConfig.provider === 'qweather' ? '和风天气' : 'Open-Meteo', this.weatherConfig.cadenceMinutes, this.weatherConfig.autoFromLocation ? '按故事地点自动解析' : `${this.weatherConfig.latitude},${this.weatherConfig.longitude}`)
     }
     // 好友动态轮询：感知窗口的一半作节律（15~60 分钟夹取），单次最多入账 2 条。
     if (this.qzoneRuntime.enabled) {
