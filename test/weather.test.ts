@@ -1,6 +1,7 @@
 /* weather.ts 专项功能测试：配置归一化 / 架空判定 / 快照拉取与缓存 / 注入格式 */
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { generateKeyPairSync } from 'node:crypto'
 import {
   resolveWeatherConfig, DEFAULT_WEATHER_CONFIG,
   isFantasyStory, fetchWeatherSnapshot, lastWeatherSnapshot,
@@ -182,4 +183,141 @@ test('注入文本格式:环境:N°C 天气。', async () => {
   assert.equal(snap?.feelsLike, -8)
   assert.equal(snap?.humidity, 80)
   assert.equal(snap?.windSpeed, 12)
+})
+
+// ── QWeather(和风天气)数据源 ────────────────────────────────────────────────
+
+const qweatherKeyPair = generateKeyPairSync('ed25519')
+const qweatherPrivateKey = qweatherKeyPair.privateKey.export({ type: 'pkcs8', format: 'pem' }).toString()
+
+const qweatherConfig: WeatherConfig = {
+  ...sunnyConfig,
+  provider: 'qweather',
+  qweatherHost: 'test.re.qweatherapi.com',
+  qweatherAuth: 'ed25519',
+  qweatherKid: 'test-kid',
+  qweatherSub: 'test-sub',
+  qweatherIss: 'test-iss',
+  qweatherJwtTtlMinutes: 60,
+  qweatherPrivateKey,
+}
+
+function qweatherMock(now: Record<string, unknown> | undefined, geo?: { lat: string; lon: string; name: string; id: string } | null) {
+  const seen: Array<{ url: string; headers?: Record<string, string>; params?: Record<string, unknown> }> = []
+  const ctx = {
+    logger: () => ({ warn() {} }),
+    http: {
+      get: async (url: string, opts?: { params?: Record<string, unknown>; headers?: Record<string, string> }) => {
+        seen.push({ url, headers: opts?.headers, params: opts?.params })
+        if (url.includes('/geo/v2/city/lookup')) {
+          if (geo === null) throw new Error('geo network error')
+          if (!geo) return { code: '404' }
+          return { code: '200', location: [geo] }
+        }
+        if (url.includes('/v7/weather/now')) {
+          if (!now) throw new Error('weather network error')
+          return { code: '200', now }
+        }
+        throw new Error(`unexpected url: ${url}`)
+      },
+    },
+  } as never
+  return { ctx, seen }
+}
+
+test('resolveWeatherConfig provider 与 qweather 字段归一化', () => {
+  assert.equal(resolveWeatherConfig({}).provider, 'open-meteo')
+  assert.equal(resolveWeatherConfig({ provider: 'qweather' }).provider, 'qweather')
+  assert.equal(resolveWeatherConfig({ provider: 'bogus' }).provider, 'open-meteo')
+  assert.equal(resolveWeatherConfig({ qweatherAuth: 'weird' }).qweatherAuth, 'ed25519')
+  assert.equal(resolveWeatherConfig({ qweatherPrivateKey: 'a\rb\n' }).qweatherPrivateKey, 'ab')
+  assert.equal(resolveWeatherConfig({ qweatherHost: 'a.re.qweatherapi.com/' }).qweatherHost, 'a.re.qweatherapi.com')
+  assert.equal(resolveWeatherConfig({ qweatherJwtTtlMinutes: 99999 }).qweatherJwtTtlMinutes, 1440)
+})
+
+test('fetchWeatherSnapshot qweather:JWT 头 + LocationID 优先 + 快照映射', async () => {
+  const { ctx, seen } = qweatherMock(
+    { temp: '5', feelsLike: '3', humidity: '92', text: '阵雨', windSpeed: '8' },
+    { lat: '43.05', lon: '141.34', name: '札幌', id: 'CC5DF' },
+  )
+  const snap = await fetchWeatherSnapshot(ctx, { ...qweatherConfig, cadenceMinutes: 0, autoFromLocation: true, latitude: 43.05, longitude: 141.34 }, '札幌')
+  assert.ok(snap)
+  assert.equal(snap.temperature, 5)
+  assert.equal(snap.feelsLike, 3)
+  assert.equal(snap.humidity, 92)
+  assert.equal(snap.windSpeed, 8)
+  assert.equal(snap.condition, '阵雨')
+  assert.equal(snap.text, '环境：5°C 阵雨。')
+  const weatherReq = seen.find(r => r.url.includes('/v7/weather/now'))
+  assert.ok(weatherReq)
+  assert.equal(weatherReq.params?.location, 'CC5DF', '命中 LocationID 时应优先于经纬度')
+  assert.ok(String(weatherReq.headers?.Authorization).startsWith('Bearer '), 'ed25519 应签发 JWT')
+})
+
+test('fetchWeatherSnapshot qweather:apikey 头', async () => {
+  const { ctx, seen } = qweatherMock({ temp: '9', text: '霾' })
+  const config: WeatherConfig = { ...qweatherConfig, qweatherAuth: 'apikey', qweatherApiKey: 'key-1' }
+  const snap = await fetchWeatherSnapshot(ctx, { ...config, cadenceMinutes: 0, autoFromLocation: false, latitude: 10.1, longitude: 20.2 })
+  assert.ok(snap)
+  const weatherReq = seen.find(r => r.url.includes('/v7/weather/now'))
+  assert.equal(weatherReq?.headers?.['X-QW-Api-Key'], 'key-1')
+})
+
+test('fetchWeatherSnapshot qweather:地理编码失败回退手动经纬度', async () => {
+  const { ctx, seen } = qweatherMock({ temp: '4', text: '多云' }, null)
+  const snap = await fetchWeatherSnapshot(ctx, { ...qweatherConfig, cadenceMinutes: 0, autoFromLocation: true, latitude: 30.1, longitude: 40.2 }, '不存在的城市xyz')
+  assert.ok(snap)
+  const weatherReq = seen.find(r => r.url.includes('/v7/weather/now'))
+  assert.equal(weatherReq?.params?.location, '40.20,30.10', '回退到 lon,lat 手动观测点')
+})
+
+test('fetchWeatherSnapshot qweather:业务错误码返回 undefined 且不抛错', async () => {
+  const ctx = {
+    logger: () => ({ warn() {} }),
+    http: {
+      get: async (url: string) => {
+        if (url.includes('/v7/weather/now')) return { code: '402' }
+        throw new Error(`unexpected url: ${url}`)
+      },
+    },
+  } as never
+  const snap = await fetchWeatherSnapshot(ctx, { ...qweatherConfig, cadenceMinutes: 0, autoFromLocation: false, latitude: 50.5, longitude: 60.6 })
+  assert.equal(snap, undefined)
+})
+
+test('fetchWeatherSnapshot qweather:不可解析城市负缓存(第二次不请求 geo)', async () => {
+  let geoCalls = 0
+  const ctx = {
+    logger: () => ({ warn() {} }),
+    http: {
+      get: async (url: string) => {
+        if (url.includes('/geo/v2/city/lookup')) { geoCalls++; return { code: '200', location: [] } }
+        if (url.includes('/v7/weather/now')) return { code: '200', now: { temp: '6', text: '晴' } }
+        throw new Error(`unexpected url: ${url}`)
+      },
+    },
+  } as never
+  const config: WeatherConfig = { ...qweatherConfig, cadenceMinutes: 0, autoFromLocation: true, latitude: 70.7, longitude: 80.8 }
+  await fetchWeatherSnapshot(ctx, config, '负缓存测试地')
+  await fetchWeatherSnapshot(ctx, config, '负缓存测试地')
+  assert.equal(geoCalls, 1, '第二次应命中负结果缓存')
+})
+
+test('fetchWeatherSnapshot qweather:快照缓存按数据源分键', async () => {
+  let weatherCalls = 0
+  const ctx = {
+    logger: () => ({ warn() {} }),
+    http: {
+      get: async (url: string) => {
+        if (url.includes('/v7/weather/now')) { weatherCalls++; return { code: '200', now: { temp: String(weatherCalls), text: '晴' } } }
+        if (url.includes('/geo/v2/city/lookup')) return { code: '404' }
+        throw new Error(`unexpected url: ${url}`)
+      },
+    },
+  } as never
+  const location = { ...qweatherConfig, autoFromLocation: false, cadenceMinutes: 30, latitude: -33.87, longitude: 151.21 }
+  const first = await fetchWeatherSnapshot(ctx, location)
+  const second = await fetchWeatherSnapshot(ctx, location)
+  assert.equal(weatherCalls, 1, 'cadence 内只拉取一次')
+  assert.equal(first?.temperature, second?.temperature)
 })
