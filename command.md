@@ -1,6 +1,6 @@
 # HDS Interlude 管理与查看指令
 
-适用版本：`1.0.1-rc58`
+适用版本：`1.0.1-rc60`
 ## 使用前先看这里
 
 - 新手安装和首次测试：`BEGINNER_GUIDE.md`
@@ -75,6 +75,9 @@ sharedStory:
 | `interlude.memory.add <范围> <内容>` | 管理员 | 人工添加高置信度长期事实 |
 | `interlude.memory.forget <编号>` | 管理员 | 将长期事实标记为失效，不物理删除 |
 | `interlude.memory.intents [条数]` | 管理员 | 查看延迟回复、提醒、承诺和剧情余波 |
+| `interlude.actions [条数]` | 管理员 | 查看通信动作、人物计划、确定延迟和投递分段状态 |
+| `interlude.policy` | 管理员 | 查看统一投递策略、旧配置迁移来源和当前 revision |
+| `interlude.policy.migrate [confirm]` | 管理员 | 预览或执行旧 proactive-check 到 contact-plan 的幂等迁移 |
 | `interlude.memory.cancel <编号>` | 管理员 | 取消一条等待中的意图 |
 | `interlude.memory.patches [条数]` | 管理员 | 查看人物、关系和世界设定的演化提案 |
 | `interlude.memory.reject <编号>` | 管理员 | 拒绝尚未应用的演化提案 |
@@ -82,6 +85,9 @@ sharedStory:
 | `interlude.overlay.clear <部分>` | 管理员 | 询问 y/n 后，只清理 character、perspective、relationship、world 或 all 对应的设定 overlay |
 | `interlude.overlay.status` | 白名单用户 | 查看当前 overlay、待积累提案和压缩归档数量（只读） |
 | `interlude.overlay.compact` | 管理员 | 只合并和压缩已应用的 overlay，不整理普通剧本记忆 |
+| `interlude.stickerharvest.status` | 已授权用户 | 查看表情包采集（偷表情包）状态：开关、暂存待判定数、累计计数与判定模型可用性（只读） |
+| `interlude.rhythm.status` | 白名单用户 | 查看交往节奏观测：每位参与者"她确认开场→对方承接"的样本数、中位时长、待定与含混数及当前印象句（II-1/II-4，只读） |
+| `interlude.model.test` | 管理员 | 模型调用自检：按任务路由（主叙事/压缩/播种/考据/嵌入）逐提供商发送最小探测请求，报告来源（label·模型@端点主机）、成功耗时或失败信息（含模型返回原文头）；消耗少量 token |
 | `interlude.schedule` | 已授权用户 | 查看 Schedule Preplan 覆盖范围和未来约半天的日程 |
 | `interlude.schedule.refresh` | 管理员 | 重新审查当前日程，保留旧计划作为稳定参考 |
 | `interlude.schedule.rebuild` | 管理员 | `schedule.refresh` 的兼容别名 |
@@ -92,7 +98,7 @@ sharedStory:
 | `interlude.preset.check <分享码>` | 管理员 | 拉取 typ0-site 分享码预设并预览差异，不写入 |
 | `interlude.preset.apply <分享码>` | 管理员 | 确认后应用分享码预设（含 revision 二次校验与快照） |
 | `interlude.preset.status` | 管理员 | 查看最近一次分享码应用状态 |
-| `interlude.preset.sync` | 管理员 | 用 Console 配置的分享码手动强制同步（revision 未变也重应用） |
+| `interlude.preset.sync` | 管理员 | 用 Console 配置的分享码手动强制同步（码未变也重应用） |
 | `interlude.preset.rollback` | 管理员 | 回滚最近一次分享码应用 |
 
 ## 详细用法
@@ -404,7 +410,7 @@ interlude.schedule.refresh
 
 ### `interlude.preset.sync`
 
-使用 Console 首位的 presetSync 配置的分享码手动触发同步：revision 未变也会强制重新应用（含配置模板与故事设定），适合清库重建或配置漂移后恢复。自动路径只在重载时检查且有 revision 幂等闸。
+使用 Console 首位的 presetSync 配置的分享码手动触发同步：分享码未变化也会强制重新应用（含配置模板与故事设定），适合清库重建或配置漂移后恢复。自动路径为"码变更触发"——首次填写或更换新码并重载时同步一次，码未变化的重载不联网检查。
 
 ### `interlude.preset.rollback`
 
@@ -494,3 +500,16 @@ interlude.purge.range 2026-08-14T09:00:00+08:00 2026-08-14T10:00:00+08:00
 | `interlude.compact` 没有整理内容 | 当前未压缩条目或字符数未达到 `memory.sceneEntryThreshold` / `sceneCharacterThreshold`。 |
 | 日志中看不到正常运行信息 | 将 `logging.level` 设为 `info`，并将 `logging.verbosity` 设为 `standard`；排查时序或跳过原因时临时使用 `diagnostic`，完成后恢复。 |
 
+
+
+### `interlude.actions [条数]`
+
+查看统一通信动作投影：已提交动作、人物未来计划、确定延迟和各投递分段状态。Console 详情页支持对 pending/unknown 分段执行取消或人工核实。
+
+### `interlude.policy`
+
+查看每目标额度、最短运行间隔、延期有效期、策略 revision 以及旧 Agency 配置的保守迁移来源。该命令只读。
+
+### `interlude.policy.migrate [confirm]`
+
+先运行无参数形式查看旧 proactive-check 的分页迁移预览；确认后执行幂等迁移。建立配置和数据库快照后再执行，迁移不会撤销已经发生的平台投递。

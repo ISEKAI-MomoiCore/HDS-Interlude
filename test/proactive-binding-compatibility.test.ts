@@ -84,10 +84,16 @@ test('advance: a wrong explicit id cannot fall back to content-only', async () =
   assert.deepEqual(result.entries[0].metadata.deliveryActions, [])
 })
 
-test('advance: host synthesis from the sole say still passes the same gate', async () => {
-  const result = await persist({ script: '她发出<say id="p-1">消息甲</say>', proactiveContact: { participantId: 'alice' } as any })
+test('advance: host synthesis from the sole say requires an explicit send-now declaration', async () => {
+  const result = await persist({ script: '她发出<say id="p-1">消息甲</say>', proactiveContact: { participantId: 'alice', outcome: 'send-now' } as any })
   assert.equal(result.messages[0].content, '消息甲')
   assert.equal(result.entries[0].metadata.deliveryActions.length, 1)
+  // let-go/recheck-later 声明不从唯一 say 合成即时发送（后者由 contact-plan 承载）。
+  for (const outcome of ['let-go', 'recheck-later']) {
+    const other = await persist({ script: '她发出<say id="p-1">消息甲</say>', proactiveContact: { participantId: 'alice', outcome } as any })
+    assert.deepEqual(other.messages, [], outcome)
+    assert.deepEqual(other.entries[0].metadata.deliveryActions, [], outcome)
+  }
 })
 
 test('advance: quotation marks or say alone do not create a send', async () => {
@@ -141,17 +147,41 @@ test('advance: compatible binding does not bypass the global proactive-message s
   assert.deepEqual(result.messages, [])
 })
 
-test('advance: content-only binding does not bypass Agency with no eligible candidate', async () => {
+test('advance: content-only immediate actions deliver directly; ambiguous multi-target actions all deliver independently', async () => {
+  // P3.1 后语义：Agency 候选合成/数值裁决退役——content-only 绑定行动本身就是
+  // "现在发"的声明，无策略限制时直接投递；多目标不再有单候选过滤，每个动作
+  // 独立评估（歧义不再拦截）。
   const result = await persist({ script: '她发出「消息甲」', crossConversationActions: [action('消息甲')] }, 'advance', {}, { enabled: true })
-  assert.deepEqual(result.messages, [])
+  assert.equal(result.messages.length, 1, 'content-only 即时行动直接放行')
+  assert.equal(result.messages[0].content, '消息甲')
+  const ambiguous = await persist({ script: '她发出「消息甲」「消息乙」', crossConversationActions: [action('消息甲'), action('消息乙', { participantId: 'bob' })] }, 'advance', {}, { enabled: true })
+  assert.deepEqual(ambiguous.messages.map((message: any) => message.participantId).sort(), ['alice', 'bob'], '多目标动作全部独立投递')
 })
 
-test('all advance prompt tiers explicitly permit content-only and require literal message bubbles', () => {
+test('all advance prompt tiers retire the legacy schema and bind sends to the CONTACT ACTIONS contract', () => {
   for (const tier of ['lite', 'standard', 'full'] as const) {
     const prompt = systemPrompt('advance', '', '', '', '', '', false, false, false, false, false, undefined, false, undefined, false, false, false, false, undefined,
       { tier, family: 'generic', source: 'manual', probe: 'manual' })
-    assert.match(prompt, /content-only actions are supported; say markup and actionId are not required/)
-    assert.match(prompt, /Write each message bubble verbatim in the script/)
-    assert.doesNotMatch(prompt, /"actionId":"authored say id"/)
+    // 反面：advance 相位不再教 legacy crossConversationActions schema（live 回合专属）。
+    assert.ok(!prompt.includes('crossConversationActions are optional'), `${tier}: legacy 可选教学必须退役`)
+    assert.ok(!prompt.includes('"willingness":0.0'), `${tier}: 意愿数值必须退役`)
+    assert.ok(!prompt.includes('crossConversationActions:[{'), `${tier}: legacy 形态示例必须退役`)
+    // 正面：advance 相位统一指向 CONTACT ACTIONS 契约（say 绑定 = content-only 的后继）。
+    assert.match(prompt, /CONTACT ACTIONS/)
+    assert.match(prompt, /communicationActions/)
   }
+  // standard/full：完整契约要素——say 绑定原文、逐字气泡、目标、timing、无意愿字段。
+  for (const tier of ['standard', 'full'] as const) {
+    const prompt = systemPrompt('advance', '', '', '', '', '', false, false, false, false, false, undefined, false, undefined, false, false, false, false, undefined,
+      { tier, family: 'generic', source: 'manual', probe: 'manual' })
+    assert.match(prompt, /<say id="a1">the exact words<\/say>/, `${tier}: say 绑定示例`)
+    assert.match(prompt, /message content appears exactly once, inside its say tag/, `${tier}: 气泡逐字唯一`)
+    assert.match(prompt, /"target":\{"kind":"participant","id":"listed participant id"\}/, `${tier}: 目标绑定`)
+    assert.match(prompt, /"timing":"now"/, `${tier}: timing 声明`)
+    assert.match(prompt, /do not output agencyWindow or proactiveContact/, `${tier}: 退役 schema 显式禁写`)
+  }
+  // lite：传输行同样指向 CONTACT ACTIONS，明言无意愿字段。
+  const lite = systemPrompt('advance', '', '', '', '', '', false, false, false, false, false, undefined, false, undefined, false, false, false, false, undefined,
+    { tier: 'lite', family: 'generic', source: 'manual', probe: 'manual' })
+  assert.match(lite, /A present outbound action uses communicationActions per the CONTACT ACTIONS contract \(say-bound text, no willingness\)/)
 })

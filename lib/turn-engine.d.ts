@@ -1,13 +1,12 @@
-/**
- * P0 试点：TurnEngine——从 service.ts 抽出的缓冲回合状态管理。
- *
- * 拥有 bufferedNarrativeTurns + narratingStories 两个状态容器，
- * 以及直接操作它们的四个方法（buffer/signal/invalidate/hasPending）。
- * flushBufferedNarrative 的执行体留在 service（它调用模型/投递/持久化），
- * 但通过 beginFlush/endFlush 与本模块交互状态。
- */
-import type { Session } from 'koishi';
 import type { InterludeStory, InterludeParticipant, NarrativeIntent, QuotedMessageContext } from './types';
+/** 中性回合句柄：描述"这批消息最后来自哪个通道"，不含任何宿主对象。
+ * 字段与端点注册表的通道寻址同源（platform/selfId/channelId/endpointId）。 */
+export interface TurnHandle {
+    platform: string;
+    channelId: string;
+    selfId?: string;
+    endpointId?: string;
+}
 export interface BufferedUserMessage {
     content: string;
     occurredAt: Date;
@@ -22,8 +21,10 @@ export interface BufferedNarrativeTurn {
     storyId: string;
     participantId: string;
     messages: BufferedUserMessage[];
-    latestSession?: Session;
+    /** D1：最后一条入站消息的通道句柄（替代旧会话直存字段）。 */
+    latestHandle?: TurnHandle;
     timer?: () => void;
+    debounceStartedAt?: number;
     nextRevision: number;
     inFlightRequestId?: number;
     firstMessageCommittedRequestId?: number;
@@ -59,7 +60,7 @@ export interface TurnEngine {
     /** 状态容器（service 的 flushBufferedNarrative 直接访问） */
     readonly turns: Map<string, BufferedNarrativeTurn>;
     readonly narrating: Set<string>;
-    bufferUserNarrative(story: InterludeStory, participant: InterludeParticipant, session: Session, now: Date, supersededIntents: NarrativeIntent[], content: string, imageSources: string[], audioSources: string[], quote: QuotedMessageContext | undefined, flushTrigger: (key: string, revision: number) => void, endpointId?: string): void;
+    bufferUserNarrative(story: InterludeStory, participant: InterludeParticipant, handle: TurnHandle, now: Date, supersededIntents: NarrativeIntent[], content: string, imageSources: string[], audioSources: string[], quote: QuotedMessageContext | undefined, flushTrigger: (key: string, revision: number) => void, endpointId?: string): void;
     signalIncomingInterruption(story: InterludeStory, participant: InterludeParticipant): void;
     hasPendingNarrative(storyId: string, hasPendingGroupTurn: (storyId: string) => boolean): boolean;
     /** flush 开始：取回 turn 并标记 narrating；返回 null 表示不该 flush。 */

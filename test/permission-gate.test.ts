@@ -94,8 +94,8 @@ test('剧本历史预算：contextEntryLimit 尊重用户设置（无 35 硬地�
   // 小模型场景：显式调小必须生效——此前 Math.max(35, …) 使其失效。
   assert.deepEqual(resolveScriptContextBudget({ contextEntryLimit: 15, contextTimeWindowMinutes: 0 }), { count: 15, minutes: 0 })
   assert.deepEqual(resolveScriptContextBudget({ contextEntryLimit: 5, contextTimeWindowMinutes: 10 }), { count: 5, minutes: 10 })
-  // 缺省回落与 RC57 Console 默认值一致。
-  assert.deepEqual(resolveScriptContextBudget({}), { count: 17, minutes: 6 })
+  // 缺省回落与 Console 默认值一致（密度自适应批次起 18/5）。
+  assert.deepEqual(resolveScriptContextBudget({}), { count: 18, minutes: 5 })
   // 边界钳制。
   assert.deepEqual(resolveScriptContextBudget({ contextEntryLimit: 999, contextTimeWindowMinutes: 9_999 }), { count: 200, minutes: 1_440 })
   assert.equal(resolveScriptContextBudget({ contextEntryLimit: 0 })?.count, 1)

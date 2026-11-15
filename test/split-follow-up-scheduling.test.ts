@@ -5,7 +5,10 @@ import { InterludeService } from '../src/service'
 import { emptyStorySetting, emptyStoryState, NarrativeIntent } from '../src/types'
 
 const methods = InterludeService.prototype as any
-const now = new Date('2026-10-10T05:12:16.000Z')
+// 基线取真实时钟：scheduleNextPendingWake 的补排查询以 new Date() 为“严格
+// 未来”基准（issue #3），固定历史日期会被正确过滤、造出时钟伪差。全文件
+// 断言均为相对运算，基线平移不影响语义。
+const now = new Date()
 const minute = 60_000
 function intent(id: number, type: string, participantId = 'alice', delay = 0): NarrativeIntent {
   return { id, storyId: 's', participantId, type, summary: `task ${id}`, status: 'pending',
@@ -90,7 +93,7 @@ function harness(rows: NarrativeIntent[] = []) {
     reportOperation: () => {}, reportStandalone: () => {}, report: (...args: any[]) => errors.push(args),
   }
   for (const name of ['dueIntents', 'retireExpiredFollowUps', 'pendingFollowUpCommitments', 'pendingSplitSegments',
-    'deferDueIntentsBehindPendingSplits', 'scheduleNextSplitWake', 'reconcileTerminalSplitIntent',
+    'deferDueIntentsBehindPendingSplits', 'scheduleNextPendingWake', 'reconcileTerminalSplitIntent',
     'deferUnresolvedDueFollowUps', 'cancelPendingOutgoingMessages', 'deliverDueSplitSegments',
     'pendingOutgoingDeliveryCandidates', 'recoverPendingDeliveryCandidate', 'applyFollowUpResolutions']) host[name] = methods[name]
   deliveryHost(host)

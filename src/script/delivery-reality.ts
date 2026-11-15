@@ -67,7 +67,7 @@ export function deliveryReality(
       if (!action || action.commitId !== entry.metadata.commitId || !Array.isArray(action.segments)) continue
       if (action.participantId && action.participantId !== participantId && !shareParticipantDetails) continue
       const segments = action.segments.filter((item: any) => item && typeof item.content === 'string'
-        && ['pending', 'delivered', 'failed', 'cancelled'].includes(item.status))
+        && ['pending', 'delivered', 'failed', 'cancelled', 'unknown'].includes(item.status))
       if (!segments.some((item: any) => item.status !== 'delivered')) continue
       projected.push({
         sourceEntryId: entry.id,
@@ -80,7 +80,9 @@ export function deliveryReality(
             index: Number.isSafeInteger(item.index) ? item.index : position,
             kind,
             head: segmentHead(kind, String(item.content)),
-            outcome: item.status === 'pending' ? 'not-confirmed' : item.status === 'failed' ? 'delivery-not-confirmed-after-error' : item.status,
+            outcome: item.status === 'pending' ? 'not-confirmed'
+              : item.status === 'failed' ? 'delivery-not-confirmed-after-error'
+              : item.status === 'unknown' ? 'receipt-unconfirmed' : item.status,
             ...(at ? { at } : {}),
           }
         }),

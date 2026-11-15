@@ -49,14 +49,14 @@ test('eligible group targets survive both payload orders without copying group h
   assert.match(prompt, /crossConversationActions/)
 })
 
-test('both payload modes use the seven-part script continuation scaffold', () => {
+test('both payload modes use the eight-part script continuation scaffold', () => {
   const req = request([entry(1, 'character-message', '拿到了。确实挺大杯。', 50)], '你健忘吗')
   const legacy = toPromptPayload(req) as Record<string, unknown>
   const explicitOff = toPromptPayload(req, { cacheFirst: false }) as Record<string, unknown>
   assert.deepEqual(Object.keys(explicitOff), Object.keys(legacy))
   assert.deepEqual(Object.keys(legacy), [
     'storyIdentity', 'relevantEstablishedEpisodes', 'currentSceneEvidence', 'ongoingThreads',
-    'availableNearFuture', 'incomingEvent', 'authoringWindow',
+    'availableNearFuture', 'writingReference', 'incomingEvent', 'authoringWindow',
   ])
   assert.equal('recentExchange' in (legacy as any).relevantEstablishedEpisodes, false)
 })
@@ -67,7 +67,7 @@ test('cache-first puts stable blocks first and per-turn fields beside the decisi
   const keys = Object.keys(payload)
   assert.deepEqual(keys, [
     'storyIdentity', 'relevantEstablishedEpisodes', 'currentSceneEvidence', 'ongoingThreads',
-    'availableNearFuture', 'incomingEvent', 'authoringWindow',
+    'availableNearFuture', 'writingReference', 'incomingEvent', 'authoringWindow',
   ])
   const established = payload.relevantEstablishedEpisodes as Record<string, unknown>
   assert.equal(Object.keys(established)[0], 'recentScript')

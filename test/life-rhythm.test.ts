@@ -7,7 +7,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { ATTENTION_MULTIPLIERS, planUrge, commitUrge, urgeUserEvent, resolveUrgeConfig, normalizeUrgeState, type UrgeState } from '../src/urge'
-import { normalizeLifeRhythm, lifeRhythmStale, lifeRhythmFromLegacyStatus } from '../src/story-state'
+import { normalizeLifeRhythm, lifeRhythmStale, lifeRhythmFromLegacyStatus, decodeStoryState, CURRENT_STORY_STATE_VERSION } from '../src/story-state'
 
 const minute = 60_000
 const now = Date.now()
@@ -93,6 +93,42 @@ test('lifeRhythmFromLegacyStatus 三值→五档映射', () => {
   assert.equal(lifeRhythmFromLegacyStatus(undefined), undefined)
 })
 
+// ── 7.1.4 统一事实源：lifeStatus 加载迁移（版本 4→5）────────────────────
+
+test('7.1.4 迁移：旧存档 lifeStatus-only → 并入 lifeRhythm，字段消失', () => {
+  const legacy = {
+    schemaVersion: 4,
+    lifeStatus: { status: 'busy', updatedAt: new Date(now).toISOString() },
+  }
+  const decoded = decodeStoryState(legacy)
+  assert.equal(decoded.lifeRhythm?.attention, 'occupied')
+  assert.equal(decoded.lifeRhythm?.source, 'fallback')
+  assert.equal(decoded.lifeRhythm?.assessedAt, legacy.lifeStatus.updatedAt)
+  assert.equal('lifeStatus' in decoded, false, '字段不再输出')
+  assert.equal(decoded.schemaVersion, CURRENT_STORY_STATE_VERSION)
+  // 幂等：重解码（旧值已消费）不再产生变化。
+  const twice = decodeStoryState(JSON.parse(JSON.stringify(decoded)))
+  assert.deepEqual(twice.lifeRhythm, decoded.lifeRhythm)
+  assert.equal('lifeStatus' in twice, false)
+})
+
+test('7.1.4 迁移：已有 lifeRhythm 不被旧 lifeStatus 覆盖；无效旧值被丢弃', () => {
+  const both = {
+    schemaVersion: 4,
+    lifeStatus: { status: 'asleep', updatedAt: new Date(now).toISOString() },
+    lifeRhythm: { attention: 'phone-focused', basis: '她在看手机', assessedAt: new Date(now).toISOString(), source: 'narrator' },
+  }
+  const decoded = decodeStoryState(both)
+  assert.equal(decoded.lifeRhythm?.attention, 'phone-focused', '五档优先')
+  assert.equal(decoded.lifeRhythm?.source, 'narrator')
+  assert.equal('lifeStatus' in decoded, false)
+  // 无效旧值（非法状态/坏时间戳）不产生 fallback 节奏。
+  const invalid = decodeStoryState({ schemaVersion: 4, lifeStatus: { status: 'dancing', updatedAt: new Date(now).toISOString() } })
+  assert.equal(invalid.lifeRhythm, undefined)
+  // 旧值也不漏进 extensions（键仍在已知集合）。
+  assert.equal(invalid.extensions ? 'lifeStatus' in invalid.extensions : false, false)
+})
+
 test('commitUrge 提取 rhythmAttention(合法五档才带)', () => {
   const script = '她躺在床上翻看手机。'
   const raw = { value: 0.8, basisQuote: '她躺在床上', rhythmAttention: 'phone-focused' }
@@ -108,4 +144,29 @@ test('normalizeUrgeState 保留 rhythmAttention', () => {
   const state: UrgeState = { ...fresh(), rhythmAttention: 'occupied' }
   const restored = normalizeUrgeState(JSON.parse(JSON.stringify({ ...state, mode: '{}' })), now)
   assert.equal(restored.rhythmAttention, 'occupied')
+})
+
+test('7.1.4 压缩器只写 lifeRhythm：不再派生/写入 lifeStatus（含经迁移的旧存档）', async () => {
+  const { InterludeService } = await import('../src/service')
+  let stored: any = { schemaVersion: 4, lifeStatus: { status: 'idle', updatedAt: new Date(now).toISOString() } }
+  const host: any = {
+    memoryConfig: { sceneHookCharacters: 100, sceneSummaryCharacters: 300, arcSummaryCharacters: 300 },
+    dbGet: async () => [],
+    dbSet: async (table: string, _q: any, patch: any) => { if (table === 'interlude_story') stored = patch.state },
+    getStory: async () => ({ id: 's', state: stored }),
+    activeArc: async () => ({ id: 1 }),
+    reportOperation: () => {},
+  }
+  const decision = { scene: { summary: '生活继续' }, arc: { summary: '原剧情弧' }, lifeRhythm: { attention: 'occupied', basis: '她在工作' } }
+  const entries: any[] = [{ id: 1, storyId: 's', kind: 'script', actor: 'narrator', content: '生活继续。', occurredAt: new Date(now), metadata: {}, createdAt: new Date(now) }]
+  await (InterludeService.prototype as any).persistCompactionOutputs.call(host, { id: 's' }, { id: 1, entryCount: 0 }, decision, entries, new Date(now))
+  const first = decodeStoryState(stored)
+  assert.equal(first.lifeRhythm?.attention, 'occupied')
+  assert.equal(first.lifeRhythm?.source, 'compactor')
+  assert.equal('lifeStatus' in first, false, '旧三值不再落库')
+  assert.equal(first.schemaVersion, CURRENT_STORY_STATE_VERSION)
+  // 重复评估保持合法存档；新时间下的相同节奏续期由第三轮回归覆盖。
+  await (InterludeService.prototype as any).persistCompactionOutputs.call(host, { id: 's' }, { id: 1, entryCount: 0 }, decision, entries, new Date(now))
+  assert.equal(decodeStoryState(stored).lifeRhythm?.attention, 'occupied')
+  assert.equal('lifeStatus' in decodeStoryState(stored), false)
 })

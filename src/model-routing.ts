@@ -3,7 +3,7 @@ import type {
 } from './narrator'
 import type { AlterSystemConfig } from './types'
 
-export type ModelTask = 'main' | 'compaction' | 'timeline' | 'alter' | 'embedding' | 'stickers' | 'vision'
+export type ModelTask = 'main' | 'compaction' | 'timeline' | 'alter' | 'embedding' | 'stickers' | 'vision' | 'research'
 
 export interface ResolvedModelTarget {
   providerId: string
@@ -32,6 +32,7 @@ export interface ModelRoutingTable {
   embedding: ResolvedModelRoute
   stickers: ResolvedModelRoute
   vision: ResolvedModelRoute
+  research: ResolvedModelRoute
 }
 
 export const ZHIPU_OFFICIAL_CHAT_ENDPOINT = 'https://open.bigmodel.cn/api/paas/v4/chat/completions'
@@ -62,6 +63,7 @@ export function resolveModelRouting(config: ModelConfig, alterConfig?: AlterSyst
       : disabledRoute('embedding', embeddingTarget),
     stickers: resolveAssignedOnlyRoute('stickers', providers),
     vision: resolveAssignedOnlyRoute('vision', providers),
+    research: resolveAssignedOnlyRoute('research', providers),
   }
 }
 
@@ -105,11 +107,12 @@ export function isAssignedTo(provider: ProviderConfig, task: Exclude<ModelTask, 
       : task === 'alter' ? provider.useForAlter === true
         : task === 'embedding' ? provider.useForEmbedding === true
           : task === 'stickers' ? provider.useForStickers === true
-            : provider.useForVision === true
+            : task === 'research' ? provider.useForResearch === true
+              : provider.useForVision === true
 }
 
 export function formatModelRouting(table: ModelRoutingTable) {
-  const tasks: ModelTask[] = ['main', 'compaction', 'timeline', 'alter', 'embedding', 'stickers', 'vision']
+  const tasks: ModelTask[] = ['main', 'compaction', 'timeline', 'alter', 'embedding', 'stickers', 'vision', 'research']
   return tasks.map(task => {
     const route = table[task]
     const provider = route.providers[0]
@@ -142,7 +145,7 @@ function resolveRoute(task: Exclude<ModelTask, 'timeline' | 'stickers' | 'vision
   return { task, target, providers: [], assigned: false, available: false, reason: 'unavailable' }
 }
 
-function resolveAssignedOnlyRoute(task: 'stickers' | 'vision', providers: ProviderConfig[]): ResolvedModelRoute {
+function resolveAssignedOnlyRoute(task: 'stickers' | 'vision' | 'research', providers: ProviderConfig[]): ResolvedModelRoute {
   const assigned = providers.filter(provider => provider.enabled && provider.endpoint && provider.model && isAssignedTo(provider, task))
   return {
     task,

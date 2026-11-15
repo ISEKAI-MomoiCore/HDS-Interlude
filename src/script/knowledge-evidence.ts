@@ -24,8 +24,13 @@ export function normalizeKnowledgeEvidence(raw: unknown, entries: ScriptEntry[],
       || !clause.quote.trim() || clause.quote.length > 800 || !entry.content.includes(clause.quote)) continue
     const delivered = ['user-message', 'character-message', 'group-message', 'character-group-message'].includes(entry.kind)
     // Keep the quote, with its actual evidential role, instead of rejecting prose.
-    clauses.push({ role: clause.role === 'confirmation' && !delivered ? 'interpretation' : clause.role,
-      sourceEntryId: entry.id, quote: clause.quote })
+    // 统一动作 §6.4 触点：script 原文里"写到发送"不等于对方已收到——observation
+    // 引文若命中该条目账本中未确认送达的发送气泡，降级为 interpretation；
+    // 已确认送达的引用保持 observation。方向保守：误降级只减弱证据强度。
+    const role = clause.role === 'confirmation' && !delivered ? 'interpretation'
+      : clause.role === 'observation' && scriptQuoteSendUnconfirmed(entry, clause.quote) ? 'interpretation'
+      : clause.role
+    clauses.push({ role, sourceEntryId: entry.id, quote: clause.quote })
   }
   let mode = modes.includes(value.mode || '') ? value.mode! : 'unclassified'
   if (!clauses.length) mode = 'unclassified'
@@ -53,6 +58,19 @@ export function knowledgeClauses(knowledge: KnowledgeEvidence | undefined) {
   return Array.isArray(knowledge?.clauses) ? knowledge.clauses : []
 }
 
+/** 与引文重叠的发送气泡是否仍未确认送达。只比对 message 分段（发送原文）；
+ * 平台动作分段（表情/反应标识）不是发送散文，不参与重叠判定。 */
+function scriptQuoteSendUnconfirmed(entry: ScriptEntry, quote: string): boolean {
+  if (entry.kind !== 'script') return false
+  const actions = Array.isArray(entry.metadata?.deliveryActions) ? entry.metadata.deliveryActions as any[] : []
+  const clipped = quote.trim()
+  if (!clipped) return false
+  return actions.some(action => Array.isArray(action?.segments) && action.segments.some((segment: any) =>
+    segment?.kind === 'message' && typeof segment.content === 'string' && segment.content.trim()
+    && segment.status !== 'delivered'
+    && (clipped.includes(segment.content.trim()) || segment.content.includes(clipped))))
+}
+
 export function knowledgeRelatedIds(knowledge: KnowledgeEvidence | undefined) {
   return Array.isArray(knowledge?.relatedFactIds) ? knowledge.relatedFactIds : []
 }
@@ -64,6 +82,8 @@ export function factEvidenceForPrompt(fact: NarrativeFact) {
   return { id: fact.id, scope: fact.scope, content: fact.content,
     unresolved: fact.unresolved, status: fact.status, sourceEntryIds: fact.sourceEntryIds,
     authority: knowledge?.mode === 'belief' ? 'attributed-belief' : 'derived-record',
+    // Issue #21：通道域随证据投影——群=她听说的、私聊=双方确立的、缺省=亲历。
+    ...(fact.sourceChannel ? { sourceChannel: fact.sourceChannel } : {}),
     knowledge: knowledge ?? { mode: 'unclassified', clauses: [], relatedFactIds: [] } }
 }
 
@@ -105,4 +125,4 @@ export function contactEvidenceThreads(facts: NarrativeFact[], entries: ScriptEn
   })
 }
 
-export const KNOWLEDGE_WRITING_FRAME = 'EVIDENCE AND EXPECTATION: the original remains the life script. Her belief, wish and imagined explanation belong to her perspective; an observed action belongs to its actor. Derived records retain these roles and conditions. contactThreads supplies original proposals, conditions and replies, not a second plot: unfinished contact may motivate another question or private anticipation while confirmation and timing stay open. Elapsed silence can change her feelings without changing what the other person promised; platform delivery alone establishes neither reading nor agreement.'
+export const KNOWLEDGE_WRITING_FRAME = 'EVIDENCE AND EXPECTATION: the original remains the life script. Her belief, wish and imagined explanation belong to her perspective; an observed action belongs to its actor. Derived records retain these roles and conditions. contactThreads supplies original proposals, conditions and replies, not a second plot: unfinished contact may motivate another question or private anticipation while confirmation and timing stay open. Elapsed silence can change her feelings without changing what the other person promised; platform delivery alone establishes neither reading nor agreement. Facts carry a sourceChannel when the channel matters: group means she heard or saw it in a group chat — an overheard thing she may retell as something picked up in the group, never her own direct experience; private means it was established in a private exchange with that person; absent means her own lived experience. Hearsay from a group stays hearsay unless later evidence in her own life confirms it.'

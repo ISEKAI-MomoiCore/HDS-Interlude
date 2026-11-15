@@ -1,8 +1,8 @@
 import type { ScriptCommitDraft, ScriptEventDraft } from './contract'
 import { isOutgoingScriptEvent } from './contract'
 
-export type ScriptDeliveryStatus = 'pending' | 'delivered' | 'partial' | 'failed' | 'cancelled'
-export type ScriptDeliverySegmentStatus = 'pending' | 'delivered' | 'failed' | 'cancelled'
+export type ScriptDeliveryStatus = 'pending' | 'delivered' | 'partial' | 'failed' | 'cancelled' | 'unknown'
+export type ScriptDeliverySegmentStatus = 'pending' | 'delivered' | 'failed' | 'cancelled' | 'unknown'
 export type ScriptDeliverySegmentKind = 'message' | 'local-media' | 'native-face' | 'message-reaction'
 
 export interface ScriptDeliverySegment {
@@ -111,9 +111,13 @@ export function platformActionReference(
   return segment ? deliveryReference(event, scriptEntryId, segment.index) : undefined
 }
 
+/** 聚合优先级（设计 §7.2，按序求值取第一条匹配）：全部送达 > 任一 unknown >
+ * 有确定送达（partial）> 已排期或可重试（pending）> 确定失败 > 取消。
+ * unknown 是"调用可能已到达平台"的待核实态，高于未完成而低于确定送达。 */
 export function aggregateDeliveryStatus(segments: ScriptDeliverySegment[]): ScriptDeliveryStatus {
   if (!segments.length || segments.every(item => item.status === 'pending')) return 'pending'
   if (segments.every(item => item.status === 'delivered')) return 'delivered'
+  if (segments.some(item => item.status === 'unknown')) return 'unknown'
   if (segments.some(item => item.status === 'delivered')) return 'partial'
   if (segments.some(item => item.status === 'pending')) return 'pending'
   if (segments.some(item => item.status === 'failed')) return 'failed'

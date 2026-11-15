@@ -10,8 +10,8 @@ const now = new Date('2026-09-09T12:00:00Z')
 
 test('Console sections follow the documented setup order', () => {
   assert.deepEqual(Object.keys(Config.dict), [
-    'presetSync', 'storyDefaults', 'model', 'onebot', 'sharedStory', 'runtime', 'urge', 'schedulePreplan', 'timelineDirector', 'agency',
-    'chatActions', 'stickers', 'memory', 'alterSystem', 'browser', 'worldSeeder', 'weather', 'longHorizon', 'qzone', 'blindMode', 'logging', 'modelCapture', 'mainPrompt', 'chatRhythm',
+    'presetSync', 'storyDefaults', 'model', 'onebot', 'sharedStory', 'runtime', 'urge', 'schedulePreplan', 'timelineDirector', 'agency', 'deliveryPolicy',
+    'chatActions', 'stickers', 'memory', 'alterSystem', 'browser', 'worldSeeder', 'weather', 'longHorizon', 'qzone', 'blindMode', 'logging', 'modelCapture', 'research', 'mainPrompt', 'chatRhythm',
   ])
   // 分类前缀让配置页按 必填→结构→节奏→表达→内在→扩展→维护 分组可读。
   const headers = Object.values(Config.dict).map((item: any) => String(item.meta?.description ?? ''))
@@ -19,16 +19,17 @@ test('Console sections follow the documented setup order', () => {
   assert.match(headers[1], /^【必填 1】/)
   assert.match(headers[4], /^【结构 4】/)
   assert.match(headers[5], /^【节奏 5】/)
-  assert.match(headers[10], /^【表达 10】/)
-  assert.match(headers[12], /^【内在 12】/)
-  assert.match(headers[14], /^【扩展 14】/)
-  assert.match(headers[15], /^【扩展 15】/)
-  assert.match(headers[16], /^【扩展 16】运行时天气/)
-  assert.match(headers[17], /^【扩展 17】长线叙事催化器/)
-  assert.match(headers[18], /^【扩展 18】QQ 空间/)
-  assert.match(headers[19], /^【维护 19】/)
-  assert.match(headers[20], /^【维护 20】/)
-  assert.match(headers[21], /^【维护 21】/)
+  assert.match(headers[10], /^【运行 9b】统一投递策略/)
+  assert.match(headers[11], /^【表达 10】/)
+  assert.match(headers[13], /^【内在 12】/)
+  assert.match(headers[15], /^【扩展 14】/)
+  assert.match(headers[16], /^【扩展 15】/)
+  assert.match(headers[17], /^【扩展 16】运行时天气/)
+  assert.match(headers[18], /^【扩展 17】长线叙事催化器/)
+  assert.match(headers[19], /^【扩展 18】QQ 空间/)
+  assert.match(headers[20], /^【维护 19】/)
+  assert.match(headers[21], /^【维护 20】/)
+  assert.match(headers[22], /^【维护 21】/)
 })
 
 test('chat actions are opt-in and platform-scoped', () => {
@@ -49,6 +50,32 @@ test('local sticker library is opt-in and requires an explicitly assigned visual
   assert.equal(stickers.descriptionResponseFormat.meta.default, 'json-object')
 })
 
+test('sticker harvesting stays opt-in globally and per group rule', () => {
+  const harvest = Config.dict.stickers.dict.harvest.dict
+  assert.equal(harvest.enabled.meta.default, false)
+  assert.equal(harvest.privateChats.meta.default, false)
+  assert.equal(harvest.stagingDirectory.meta.default, 'data/hds-interlude/sticker-harvest')
+  assert.equal(harvest.keptSubfolder.meta.default, 'harvested')
+  assert.equal(harvest.scanIntervalMinutes.meta.default, 30)
+  assert.equal(Config.dict.onebot.dict.groupChats.inner.dict.stickerHarvest.meta.default, false)
+})
+
+test('group audio always-trigger stays on by default for backward compatibility', () => {
+  assert.equal(Config.dict.onebot.dict.groupChats.inner.dict.audioAlwaysTriggers.meta.default, true)
+})
+
+test('I-6b three dimensions carry no schema default (derived from responseMode); skipJitter defaults on', () => {
+  const inner = Config.dict.onebot.dict.groupChats.inner.dict
+  // 三维度不带 Schema 默认值——cordis 填充会淹没"迁移前未设置"信号，
+  // 缺省由 resolveGroupDimensions 从 responseMode 派生。
+  assert.equal(inner.collectionScope.meta.default, undefined)
+  assert.equal(inner.immediateTrigger.meta.default, undefined)
+  assert.equal(inner.backgroundParticipation.meta.default, undefined)
+  assert.equal(inner.responseMode.meta.default, 'mention-only', '旧字段默认不变')
+  // §7.6.3 兼容选项：跳过条数抖动默认保持现行为。
+  assert.equal(inner.skipJitter.meta.default, true)
+})
+
 test('Blind Mode defaults to a minimal ten-minute heartbeat', () => {
   const blindMode = Config.dict.blindMode.dict
   assert.equal(blindMode.enabled.meta.default, false)
@@ -63,6 +90,18 @@ test('main-narrative fine-tuning capture stays opt-in with a local JSONL directo
   assert.equal(modelCapture.directory.meta.default, 'data/hds-interlude/model-capture')
 })
 
+test('research agent stays opt-in with a zero-config search fallback', () => {
+  const research = Config.dict.research.dict
+  assert.equal(research.enabled.meta.default, false)
+  assert.equal(research.searchBackend.meta.default, 'auto')
+  assert.equal(research.maxRounds.meta.default, 2)
+  assert.equal(research.deskCapacity.meta.default, 8)
+  const jev = research.jev.dict
+  assert.equal(jev.enabled.meta.default, false)
+  assert.equal(jev.noulThreshold.meta.default, 0.6)
+  assert.equal(jev.model.meta.default, 'jev-1.13.0')
+})
+
 test('ignored compatibility switches stay out of the active Console', () => {
   assert.equal('enabled' in Config.dict.sharedStory.dict, false)
   assert.equal('pauseAfterConversationMinutes' in Config.dict.runtime.dict, false)
@@ -72,7 +111,7 @@ test('ignored compatibility switches stay out of the active Console', () => {
 
 test('runtime and plugin exports share one version constant', () => {
   assert.equal(version, HDS_INTERLUDE_VERSION)
-  assert.equal(version, '1.0.1-rc58')
+  assert.equal(version, '1.0.1-rc60')
 })
 
 test('layered colored logs are the Console default and remain optional', () => {
@@ -220,8 +259,12 @@ test('RC57 runtime defaults match the reviewed compact-context profile', () => {
   assert.equal(runtime.forwardMessage.dict.maxDepth.meta.default, 3)
   assert.equal(runtime.narrativeRetryDelaySeconds.meta.default, 15)
   assert.equal(runtime.narrativeRetryMaxAttempts.meta.default, 6)
-  assert.equal(runtime.contextEntryLimit.meta.default, 17)
-  assert.equal(runtime.contextTimeWindowMinutes.meta.default, 6)
+  assert.equal(runtime.contextEntryLimit.meta.default, 18)
+  assert.equal(runtime.contextTimeWindowMinutes.meta.default, 5)
+  assert.equal(runtime.contextEntryMode.meta.default, 'fixed')
+  assert.equal(runtime.contextEntry.dict.private.dict.mode.meta.default, 'inherit')
+  assert.equal(runtime.contextEntry.dict.private.dict.tiers.dict.burst.meta.default, 12)
+  assert.equal(runtime.contextEntry.dict.group.dict.tiers.dict.advance.meta.default, 25)
   assert.equal(runtime.memoryLimit.meta.default, 20)
   assert.equal(runtime.maxScriptCharacters.meta.default, 1_400)
   assert.equal(runtime.maxMessageCharacters.meta.default, 1_500)
@@ -319,7 +362,7 @@ test('visible Console section numbers are unique and continuous', () => {
     const match = String(item.meta?.description ?? '').match(/^【[^】]+ (\d+)】/)
     return match ? [Number(match[1])] : []
   })
-  assert.deepEqual(numbers, Array.from({ length: 21 }, (_, index) => index + 1))
+  assert.deepEqual(numbers, Array.from({ length: 22 }, (_, index) => index + 1))
 })
 
 test('candidate reveal description distinguishes inactive, vague and revealed candidates', () => {

@@ -1,6 +1,7 @@
 export type StoryStatus = 'active' | 'paused' | 'archived';
-/** 生活节奏五档：Urge 推进密度的乘法因子输入。由压缩器/主叙事/入站事件
- * 判定，planUrge 消费；与 lifeStatus 三值并存（后者服务群聊意愿 auto 档）。 */
+/** 生活节奏五档：生活节奏的唯一事实源（7.1.4 统一）。由压缩器/主叙事/入站
+ * 事件判定，planUrge 与群聊意愿 auto 档（经三桶映射）消费；旧三值
+ * lifeStatus 由 story-state 加载迁移并入，不再单独存在。 */
 export type LifeRhythmAttention = 'phone-focused' | 'available' | 'occupied' | 'resting' | 'asleep';
 export interface CharacterSetting {
     name: string;
@@ -57,8 +58,8 @@ export interface StoryState {
     workingDetails?: WorkingDetail[];
     /** Source revisions prevent a delayed background review reopening settled details. */
     workingDetailResolutions?: Record<string, number>;
-    /** 主动联系审计窗（最近 20 条）：每参与者每日上限的计数来源，不进模型上下文。
-     * ref 关联放行时的投递草稿；投递终态失败时置 voided，不再消耗每日配额。 */
+    /** 主动联系审计窗（历史遗留，最近 20 条）：P5 起额度由投递账本派生，本字段仅由
+     * 状态解码器保留历史可读性，不再写入。origin 为历史留档。 */
     proactiveContactLog?: Array<{
         participantId: string;
         at: string;
@@ -66,14 +67,12 @@ export interface StoryState {
         channelReason?: string;
         ref?: string;
         voided?: boolean;
+        origin?: string;
     }>;
-    /** 压缩器写入的主角注意力状态（busy/asleep/idle）；群聊意愿 auto 档读取。 */
-    lifeStatus?: {
-        status: 'busy' | 'asleep' | 'idle';
-        updatedAt: string;
-    };
-    /** 生活节奏五档（压缩器主写/主叙事与入站可覆盖）：Urge 推进密度的乘法因子。
-     * 过期（>2h）视为 stale，退回 restWindows 兜底。 */
+    /** 生活节奏五档（压缩器主写/主叙事与入站可覆盖）：生活节奏唯一事实源，
+     * Urge 推进密度与群聊意愿 auto 档（经三桶映射）消费。
+     * 过期（>2h）视为 stale，退回 restWindows 兜底；旧三值 lifeStatus 由
+     * story-state 加载迁移并入本字段。 */
     lifeRhythm?: {
         attention: LifeRhythmAttention;
         basis: string;
@@ -263,8 +262,6 @@ export interface ParticipantState {
     lastCharacterMessageAt?: string;
 }
 export interface StoryAutomationState {
-    /** 对话活跃期结束时间；在此之前只处理必要的到期意图，不补写日常生活。 */
-    quietUntil?: string;
     /** 下一次自动生活补写的最早时间。 */
     nextAdvanceAt?: string;
     /** Retry gate for a failed automatic timeline window. Persisted so a
@@ -464,6 +461,11 @@ export interface NarrativeFact {
      * no longer controls visibility, ownership, or narrative scope.
      */
     participantId: string;
+    /** Issue #21（方向 c）：事实的通道域——'group'=仅群聊条目支撑（她听说的，
+     * 转述应带听说口吻）、'private'=仅私聊条目支撑、'mixed'=两者都有；缺省=
+     * 生活/剧本条目（她自己的经历）。只服务提示词的认识论区分，不做可见性
+     * 过滤——事实仍是全局叙事材料。 */
+    sourceChannel?: 'group' | 'private' | 'mixed';
     scope: 'character' | 'world' | 'relationship' | 'event' | 'promise';
     content: string;
     importance: number;
@@ -553,9 +555,6 @@ export interface OutgoingMessageDraft {
     laterSegments?: string[];
     /** Lets a failed delivery explain whether it originated in a live user turn. */
     userInitiated?: boolean;
-    /** Agency 放行的主动联系在放行时预记入 proactiveContactLog（ref 关联）；
-     * 投递终态失败时宿主按 ref 作废该条计数。 */
-    proactiveContactRef?: string;
     /** Set by transport when a literal quote was converted into a platform reply. */
     quoteMessageId?: string;
     /** Stable link back to the one script event that authored all bubbles. */
@@ -602,24 +601,24 @@ export interface NarrativeInteraction {
 export interface NarrativeChannelData {
     turnSources?: Array<{
         endpointId: string;
-        channelKind: 'qq' | 'wechat';
+        channelKind: import('./endpoints').EndpointChannelKind;
         receivedSeq: number;
     }>;
     /** True only when the currently flushed debounce batch contains multiple endpoints. */
     batchMultiEndpoint?: boolean;
     lastEntryChannel?: {
         endpointId?: string;
-        channelKind?: 'qq' | 'wechat';
+        channelKind?: import('./endpoints').EndpointChannelKind;
         conversationKind?: 'private' | 'group';
     };
     currentChannel?: {
         endpointId?: string;
-        channelKind?: 'qq' | 'wechat';
+        channelKind?: import('./endpoints').EndpointChannelKind;
         conversationKind?: 'private' | 'group';
     };
     replyEndpoint?: {
         endpointId?: string;
-        channelKind?: 'qq' | 'wechat';
+        channelKind?: import('./endpoints').EndpointChannelKind;
     };
 }
 /** Host-filtered transport choice exposed only when multiple channel kinds
@@ -628,7 +627,7 @@ export interface NarrativeEndpointOption {
     endpointId: string;
     targetId: string;
     targetKind: 'participant' | 'group';
-    channelKind: 'qq' | 'wechat';
+    channelKind: import('./endpoints').EndpointChannelKind;
     conversationKind: 'private' | 'group';
     online: boolean;
 }
@@ -728,6 +727,8 @@ export interface NarrativeDecision {
     agencyWindow?: Partial<AgencyWindowState>;
     /** Optional life-grounded contact decision for advance/proactive-check turns. */
     proactiveContact?: ProactiveContactDraft;
+    /** P3 统一动作契约：模型侧新格式（<say id> 绑定 + 目标/时机），经适配器归一。 */
+    communicationActions?: unknown[];
     /** Present only when the request explicitly asks for a low-frequency continuity refresh. */
     continuity?: ContinuitySnapshot;
     /** The machine-readable result placed after the prose. */
@@ -757,6 +758,9 @@ export interface NarrativeDecision {
         content: string;
         reason: string;
     }>;
+    /** P3：新契约 communicationActions 的适配拒绝原因（say 绑定失败/目标越权/
+     * 缺时效等），供服务端诊断日志留痕；拒绝条目不进入内部动作。 */
+    communicationActionRejections?: string[];
     /** Optional visible reply to the configured OneBot group that caused this turn. */
     groupReply?: {
         mode: 'none' | 'immediate';
@@ -821,11 +825,31 @@ export interface NarrativeContractFeatures {
     worldEvents: boolean;
     /** [管理员注记] entry semantics. */
     adminNotes: boolean;
+    /** 考据案头：research-lookup 意图类型与 author-facing 参考资料段。 */
+    researchDesk: boolean;
 }
 export interface NarrativeRequest {
+    /** D2.5（解耦设计 §4.5）：平台词汇注入点——适配器提供各自措辞；
+     * 缺省 = 现状 QQ 字面量（渲染逐字节不变）。暂无第二实现。 */
+    platformWording?: import('./narrator').PlatformContractWording;
     urgeEnabled?: boolean;
+    /** 考据案头快照（author-facing 写作参考；仅 research.enabled 且非空时注入）。 */
+    researchDesk?: Array<{
+        text: string;
+        source: string;
+        confidence: number;
+        hard: boolean;
+    }>;
     /** 合约自动拼装：按功能开关与窗口数据裁剪系统合约板块；缺省 = 完整合约。 */
     contractFeatures?: NarrativeContractFeatures;
+    /** I-6a：advance 相位的群消息背景（系统侧概况 + 最新 K 条原文）。
+     * 独立于 recentScript 的有界背景通道——不替代群触发回合的全剂量视图；
+     * 历史背景，不是当前事件。 */
+    groupBackground?: import('./narrative/group-background').GroupBackgroundSection[];
+    /** II-1 交往节奏印象：私聊相位从已确认投递事实采样的节奏摘要一句话
+     * （她确认的开场与对方承接速度）。投递派生的背景经验，不是回复义务；
+     * 证据不足时不注入。 */
+    interactionRhythm?: string;
     contactThreads?: import('./script/knowledge-evidence').ContactEvidenceThread[];
     /** 主模型只读取经过预算控制的连续性包，不读取完整历史。 */
     phase: NarrativePhase;
@@ -1110,9 +1134,8 @@ export interface CompactionDecision {
     statePatches?: StatePatchDraft[];
     workingDetails?: WorkingDetailDraft[];
     schedulePreplan?: SchedulePreplanProposal;
-    /** 主角当前注意力状态（群聊意愿 auto 档输入）；由压缩器附带返回。 */
-    lifeStatus?: 'busy' | 'asleep' | 'idle';
-    /** 压缩器输出的五档生活节奏（Urge 推进密度输入）。 */
+    /** 压缩器输出的五档生活节奏（生活节奏唯一事实源；Urge 与群门 auto 档输入）。
+     * 旧三值 lifeStatus 草稿通道已随 7.1.4 统一移除。 */
     lifeRhythm?: {
         attention: LifeRhythmAttention;
         basis: string;

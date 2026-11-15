@@ -37,14 +37,16 @@ test('current events lead reappraisal before relationship tendencies', () => {
 })
 
 test('multi-platform transport selection is opt-in while single-platform prompts stay lightweight', () => {
-  const single = systemPrompt('advance', '', '', '', '', '', false, false, false, false, false, undefined, false, undefined, false, false, false, false, undefined, undefined, false)
+  const single = systemPrompt('advance', '', '', '', '', '', false, false, false, false, false, undefined, false, undefined, false, false, false, false, undefined, undefined, false, false)
   assert.doesNotMatch(single, /MULTI-PLATFORM TRANSPORT SELECTION/)
   assert.doesNotMatch(single, /availableOutgoingEndpoints/)
 
   const multi = systemPrompt('advance', '', '', '', '', '', false, false, false, false, false, undefined, false, undefined, false, false, false, false, undefined, undefined, false, true)
   assert.match(multi, /MULTI-PLATFORM TRANSPORT SELECTION/)
   assert.match(multi, /endpointId is an HDSI transport endpoint identifier, not an HTTP API endpoint/)
-  assert.match(multi, /add "endpointId" inside the crossConversationActions object/)
+  // P3.2：端点选择措辞格式中立——advance 相位走 communicationActions，
+  // live 回合走 crossConversationActions，两个形态共用同一条 endpointId 规则。
+  assert.match(multi, /add "endpointId" inside the action object \(communicationActions target, or crossConversationActions on live turns\)/)
   assert.match(multi, /whose targetId matches that action's participantId/)
 })
 
@@ -147,16 +149,45 @@ test('recent script ownership makes narrative thoughts unambiguously protagonist
   assert.match(prompt, /a thought about the user is not a thought by the user/)
 })
 
-test('Agency Window is available only on background action phases and stays separate from Alter', () => {
+test('unified contact-action contract enters background action phases only and retires agency schemas', () => {
   const advance = systemPrompt('advance', '', '', '', '', '', false, true, true)
-  assert.match(advance, /agencyWindow may be/)
-  assert.match(advance, /Write the protagonist’s life first/)
-  assert.match(advance, /must not copy emotionalOffset, infer contact from Alter values/)
-  assert.match(advance, /recheck-later/)
+  // P3.1 统一作者动作契约：advance 相位注入 say 绑定 + communicationActions。
+  assert.match(advance, /CONTACT ACTIONS \(unified author-action contract\)/)
+  assert.match(advance, /<say id="a1">the exact words<\/say>/)
+  assert.match(advance, /"communicationActions": \[\{"id":"a1","target":\{"kind":"participant","id":"listed participant id"\},"timing":"now"\}\]/)
+  assert.match(advance, /one entry per logical message per recipient/, '多目标逐人列动作')
+  assert.match(advance, /"timing":"future" with "dueAt"/, '未来计划结构化')
+  assert.match(advance, /do not output agencyWindow or proactiveContact/, '明确禁止输出退役 schema 字段')
+  // 旧 Agency Window schema 教义不再出现。
+  assert.doesNotMatch(advance, /agencyWindow may be/)
+  assert.doesNotMatch(advance, /Agency Window describes only practical action capacity/)
+
+  const intentDue = systemPrompt('intent-due', '', '', '', '', '', false, true, true)
+  assert.match(intentDue, /CONTACT ACTIONS \(unified author-action contract\)/)
+  assert.match(intentDue, /due contact plan \(contact-plan\)/, '到期计划在同一契约下重新评估')
 
   const user = systemPrompt('user-message', '', '', '', '', '', false, true, true)
-  assert.doesNotMatch(user, /agencyWindow may be/)
-  assert.doesNotMatch(user, /Agency Window describes only practical action capacity/)
+  assert.doesNotMatch(user, /CONTACT ACTIONS \(unified author-action contract\)/)
+  assert.doesNotMatch(user, /agencyWindow/, 'user-message 提示词不得再提退役 schema')
+  assert.doesNotMatch(user, /proactiveContact/, 'user-message 提示词不得再提退役 schema')
+  const followUp = systemPrompt('conversation-follow-up', '', '', '', '', '', false, true, true)
+  assert.doesNotMatch(followUp, /CONTACT ACTIONS \(unified author-action contract\)/)
+})
+
+test('P3.2: advance/intent-due retire the legacy contact schema while live user-message turns keep it', () => {
+  // 反面：背景动作相位不再教 legacy crossConversationActions schema（P3.2 退役）。
+  for (const phase of ['advance', 'intent-due'] as const) {
+    const prompt = systemPrompt(phase, '', '', '', '', '', false, false, false)
+    assert.ok(!prompt.includes('crossConversationActions are optional'), `${phase}: legacy 可选教学必须退役`)
+    assert.ok(!prompt.includes('"willingness":0.0'), `${phase}: 意愿数值必须退役`)
+    assert.ok(!prompt.includes('crossConversationActions:[{'), `${phase}: legacy 形态示例必须退役`)
+    assert.match(prompt, /CONTACT ACTIONS/)
+  }
+  // 正面：user-message（私聊与群聊 live 回合）仍保留 legacy crossConversationActions。
+  const privateLive = systemPrompt('user-message', '', '', '', '', '', false, false, false, false, false, undefined, false, undefined, false, false, false, false)
+  assert.match(privateLive, /crossConversationActions/)
+  const groupLive = systemPrompt('user-message', '', '', '', '', '', false, false, false, false, false, undefined, false, undefined, false, false, false, true)
+  assert.match(groupLive, /crossConversationActions/)
 })
 
 test('Perspective is a conditional individual-values layer, not a recurring story theme', () => {

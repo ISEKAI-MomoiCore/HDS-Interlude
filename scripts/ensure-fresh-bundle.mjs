@@ -40,3 +40,32 @@ if (/^\s*(import|export)\s/m.test(bundle.slice(0, 4096))) {
   process.exit(1)
 }
 console.log('[prepack] bundle 新鲜度与 CJS 形态校验通过')
+
+// Console uses a directory entry: index.js must export its installer and style.css
+// must accompany it. Keep source freshness checks symmetrical with the backend.
+let clientBundle
+let clientMtime
+try {
+  clientBundle = readFileSync('client-dist/index.js', 'utf8')
+  clientMtime = statSync('client-dist/index.js').mtimeMs
+  if (!statSync('client-dist/style.css').size) throw new Error('empty stylesheet')
+} catch {
+  console.error('[prepack] Console 资源缺失。请运行 "npm run build:client" 后重新打包。')
+  process.exit(1)
+}
+if (!/\bexport\s*(?:default\b|\{[^}]*\bdefault\b)/s.test(clientBundle)) {
+  console.error('[prepack] Console 入口需要导出默认插件函数。请运行 "npm run build:client"。')
+  process.exit(1)
+}
+function checkClientFreshness(dir) {
+  for (const item of readdirSync(dir, { withFileTypes: true })) {
+    const path = join(dir, item.name)
+    if (item.isDirectory()) checkClientFreshness(path)
+    else if (/\.(?:ts|vue|css|scss|less|json)$/.test(item.name) && statSync(path).mtimeMs > clientMtime) {
+      console.error(`[prepack] Console 产物落后于源码（${path}）。请运行 "npm run build:client"。`)
+      process.exit(1)
+    }
+  }
+}
+checkClientFreshness('client')
+console.log('[prepack] Console 资源、默认导出与新鲜度校验通过')

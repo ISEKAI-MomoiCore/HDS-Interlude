@@ -25,3 +25,8 @@ credentials.*
 backup/
 dustbin/
 release/smoke-*/
+
+# yakumo client 管线的副产物（client/ 的另一份构建输出；发布用 client-dist/）
+dist/
+rc60.tgz
+dbfile_*

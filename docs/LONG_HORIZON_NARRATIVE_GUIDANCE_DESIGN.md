@@ -1,6 +1,6 @@
 # Long-Horizon Narrative Guidance / Narrative Attractor 设计文档
 
-> 文档状态：催化器模型已实现（累计窗口、prime/activate/dormant、首次微表达投影）；Phase 4（阶段反馈与自动演化）进行中  
+> 文档状态：催化器模型已实现（累计窗口、prime/activate/dormant、首次微表达投影）；Phase 4（阶段反馈与自动演化）未实施（规划中，源码尚无对应代码）  
 > 目标仓库：`C:\dev\HDS-Interlude\plugins\hds-interlude`  
 > 适用基线：`1.0.1-rc33` 发布候选  
 > 关联架构：持续剧本、关系状态、Scene/Arc、Knowledge Evidence、Agency / Urge、单剧本多通道

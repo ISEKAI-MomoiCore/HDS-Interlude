@@ -228,7 +228,7 @@ test('split-message delivery restores the explicit endpoint onto the outgoing dr
     appendEntry: async () => {},
     recordAutomaticDelivery: async () => {},
     recordCharacterMessage: async () => {},
-    scheduleNextSplitWake: async () => {},
+    scheduleNextPendingWake: async () => {},
     reconcileTerminalSplitIntent: methods.reconcileTerminalSplitIntent,
   }
   deliveryHost(host)

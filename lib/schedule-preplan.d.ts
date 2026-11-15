@@ -1,3 +1,5 @@
+/** P5：自 service.ts 迁入（2026-10-29），行为不变。 */
+export declare const SCHEDULE_PREPLAN_RETRY_BACKOFF: number;
 import { SchedulePreplanDay, SchedulePreplanException, SchedulePreplanRecord, SchedulePreplanRegime, SchedulePreplanWindow, ScriptEntry } from './types';
 export interface SchedulePreplanConfig {
     enabled: boolean;

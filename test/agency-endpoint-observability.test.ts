@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { Universal } from 'koishi'
 import { InterludeService, droppedProactiveActionInfo, normalizeDecision, type RuntimeConfig, type SharedStoryConfig } from '../src/service'
-import { appendProactiveContact, countProactiveContactsInWindow, normalizeProactiveContactLog } from '../src/story-state'
+import { normalizeProactiveContactLog } from '../src/story-state'
 import { decodeStoryState, encodeStoryState } from '../src/story-state'
 import type { OutgoingMessageDraft } from '../src/types'
 
@@ -27,20 +27,26 @@ function shared(overrides: Partial<SharedStoryConfig> = {}): SharedStoryConfig {
   } as SharedStoryConfig
 }
 
-// ── 解析层丢弃留痕（幻影发送闭环）──────────────────────────────────────────
+// ── 解析层丢弃留痕（幻影发送闭环；P3.1 意愿门退役后仅剩结构性原因）────────
 
-test('proactive actions dropped by the parse-level willingness gate are captured with reasons', () => {
+test('droppedProactiveActionInfo only records structural drops: delayed timing out of range, never willingness', () => {
   const permitted = new Set(['alice'])
   const rt = runtime({ proactiveWillingnessThreshold: 0.65 })
-  assert.deepEqual(droppedProactiveActionInfo(
+  // P3.1（§10.1）：意愿门退役——immediate 行动无论 willingness 缺失/低于阈值
+  // 都不再被解析层丢弃，因此也不再产生留痕。
+  assert.equal(droppedProactiveActionInfo(
     { participantId: 'alice', mode: 'immediate', content: '在吗？' }, rt, permitted, 'bob',
-  ), { participantId: 'alice', mode: 'immediate', content: '在吗？', reason: 'proactive-willingness-missing' })
-  assert.deepEqual(droppedProactiveActionInfo(
+  ), undefined, 'missing willingness no longer drops an immediate action')
+  assert.equal(droppedProactiveActionInfo(
     { participantId: 'alice', mode: 'immediate', content: '在吗？', willingness: 0.4 }, rt, permitted, 'bob',
-  ), { participantId: 'alice', mode: 'immediate', content: '在吗？', reason: 'proactive-willingness-below-threshold' })
+  ), undefined, 'below-threshold willingness no longer drops an immediate action')
+  // 唯一残留的结构性留痕：delayed 时效越界（sendAt 缺失/过早/过晚）。
   assert.deepEqual(droppedProactiveActionInfo(
     { participantId: 'alice', mode: 'delayed', content: '晚点说', willingness: 0.9, sendAt: '1999-01-01T00:00:00.000Z' }, rt, permitted, 'bob',
   ), { participantId: 'alice', mode: 'delayed', content: '晚点说', reason: 'delayed-send-at-out-of-range' })
+  assert.equal(droppedProactiveActionInfo(
+    { participantId: 'alice', mode: 'delayed', content: '晚点说', sendAt: new Date(NOW.getTime() + 30 * 60_000).toISOString() }, rt, permitted, 'bob', NOW,
+  ), undefined, 'delayed within the allowed window stays unlogged')
   // 不该留痕的丢弃保持静默：非白名单目标 / 群目标 / 空内容 / 自身。
   assert.equal(droppedProactiveActionInfo(
     { participantId: 'mallory', mode: 'immediate', content: 'hi', willingness: 0.9 }, rt, permitted, 'bob',
@@ -53,7 +59,7 @@ test('proactive actions dropped by the parse-level willingness gate are captured
   ), undefined)
 })
 
-test('normalizeDecision surfaces dropped proactive actions on advance turns without proactiveContact', () => {
+test('normalizeDecision keeps low-willingness advance actions; willingness survives for audit only', () => {
   const decision = normalizeDecision({
     script: '她给 Alice 发了条消息。',
     crossConversationActions: [
@@ -62,12 +68,13 @@ test('normalizeDecision surfaces dropped proactive actions on advance turns with
     ],
   } as never, NOW, NOW, true, runtime({ proactiveWillingnessThreshold: 0.65 }), shared(), 'bob',
     new Set(['alice']), new Set(), 'advance')
-  // 低意愿行动被丢弃但留痕；高意愿行动正常保留。
-  assert.equal(decision.crossConversationActions.length, 1)
-  assert.equal(decision.crossConversationActions[0].content, '顺便问下')
-  assert.deepEqual(decision.droppedProactiveActions, [
-    { participantId: 'alice', mode: 'immediate', content: '在吗？', reason: 'proactive-willingness-below-threshold' },
-  ])
+  // P3.1：两档意愿的行动都完整保留（执行许可由宿主统一策略决定），
+  // 解析层不再产生 droppedProactiveActions 留痕。
+  assert.equal(decision.crossConversationActions.length, 2)
+  assert.deepEqual(decision.crossConversationActions.map(action => action.content), ['在吗？', '顺便问下'])
+  assert.equal(decision.droppedProactiveActions, undefined)
+  // willingness 字段仍在归一化输出中，仅作审计留档。
+  assert.deepEqual(decision.crossConversationActions.map(action => action.willingness), [0.3, 0.9])
 })
 
 test('normalizeDecision keeps legacy silence when proactiveContact is present (agency boundary owns judgment)', () => {
@@ -151,49 +158,3 @@ test('endpoint cooldown still blocks background sends but not user-initiated rep
 
 // ── 主动联系配额：ref 预记 + 终态失败作废 ──────────────────────────────────
 
-test('voided contact log entries do not consume the daily cap', () => {
-  const now = new Date('2026-10-12T20:00:00.000Z')
-  let log = appendProactiveContact(undefined, 'alice', now, undefined, 'ref-1')
-  log = appendProactiveContact(log, 'alice', now, undefined, 'ref-2')
-  assert.equal(countProactiveContactsInWindow(log, 'alice', now), 2)
-  const voided = log.map(entry => entry.ref === 'ref-1' ? { ...entry, voided: true } : entry)
-  assert.equal(countProactiveContactsInWindow(voided, 'alice', now), 1)
-  // 归一化保留 ref/voided（重启后不丢）。
-  const restored = normalizeProactiveContactLog(voided)
-  assert.deepEqual(restored.filter(entry => entry.voided).map(entry => entry.ref), ['ref-1'])
-  assert.equal(countProactiveContactsInWindow(restored, 'alice', now), 1)
-})
-
-test('recordOutgoingDeliveryFailure voids the pre-recorded contact budget entry', async () => {
-  const now = new Date()
-  const storyRow = { id: 's1', state: encodeStoryState({ proactiveContactLog: [
-    { participantId: 'alice', at: now.toISOString(), ref: 'ref-1' },
-  ] }) }
-  const writes: Array<Record<string, unknown>> = []
-  const entries: Array<{ kind: string, metadata: Record<string, unknown> }> = []
-  const host = {
-    config: { runtime: { maxMessageCharacters: 1200 } },
-    dbGet: async (table: string) => table === 'interlude_story' ? [storyRow] : [],
-    dbSet: async (_table: string, query: Record<string, unknown>, patch: Record<string, unknown>) => {
-      writes.push({ query, patch })
-    },
-    appendEntry: async (_storyId: string, draft: { kind: string, metadata: Record<string, unknown> }) => {
-      entries.push(draft)
-      return draft as never
-    },
-    reportOperation: () => {},
-  }
-  const message: OutgoingMessageDraft = { participantId: 'alice', content: '在吗？', proactiveContactRef: 'ref-1' }
-  await (InterludeService.prototype as any).recordOutgoingDeliveryFailure.call(host,
-    { id: 's1' } as never, 'alice', message, 'bot-not-found', 'failed')
-  const stateWrite = writes.find(write => !!write.patch.state)
-  assert.ok(stateWrite, 'story state must be rewritten')
-  const log = decodeStoryState(stateWrite.patch.state as never).proactiveContactLog ?? []
-  assert.equal(log[0].voided, true)
-  assert.equal(entries[0].kind, 'outgoing-delivery-failed')
-  // pending（可恢复）失败不作废——消息之后仍可能送达。
-  writes.length = 0
-  await (InterludeService.prototype as any).recordOutgoingDeliveryFailure.call(host,
-    { id: 's1' } as never, 'alice', message, 'endpoint-offline', 'pending')
-  assert.equal(writes.length, 0)
-})

@@ -84,11 +84,13 @@ test('STANDARD keeps the full contract with content-only transport and family ex
   assert.match(deepseek, /on every turn that can carry a reply/)
   assert.match(deepseek, /advance turns carry no transport unless a message is genuinely sent/)
 
-  // S2: standard advance 轮补 crossConversationActions 形态说明
+  // S2: standard advance 轮补发送形态说明——P3.2 起指向 communicationActions
+  // （CONTACT ACTIONS 契约，say 绑定），legacy crossConversationActions 教学退役。
   const stdAdvance = systemPrompt('advance', '', '', '', '', '', false, false, false, false, false, undefined, false, undefined, false, false, false, false, undefined,
     { tier: 'standard', family: 'glm', source: 'auto', probe: 'glm-5.3' })
-  assert.match(stdAdvance, /crossConversationActions:\[\{"participantId":"listed id"/)
+  assert.match(stdAdvance, /A present outbound action uses communicationActions per the CONTACT ACTIONS contract \(say-bound text\)/)
   assert.match(stdAdvance, /An ordinary life passage needs no transport field/)
+  assert.ok(!stdAdvance.includes('crossConversationActions:[{'), 'standard advance 不再教 legacy 形态')
 })
 
 test('FULL tier applies claude/gpt blocks with simple protocol', () => {
@@ -164,7 +166,7 @@ test('side-task prompts follow the same manual tier (lite compaction and timelin
   assert.match(timelineDirectorPrompt(undefined), /recentScriptContinuation/)
 })
 
-const allOff = { qzone: false, groupDelivery: false, groupHistory: false, multiPlatform: false, webObservation: false, semanticRecall: false, worldEvents: false, adminNotes: false } as const
+const allOff = { qzone: false, groupDelivery: false, groupHistory: false, multiPlatform: false, webObservation: false, semanticRecall: false, worldEvents: false, adminNotes: false, researchDesk: false } as const
 
 test('contract auto-trim removes disabled feature blocks while defaults stay byte-identical', () => {
   const args = ['user-message', '', '', '', '', ''] as const
@@ -209,7 +211,7 @@ test('resolveNarrativeContractFeatures keeps blocks alive while their data stays
     groupTargetsPresent: false, anyGroupEnabled: false, windowHasGroupEntries: false,
     hasWechatEndpoint: false, browserActive: false, webContextPresent: false,
     semanticRecallEnabled: false, recallQueryActive: false,
-    worldEventsEnabled: false, windowHasWorldEventEntries: false, windowHasAdminNotes: false,
+    worldEventsEnabled: false, windowHasWorldEventEntries: false, windowHasAdminNotes: false, researchEnabled: false,
   })
   assert.deepEqual(off, allOff)
   // 数据 OR：功能关闭后，待办意图与窗口条目仍保留解释行
@@ -218,7 +220,7 @@ test('resolveNarrativeContractFeatures keeps blocks alive while their data stays
     groupTargetsPresent: false, anyGroupEnabled: false, windowHasGroupEntries: false,
     hasWechatEndpoint: false, browserActive: false, webContextPresent: false,
     semanticRecallEnabled: false, recallQueryActive: false,
-    worldEventsEnabled: false, windowHasWorldEventEntries: false, windowHasAdminNotes: false,
+    worldEventsEnabled: false, windowHasWorldEventEntries: false, windowHasAdminNotes: false, researchEnabled: false,
   }).qzone, true)
   const historyKept = resolveNarrativeContractFeatures({
     qzoneEnabled: false, pendingQzoneActionIntents: false, windowHasQzoneFeedEntries: true,

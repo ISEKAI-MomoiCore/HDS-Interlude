@@ -11,12 +11,16 @@
  */
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { Agent, setGlobalDispatcher } from 'undici'
 import { systemPrompt } from '../src/narrator'
 
 const ENDPOINT = process.env.HDSI_TEST_PROVIDER_ENDPOINT ?? ''
 const API_KEY = process.env.HDSI_TEST_API_KEY ?? ''
 const MODEL = process.env.HDSI_TEST_MODEL ?? ''
 const skip = !ENDPOINT || !API_KEY || !MODEL
+// 验证环境对端点偶发直连握手超时（undici 默认 connect 10s）——放宽到 30s；
+// 连接建立后由 keep-alive 复用，后续调用不再重复握手。
+if (!skip) setGlobalDispatcher(new Agent({ connect: { timeout: 30_000 } }))
 
 function makeProductionSystemPrompt(kind: 'private' | 'group') {
   // 使用生产 systemPrompt 函数，参数与 requestProvider 中的调用一致
@@ -55,18 +59,38 @@ const groupPayload = (msg: string) => JSON.stringify({
 })
 
 async function callModel(system: string, userPayload: string): Promise<Record<string, unknown>> {
-  const response = await fetch(ENDPOINT, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', authorization: `Bearer ${API_KEY}` },
-    body: JSON.stringify({
-      model: MODEL, temperature: 0.72, top_p: 0.8,
-      response_format: { type: 'json_object' },
-      messages: [{ role: 'system', content: system }, { role: 'user', content: userPayload }],
-    }),
-  })
-  if (!response.ok) throw new Error(`API ${response.status}: ${await response.text()}`)
-  const json = await response.json() as { choices: { message: { content: string } }[] }
-  return JSON.parse(json.choices[0].message.content)
+  // 验证环境对端点偶发直连超时（部署无代理）——网络类失败（连接失败/超时/
+  // 5xx）单次重试 + 60s 请求超时；4xx 与内容解析错误不重试（那是合约问题，
+  // 不是网络问题）。
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    try {
+      // 部分模型（如 Claude 5 系）已弃用 temperature/top_p 并直接 400；
+      // HDSI_TEST_SAMPLING=off 时省略采样参数以兼容此类端点。
+      const sampling = process.env.HDSI_TEST_SAMPLING === 'off' ? {} : { temperature: 0.72, top_p: 0.8 }
+      const response = await fetch(ENDPOINT, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${API_KEY}` },
+        body: JSON.stringify({
+          model: MODEL, ...sampling,
+          response_format: { type: 'json_object' },
+          messages: [{ role: 'system', content: system }, { role: 'user', content: userPayload }],
+        }),
+        signal: AbortSignal.timeout(60_000),
+      })
+      if (!response.ok) {
+        const text = await response.text()
+        if (response.status >= 500 && attempt === 1) continue
+        throw new Error(`API ${response.status}: ${text}`)
+      }
+      const json = await response.json() as { choices: { message: { content: string } }[] }
+      return JSON.parse(json.choices[0].message.content)
+    } catch (error) {
+      const retryable = error instanceof TypeError
+        || (error instanceof Error && (error.name === 'TimeoutError' || error.name === 'AbortError'))
+      if (!retryable || attempt === 2) throw error
+    }
+  }
+  throw new Error('unreachable')
 }
 
 const scenarios = [
@@ -140,8 +164,18 @@ test('model behavior: no self-invented third-party messages (production prompt)'
     assert.ok(!hasUnknownPhone, `${s.label}: 不应自造电话号码`)
     // 检查编造的第三方发言——当前消息内容是 s.msg（已知），模型不应描写
     // 任何"额外的人发来了消息"的行为。正常的用户消息到达由 currentEvent 提供。
-    const inventedSpeaker = /[^\s你她他我它]{1,4}(?:说|问|回复|发来|发消息|发了一句)/.exec(script)
-    const isInvented = inventedSpeaker && !s.msg.includes(inventedSpeaker[0].slice(0, 2))
+    // Fix P4（2026-11-10 验证修复）：原正则会把主角对用户消息的正常内心
+    // 评述（"这人倒是问得直接"→前缀"倒是"被当发言人）误报为编造第三方。
+    // 说/问/回复前的叙述性副词与已提供的指称（朋友见 recentScript）不算；
+    // 只有未知具名主体 + 言语动词才是违规。
+    const NARRATION_OR_KNOWN = ['她', '他', '你', '我', '它', '朋友', '主角', '对方', '用户', '这人', '那人',
+      '倒是', '直接', '还是', '又', '再', '便', '就', '才', '只', '也', '先', '没', '不',
+      '开口', '笑着', '忍不住', '随口', '顺口', '轻声', '低声', '小声', '想了想']
+    const inventedSpeaker = /[^\s你她他我它,，。.:"「」『』]{1,4}(?:说|问|回复|发来|发消息|发了一句)/.exec(script)
+    const speakerPrefix = inventedSpeaker ? inventedSpeaker[0].replace(/(?:说|问|回复|发来|发消息|发了一句)$/, '') : ''
+    const isInvented = !!inventedSpeaker
+      && !s.msg.includes(inventedSpeaker[0].slice(0, 2))
+      && !NARRATION_OR_KNOWN.some(word => speakerPrefix === word || speakerPrefix.endsWith(word))
     assert.ok(!isInvented, `${s.label}: 不应编造第三方发言（found "${inventedSpeaker?.[0]}"）`)
   }
 })

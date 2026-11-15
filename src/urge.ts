@@ -1,13 +1,15 @@
-/** Scheduling metadata only: never a contact decision or a memory source. */
+/** Scheduling metadata only: never a contact decision or a memory source.
+ * P3.2（设计 §9）：Urge 收敛为生活推进调度——联系专用状态（value 意愿值、
+ * armed/burst/spent、contactMin、意愿抖动与 extremeChance）退役；保留对话
+ * 密度桶、五档生活节奏倍率、slow/normal、建议间隔、基础退避与休息窗口
+ * 兜底。旧持久化字段在加载归一时被清理（一次性迁移语义）。 */
 export interface UrgeConfig {
   enabled?: boolean
   frequency?: 'low' | 'medium' | 'high' | 'custom'
-  proactiveWillingnessThreshold?: number
   advanced?: {
-    hotMin?: number; hotMax?: number; idleMin?: number; idleMax?: number
-    burstMin?: number; burstMax?: number; slowMin?: number; slowMax?: number
-    halfLifeMinutes?: number; burstThreshold?: number; jitter?: number; extremeChance?: number
-    burstTtlMinutes?: number; burstBudget?: number; burstContactMinMinutes?: number
+    idleMin?: number; idleMax?: number
+    slowMin?: number; slowMax?: number
+    halfLifeMinutes?: number
     /** 密度=1 时的推进加速倍率（默认 1.4；与节奏倍率相乘）。 */
     activeMultiplier?: number
     /** 无节奏数据时的 restWindows 兜底倍率（默认 0.6；乘法，不再替换间隔）。 */
@@ -18,14 +20,9 @@ export interface UrgeState {
   version: 1
   mode?: string
   buckets: number[]
-  value?: number
   pace?: 'normal' | 'slow'
   suggested?: number
   sourceEntryId?: number
-  armed?: { participantId: string; entryId: number; at: number }
-  burst?: { participantId: string; started: number; used: number }
-  /** Once spent, only a real incoming event opens a new contact episode. */
-  spent?: boolean
   reason?: string
   /** 主叙事轻量节奏覆盖(五档;commitUrge 从模型 urge 交接提取)。 */
   rhythmAttention?: string
@@ -43,12 +40,8 @@ export function resolveUrgeConfig(raw?: UrgeConfig) {
   }
   return {
     enabled: c.enabled === true, frequency,
-    willingness: finite(c.proactiveWillingnessThreshold, .4, 0, 1),
-    hot: range('hot', 0), idle: range('idle', 2), burst: range('burst', 4), slow: range('slow', 6),
-    halfLife: finite(a.halfLifeMinutes, 90, 5, 240), threshold: finite(a.burstThreshold, .75, 0, 1),
-    jitter: finite(a.jitter, .15, 0, 1), extremeChance: finite(a.extremeChance, .03, 0, 1),
-    ttl: finite(a.burstTtlMinutes, 35, 5, 120), budget: Math.floor(finite(a.burstBudget, 3, 0, 10)),
-    contactMin: finite(a.burstContactMinMinutes, 5, 1, 60),
+    idle: range('idle', 2), slow: range('slow', 6),
+    halfLife: finite(a.halfLifeMinutes, 90, 5, 240),
     activeMultiplier: finite(a.activeMultiplier, 1.4, 1.0, 3.0),
     restMultiplier: finite(a.restMultiplier, 0.6, 0.05, 1.0),
   }
@@ -57,26 +50,20 @@ export type ResolvedUrgeConfig = ReturnType<typeof resolveUrgeConfig>
 export function normalizeUrgeState(raw: unknown, now: number): UrgeState {
   const r = record(raw)
   if (r.version !== 1) return { version: 1, buckets: [] }
-  const a = record(r.armed), b = record(r.burst)
   const timestamp = (v: unknown) => typeof v === 'number' && Number.isFinite(v) && v > 0 && v <= now
   return {
     version: 1, mode: typeof r.mode === 'string' ? r.mode : undefined,
     buckets: Array.isArray(r.buckets) ? [...new Set(r.buckets.filter((v): v is number => timestamp(v) && now - v < 240 * minute))].sort((a, b) => a - b).slice(-120) : [],
-    value: typeof r.value === 'number' ? finite(r.value, 0, 0, 1) : undefined,
     pace: r.pace === 'slow' ? 'slow' : 'normal', suggested: typeof r.suggested === 'number' ? finite(r.suggested, 120, 1, 1440) : undefined,
     sourceEntryId: typeof r.sourceEntryId === 'number' ? r.sourceEntryId : undefined,
-    spent: r.spent === true, reason: typeof r.reason === 'string' ? r.reason.slice(0, 160) : undefined,
+    reason: typeof r.reason === 'string' ? r.reason.slice(0, 160) : undefined,
     rhythmAttention: typeof r.rhythmAttention === 'string' && ATTENTION_MULTIPLIERS[r.rhythmAttention] !== undefined ? r.rhythmAttention : undefined,
-    armed: typeof a.participantId === 'string' && typeof a.entryId === 'number' && timestamp(a.at) && now - Number(a.at) < 10 * minute
-      ? { participantId: a.participantId, entryId: a.entryId, at: Number(a.at) } : undefined,
-    burst: typeof b.participantId === 'string' && timestamp(b.started)
-      ? { participantId: b.participantId, started: Number(b.started), used: Math.floor(finite(b.used, 0, 0, 10)) } : undefined,
   }
 }
 export function urgeUserEvent(state: UrgeState, now: number): UrgeState {
   // Two-minute buckets merge typing fragments; only real incoming events call this.
   const bucket = Math.floor(now / (2 * minute)) * 2 * minute
-  return { ...state, buckets: [...new Set([...state.buckets, bucket])].slice(-120), pace: 'normal', suggested: undefined, armed: undefined, burst: undefined, spent: false }
+  return { ...state, buckets: [...new Set([...state.buckets, bucket])].slice(-120), pace: 'normal', suggested: undefined }
 }
 export function urgeDensity(state: UrgeState, now: number, c: ResolvedUrgeConfig) {
   const last = state.buckets.at(-1)
@@ -84,30 +71,18 @@ export function urgeDensity(state: UrgeState, now: number, c: ResolvedUrgeConfig
   const recent = state.buckets.filter(t => t >= last - 15 * minute).length
   return Math.min(1, recent / 6) * Math.pow(.5, Math.max(0, now - last) / (c.halfLife * minute))
 }
-export function commitUrge(state: UrgeState, raw: unknown, script: string, entryId: number, target: string | undefined, now: number, c: ResolvedUrgeConfig, random = Math.random): UrgeState {
+export function commitUrge(state: UrgeState, raw: unknown, script: string, entryId: number, _target: string | undefined, _now: number, _c: ResolvedUrgeConfig): UrgeState {
+  void _target; void _c; void _now
   const r = record(raw)
   const quote = typeof r.basisQuote === 'string' ? r.basisQuote.trim() : ''
-  // A missing/invalid handoff cannot perpetuate an old slow phase or burst.
-  if (!quote || !script.includes(quote) || typeof r.value !== 'number' || !Number.isFinite(r.value)) return { ...state, pace: 'normal', suggested: undefined, armed: undefined, burst: undefined }
-  const value = random() < c.extremeChance ? random() : finite(r.value + (random() * 2 - 1) * c.jitter, 0, 0, 1)
+  // A missing/invalid handoff cannot perpetuate an old slow phase.
+  if (!quote || !script.includes(quote)) return { ...state, pace: 'normal', suggested: undefined }
   const pace = r.pace === 'slow' ? 'slow' : 'normal'
-  const high = value >= c.threshold && pace !== 'slow'
   const rhythmAttention = typeof r.rhythmAttention === 'string' && ATTENTION_MULTIPLIERS[r.rhythmAttention] !== undefined
     ? r.rhythmAttention : undefined
-  return { ...state, value, pace, sourceEntryId: entryId,
+  return { ...state, sourceEntryId: entryId,
     ...(rhythmAttention ? { rhythmAttention } : {}),
-    suggested: typeof r.suggestedDelayMinutes === 'number' ? finite(r.suggestedDelayMinutes, 120, 1, 1440) : undefined,
-    burst: high ? state.burst : undefined,
-    armed: high && target && !state.spent && !state.burst && c.budget > 0 ? { participantId: target, entryId, at: now } : undefined,
-  }
-}
-export function acknowledgeUrge(state: UrgeState, participantId: string, entryId: number, now: number): UrgeState {
-  if (!state.armed || state.armed.participantId !== participantId || state.armed.entryId !== entryId || state.spent) return state
-  return { ...state, armed: undefined, spent: true, burst: { participantId, started: now, used: 0 } }
-}
-export function urgeBurstActive(state: UrgeState, now: number, c: ResolvedUrgeConfig, participantId?: string) {
-  return !!state.burst && (!participantId || participantId === state.burst.participantId)
-    && now - state.burst.started < c.ttl * minute && state.burst.used <= c.budget && state.pace !== 'slow'
+    pace, suggested: typeof r.suggestedDelayMinutes === 'number' ? finite(r.suggestedDelayMinutes, 120, 1, 1440) : undefined }
 }
 /** 五档生活节奏 → 推进密度倍率。与 activeMultiplier 相乘决定最终间隔。 */
 export const ATTENTION_MULTIPLIERS: Record<string, number> = {
@@ -126,20 +101,14 @@ export interface UrgeRhythmInput {
 
 export function planUrge(state: UrgeState, now: number, c: ResolvedUrgeConfig, restMinutes = 0, unavailable = false, random = Math.random, rhythm?: UrgeRhythmInput) {
   const sample = (range: readonly number[]) => range[0] + random() * (range[1] - range[0])
-  let next = { ...state }
+  const next = { ...state }
   let minutes: number, reason: string
   if (state.pace === 'slow') {
     const suggested = state.suggested === undefined ? sample(c.slow) : Math.max(c.slow[0], Math.min(c.slow[1], state.suggested * (.9 + random() * .2)))
     minutes = suggested; reason = 'script-slow'
-    next = { ...next, burst: undefined, armed: undefined }
-  } else if (!unavailable && urgeBurstActive(state, now, c) && state.burst!.used < c.budget) {
-    minutes = sample(c.burst) * Math.pow(2, state.burst!.used)
-    minutes = Math.min(minutes, Math.max(1, (state.burst!.started + c.ttl * minute - now) / minute))
-    reason = 'confirmed-contact-burst'
-    next.burst = { ...state.burst!, used: state.burst!.used + 1 }
   } else {
     // 乘法模型：基础间隔 / (密度因子 × 节奏因子)。密度高+盯手机=最密推进，
-    // 沉默+睡眠=最稀。hot 区间保留为 burst 专用下限参考，正常通道不再截断。
+    // 沉默+睡眠=最稀。确定性到期承诺优先于调度抖动（§9）。
     const base = sample(c.idle)
     const density = urgeDensity(state, now, c)
     const densityFactor = 1 + density * (c.activeMultiplier - 1)
@@ -153,13 +122,11 @@ export function planUrge(state: UrgeState, now: number, c: ResolvedUrgeConfig, r
     }
     if (unavailable) rhythmFactor *= 0.5
     minutes = Math.max(1, base / (densityFactor * rhythmFactor))
-    next.burst = undefined
-    if (unavailable) next.armed = undefined
   }
   next.reason = reason
   return { state: next, nextAdvanceAt: new Date(now + minutes * minute).toISOString(), minutes, reason }
 }
 export function urgeInstruction(enabled: boolean, phase: string) {
   return enabled && ['advance', 'conversation-follow-up', 'intent-due'].includes(phase)
-    ? '\nAfter writing the full script and its actions, optionally return urge:{value:0..1, pace:"normal"|"slow", suggestedDelayMinutes:number, rhythmAttention:"phone-focused|available|occupied|resting|asleep", basisQuote:"exact sentence from this script"}. Reflect the protagonist\'s present impulse and natural next opportunity to continue life; slow suits sleep or sustained focus. rhythmAttention is her current life rhythm judged from the script you just wrote (phone-focused = actively using her phone, occupied = busy with a task, resting = lying down or low-energy, asleep = sleeping). This is only a scheduling handoff, not speech, a future event, or a second contact decision. Continue using the existing authored actions and proactiveContact for any contact.' : ''
+    ? '\nAfter writing the full script and its actions, optionally return urge:{pace:"normal"|"slow", suggestedDelayMinutes:number, rhythmAttention:"phone-focused|available|occupied|resting|asleep", basisQuote:"exact sentence from this script"}. Reflect the protagonist\'s natural next opportunity to continue life; slow suits sleep or sustained focus. rhythmAttention is her current life rhythm judged from the script you just wrote (phone-focused = actively using her phone, occupied = busy with a task, resting = lying down or low-energy, asleep = sleeping). This is only a scheduling handoff, not speech, a future event, or a contact decision — outbound contact belongs to the CONTACT ACTIONS contract.' : ''
 }

@@ -9,13 +9,15 @@ import {
  * Version 1 is the first state envelope that is decoded and encoded in one
  * place. Older beta10 rows have no version and are upgraded on read.
  */
-export const CURRENT_STORY_STATE_VERSION = 4
+export const CURRENT_STORY_STATE_VERSION = 5
 
 const KNOWN_STORY_STATE_KEYS = new Set([
   'schemaVersion', 'extensions', 'settingOverlay', 'activeSceneId', 'activeArcId',
   'continuitySnapshot', 'narrativeUpdateCount', 'lastContinuityUpdateAt',
   'continuityDirty', 'automation', 'alterSystem', 'agencyWindow', 'scenePresence',
   'automaticDeliverySummaries', 'workingDetails', 'timelineCarry', 'chatRhythm',
+  // 7.1.4：lifeStatus 已并入 lifeRhythm（加载即迁移）；键保留在已知集合，
+  // 旧存档残值不再输出、也不漏进 extensions。
   'sceneFrame', 'dialogueBurst', 'workingDetailResolutions', 'lifeStatus', 'proactiveContactLog', 'lifeRhythm',
 ])
 
@@ -84,8 +86,11 @@ export function upgradeStoryState(value: unknown): StoryState {
       .filter(([label, id]) => label.length <= 80 && typeof id === 'number' && Number.isSafeInteger(id) && id > 0)
       .slice(-32).map(([label, id]) => [label, Number(id)])),
     timelineCarry: normalizeTimelineCarry(record.timelineCarry),
-    lifeStatus: normalizeLifeStatus(record.lifeStatus),
-    lifeRhythm: normalizeLifeRhythm(record.lifeRhythm),
+    // 7.1.4 统一事实源：lifeStatus 不再输出——旧存档在加载时经
+    // lifeRhythmFromLegacyStatus 一次性并入 lifeRhythm（已有 lifeRhythm 时
+    // 不被旧值覆盖）。此后生活节奏唯一事实源是 lifeRhythm。
+    lifeRhythm: normalizeLifeRhythm(record.lifeRhythm)
+      ?? lifeRhythmFromLegacyStatus(normalizeLifeStatus(record.lifeStatus)),
     proactiveContactLog: normalizeProactiveContactLog(record.proactiveContactLog),
     automaticDeliverySummaries: normalizeAutomaticDeliverySummaries(record.automaticDeliverySummaries),
     // beta10 declared this field but its old decoder forgot to return it.
@@ -93,7 +98,7 @@ export function upgradeStoryState(value: unknown): StoryState {
     sceneFrame: normalizeSceneFrame(record.sceneFrame),
     dialogueBurst: normalizeDialogueBurst(record.dialogueBurst),
     automation: {
-      quietUntil: textOrUndefined(automation.quietUntil),
+      // 热身 A：quietUntil 已废止——旧存档值在归一化时丢弃（加载即迁移）。
       nextAdvanceAt: textOrUndefined(automation.nextAdvanceAt),
       timelineRetryAt: textOrUndefined(automation.timelineRetryAt),
       timelineRetryFrom: textOrUndefined(automation.timelineRetryFrom),
@@ -237,33 +242,16 @@ export function normalizeProactiveContactLog(value: unknown): NonNullable<StoryS
       ...((item as Record<string, unknown>).endpointId ? { endpointId: String((item as Record<string, unknown>).endpointId) } : {}),
       ...((item as Record<string, unknown>).channelReason ? { channelReason: String((item as Record<string, unknown>).channelReason).slice(0, 100) } : {}),
       ...((item as Record<string, unknown>).ref ? { ref: String((item as Record<string, unknown>).ref).slice(0, 120) } : {}),
+      ...((item as Record<string, unknown>).origin ? { origin: String((item as Record<string, unknown>).origin).slice(0, 32) } : {}),
       ...((item as Record<string, unknown>).voided === true ? { voided: true } : {}) }))
     .slice(-20)
 }
 
 /** 作废条目不再计入每日上限：一次被端点/传输拦下的主动联系不该烧掉配额。 */
-export function countProactiveContactsInWindow(
-  log: StoryState['proactiveContactLog'] | undefined,
-  participantId: string,
-  now: Date,
-  windowMs = 86_400_000,
-): number {
-  return (log ?? []).filter(entry => entry.participantId === participantId
-    && !entry.voided
-    && now.getTime() - Date.parse(entry.at) < windowMs).length
-}
 
-export function appendProactiveContact(
-  log: StoryState['proactiveContactLog'] | undefined,
-  participantId: string,
-  at: Date,
-  endpointId?: string,
-  ref?: string,
-): NonNullable<StoryState['proactiveContactLog']> {
-  return [...(log ?? []), { participantId, at: at.toISOString(), ...(endpointId ? { endpointId } : {}), ...(ref ? { ref } : {}) }].slice(-20)
-}
 
-export function normalizeLifeStatus(value: unknown): StoryState['lifeStatus'] {
+/** 旧三值 lifeStatus 的归一化（7.1.4 后仅服务加载迁移读取）。 */
+export function normalizeLifeStatus(value: unknown): { status: 'busy' | 'asleep' | 'idle', updatedAt: string } | undefined {
   if (!isRecord(value)) return undefined
   const status = value.status
   if (status !== 'busy' && status !== 'asleep' && status !== 'idle') return undefined
@@ -284,15 +272,18 @@ export function normalizeLifeRhythm(value: unknown): StoryState['lifeRhythm'] {
   return assessedAt ? { attention: attention as StoryState['lifeRhythm'] extends { attention: infer A } ? A : never, basis, assessedAt, source } : undefined
 }
 
-/** 节奏过期判定（>2h 无更新视为 stale，退回 restWindows 兜底）。 */
+/** 节奏过期判定（>2h 无更新视为 stale，退回 restWindows 兜底）。
+ * 7.1.4：该窗口是生活节奏唯一时效口径——Urge 与群聊意愿 auto 档共用。 */
+export const LIFE_RHYTHM_STALE_MS = 2 * 3_600_000
+
 export function lifeRhythmStale(rhythm: StoryState['lifeRhythm'] | undefined, now = Date.now()): boolean {
   if (!rhythm) return true
   const assessed = Date.parse(rhythm.assessedAt)
-  return Number.isNaN(assessed) || now - assessed > 2 * 3_600_000
+  return Number.isNaN(assessed) || now - assessed > LIFE_RHYTHM_STALE_MS
 }
 
-/** 旧三值 lifeStatus → 五档映射（读侧兼容：升级前的存量状态在首次读取时转换）。 */
-export function lifeRhythmFromLegacyStatus(status: StoryState['lifeStatus'] | undefined): StoryState['lifeRhythm'] | undefined {
+/** 旧三值 lifeStatus → 五档映射（迁移读取：升级前的存量状态在加载时转换并入）。 */
+export function lifeRhythmFromLegacyStatus(status: { status: 'busy' | 'asleep' | 'idle', updatedAt: string } | undefined): StoryState['lifeRhythm'] | undefined {
   if (!status) return undefined
   const attention = status.status === 'busy' ? 'occupied' as const : status.status === 'asleep' ? 'asleep' as const : 'available' as const
   return { attention, basis: `从旧 lifeStatus(${status.status}) 映射`, assessedAt: status.updatedAt, source: 'fallback' }

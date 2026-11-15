@@ -1,11 +1,10 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
-  activeAgencyWindow, evaluateAgencyCapacity, normalizeAgencyWindowDraft, normalizeProactiveContact,
-  proactiveCandidateFingerprint, proactiveRecheckAt, resolveAgencyConfig,
+  activeAgencyWindow, normalizeAgencyWindowDraft, normalizeProactiveContact, resolveAgencyConfig,
 } from '../src/agency'
 import { groupDueIntents } from '../src/service'
-import { AgencyWindowState, NarrativeIntent, ProactiveContactDraft } from '../src/types'
+import { NarrativeIntent } from '../src/types'
 
 const config = resolveAgencyConfig({
   enabled: true,
@@ -15,13 +14,6 @@ const config = resolveAgencyConfig({
 })
 const now = new Date('2026-08-24T08:00:00.000Z')
 
-function candidate(overrides: Partial<ProactiveContactDraft> = {}): ProactiveContactDraft {
-  return {
-    participantId: 'friend', origin: 'life-event', motive: '她遇到一件想分享的事。',
-    disclosure: 'ordinary', sourceEntryIds: [10], willingness: 0.8,
-    outcome: 'send-now', expiresAt: '2026-08-25T08:00:00.000Z', ...overrides,
-  }
-}
 
 function window(overrides: Partial<AgencyWindowState> = {}): AgencyWindowState {
   return {
@@ -43,35 +35,16 @@ test('Agency Window accepts only grounded, bounded practical state', () => {
   assert.equal(activeAgencyWindow(normalized, now)?.privacy, 'public')
 })
 
-test('capacity rules separate schedule, privacy and device access from emotion', () => {
-  assert.equal(evaluateAgencyCapacity(window(), candidate(), now, config).allowed, true)
-  assert.equal(evaluateAgencyCapacity(window({ activityLoad: 'overloaded' }), candidate(), now, config).reason, 'schedule-overloaded')
-  assert.equal(evaluateAgencyCapacity(window({ privacy: 'public' }), candidate({ disclosure: 'personal' }), now, config).reason, 'privacy-insufficient')
-  assert.equal(evaluateAgencyCapacity(window({ deviceAccess: 'unavailable' }), candidate(), now, config).reason, 'device-unavailable')
-  assert.equal(evaluateAgencyCapacity(window({ activityLoad: 'occupied' }), candidate({ origin: 'promise' }), now, config).allowed, true)
-})
-
-test('ordinary proactive contact respects the minimum interval while promises bypass it', () => {
-  const recent = '2026-08-24T07:30:00.000Z'
-  assert.equal(evaluateAgencyCapacity(window(), candidate(), now, config, recent).reason, 'minimum-proactive-interval')
-  assert.equal(evaluateAgencyCapacity(window(), candidate({ origin: 'promise' }), now, config, recent).allowed, true)
-})
-
-test('contact candidates require a permitted target and real source evidence', () => {
-  const normalized = normalizeProactiveContact({
+test('legacy recheck-later drafts require a concrete target and motive (contactPlanFromDraft)', () => {
+  const { contactPlanFromDraft } = require('../src/script/contact-actions')
+  const plan = contactPlanFromDraft({
     participantId: 'friend', origin: 'life-event', motive: '她想告诉对方今天发生的事。',
     disclosure: 'ordinary', willingness: 0.8, outcome: 'recheck-later',
-  }, now, config, new Set(['friend']), new Set(), 42)
-  assert.deepEqual(normalized?.sourceEntryIds, [42])
-  assert.equal(normalizeProactiveContact({ ...normalized, participantId: 'blocked' }, now, config, new Set(['friend']), new Set([42])), undefined)
-})
-
-test('candidate identity ignores wording changes and recheck time stays bounded', () => {
-  const first = candidate({ motive: '第一种措辞' })
-  const second = candidate({ motive: '完全不同的措辞' })
-  assert.equal(proactiveCandidateFingerprint(first), proactiveCandidateFingerprint(second))
-  const capacity = evaluateAgencyCapacity(window({ activityLoad: 'overloaded', nextOpportunityAt: '2026-08-24T09:00:00.000Z' }), first, now, config)
-  assert.equal(proactiveRecheckAt(first, capacity, window({ nextOpportunityAt: '2026-08-24T09:00:00.000Z' }), now).toISOString(), '2026-08-24T09:00:00.000Z')
+  }, 'advance')
+  assert.equal(plan?.target.id, 'friend')
+  assert.equal(contactPlanFromDraft({ participantId: '  ', motive: 'm', outcome: 'recheck-later' } as any, 'advance'), undefined, 'empty target rejected')
+  assert.equal(contactPlanFromDraft({ participantId: 'friend', motive: '', outcome: 'recheck-later' } as any, 'advance'), undefined, 'empty motive rejected')
+  assert.equal(contactPlanFromDraft({ participantId: 'friend', motive: 'm', outcome: 'recheck-later', notBefore: 'not-a-date' } as any, 'advance'), undefined, 'unparseable notBefore rejected')
 })
 
 test('proactive checks are isolated from ordinary due messages for the same participant', () => {

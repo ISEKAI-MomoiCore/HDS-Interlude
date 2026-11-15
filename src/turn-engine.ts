@@ -5,9 +5,22 @@
  * 以及直接操作它们的四个方法（buffer/signal/invalidate/hasPending）。
  * flushBufferedNarrative 的执行体留在 service（它调用模型/投递/持久化），
  * 但通过 beginFlush/endFlush 与本模块交互状态。
+ *
+ * D1（解耦设计 §4/§6）：回合状态不持有宿主框架会话对象——本模块零
+ * koishi 依赖，平台通道以 TurnHandle 纯数据描述；session 的解析由宿主
+ * （service）按句柄查表完成，D2 起随 PlatformAdapter 端口迁入适配器。
  */
-import type { Session } from 'koishi'
+import { boundedDebounceDelay } from './debounce-window'
 import type { InterludeStory, InterludeParticipant, NarrativeIntent, QuotedMessageContext } from './types'
+
+/** 中性回合句柄：描述"这批消息最后来自哪个通道"，不含任何宿主对象。
+ * 字段与端点注册表的通道寻址同源（platform/selfId/channelId/endpointId）。 */
+export interface TurnHandle {
+  platform: string
+  channelId: string
+  selfId?: string
+  endpointId?: string
+}
 
 export interface BufferedUserMessage {
   content: string
@@ -24,8 +37,10 @@ export interface BufferedNarrativeTurn {
   storyId: string
   participantId: string
   messages: BufferedUserMessage[]
-  latestSession?: Session
+  /** D1：最后一条入站消息的通道句柄（替代旧会话直存字段）。 */
+  latestHandle?: TurnHandle
   timer?: () => void
+  debounceStartedAt?: number
   nextRevision: number
   inFlightRequestId?: number
   firstMessageCommittedRequestId?: number
@@ -68,7 +83,7 @@ export interface TurnEngine {
   readonly narrating: Set<string>
 
   bufferUserNarrative(
-    story: InterludeStory, participant: InterludeParticipant, session: Session,
+    story: InterludeStory, participant: InterludeParticipant, handle: TurnHandle,
     now: Date, supersededIntents: NarrativeIntent[],
     content: string, imageSources: string[], audioSources: string[], quote: QuotedMessageContext | undefined,
     flushTrigger: (key: string, revision: number) => void, endpointId?: string,
@@ -104,7 +119,7 @@ export function createTurnEngine(deps: TurnEngineDeps): TurnEngine {
   const narrating = new Set<string>()
 
   function bufferUserNarrative(
-    story: InterludeStory, participant: InterludeParticipant, session: Session,
+    story: InterludeStory, participant: InterludeParticipant, handle: TurnHandle,
     now: Date, supersededIntents: NarrativeIntent[],
     content: string, imageSources: string[], audioSources: string[], quote: QuotedMessageContext | undefined,
     flushTrigger: (key: string, revision: number) => void, endpointId?: string,
@@ -121,10 +136,11 @@ export function createTurnEngine(deps: TurnEngineDeps): TurnEngine {
     }
     turn.messages.push({ content, occurredAt: now, supersededIntents, imageSources, audioSources,
       ...(endpointId ? { endpointId } : {}), ...(quote !== undefined && quote !== null ? { quote } : {}) })
-    turn.latestSession = session
+    turn.latestHandle = handle
     if (turn.timer) turn.timer()
     const revision = ++turn.nextRevision
-    const delay = Math.max(0, deps.userMessageDebounceSeconds) * 1000
+    const quietMs = Math.max(0, deps.userMessageDebounceSeconds) * 1000
+    const delay = boundedDebounceDelay(turn, quietMs, Math.max(3000, quietMs))
     turn.timer = deps.setTimeout(() => flushTrigger(key, revision), delay)
     turns.set(key, turn)
     deps.reportOperation('diagnostic', 'debug', story, 'user-message', '短时消息合并 参与者=%s 待处理=%d 等待=%dms', participant.id, turn.messages.length, delay)
@@ -154,6 +170,7 @@ export function createTurnEngine(deps: TurnEngineDeps): TurnEngine {
       return null
     }
     narrating.add(turn.storyId)
+    turn.debounceStartedAt = undefined
     turn.timer = undefined
     turn.activeSources = turn.sources
     turn.sources = []
@@ -184,7 +201,8 @@ export function createTurnEngine(deps: TurnEngineDeps): TurnEngine {
     // 消息保留在 turn 里,由 resume 的 rescheduleTimers 接管。
     else if (turn.messages.length && !turn.timer && !turn.inFlightRequestId) {
       const revision = ++turn.nextRevision
-      turn.timer = deps.setTimeout(() => deps.scheduleTurnFlush(key, revision), Math.max(0, deps.userMessageDebounceSeconds) * 1000)
+      const quietMs = Math.max(0, deps.userMessageDebounceSeconds) * 1000
+      turn.timer = deps.setTimeout(() => deps.scheduleTurnFlush(key, revision), boundedDebounceDelay(turn, quietMs, Math.max(3000, quietMs)))
     }
   }
 
@@ -210,6 +228,7 @@ export function createTurnEngine(deps: TurnEngineDeps): TurnEngine {
         turn.obsoleteRequestIds.add(turn.inFlightRequestId)
         ;(turn.discardedRequestIds ??= new Set()).add(turn.inFlightRequestId)
         turn.messages.length = 0
+        turn.debounceStartedAt = undefined
         turn.timer = undefined
       } else {
         turns.delete(key)

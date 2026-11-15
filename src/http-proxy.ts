@@ -8,7 +8,7 @@ export async function withProviderStream<T>(proxyAgent: string | undefined, task
   const agent = new undici.ProxyAgent(proxyAgent)
   try {
     return await task(((url: any, init: any) => undici.fetch(url, { ...init, dispatcher: agent })) as typeof fetch)
-  } finally { await agent.close().catch(() => undefined) }
+  } finally { await agent.close().catch((): undefined => undefined) }
 }
 
 /** HTTP(S) 代理请求与 fetch 失败诊断。
@@ -51,7 +51,7 @@ export async function postJsonViaProxy(
     }
   } finally {
     // close() 返回 Promise：reject 时 void 掉会变成 unhandledRejection。
-    agent.close().catch(() => undefined)
+    agent.close().catch((): undefined => undefined)
   }
 }
 

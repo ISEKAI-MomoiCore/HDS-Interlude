@@ -6,6 +6,8 @@ export interface CompiledNarrativeContext {
   currentSceneEvidence: Record<string, unknown>
   ongoingThreads: Record<string, unknown>
   availableNearFuture: Record<string, unknown>
+  /** 考据案头：author-facing 写作参考（researchDesk），与[世界事件]语义隔离。 */
+  writingReference: Record<string, unknown>
   incomingEvent: Record<string, unknown>
   authoringWindow: Record<string, unknown>
 }
@@ -38,6 +40,9 @@ export function compileNarrativeContext(
       recalledScript: payload.recalledHistory,
       webContext: payload.webContext,
       recentExchange: payload.recentExchange,
+      // I-6a 背景通道：advance 的有界群视图（概况 + 每群 K 条），历史背景
+      // 归既往事料段。此前 payload 有字段但编译器未映射，被静默丢弃。
+      groupBackground: payload.groupBackground,
     }),
     currentSceneEvidence: projectSceneEvidence(
       frame,
@@ -57,6 +62,9 @@ export function compileNarrativeContext(
       supersededDelayedReplies: payload.supersededDelayedReplies,
       automaticDeliverySummaries: payload.automaticDeliverySummaries,
       deliveryReality: payload.deliveryReality,
+      // II-1 交往节奏印象：投递派生的私聊节奏摘要（与 deliveryReality 同为
+      // 投递事实投影；仅私聊相位且证据充足时存在）。
+      interactionRhythm: payload.interactionRhythm,
       developmentTendencies: payload.developmentTendencies,
     }),
     availableNearFuture: compactObject({
@@ -66,6 +74,10 @@ export function compileNarrativeContext(
       dueIntents: payload.dueIntents,
       upcomingPlans: payload.upcomingPlans,
     }),
+    // 审计修复 #7：案头为空时省略整个段（空对象是模型噪声）。
+    writingReference: payload.researchDesk?.length
+      ? compactObject({ researchDesk: payload.researchDesk })
+      : {},
     incomingEvent: compactObject({
       event: payload.currentEvent,
       groupContext: payload.groupContext,

@@ -5,19 +5,19 @@
 > 聊天在幕前发生，生活在幕间继续。
 
 <p>
-  <a href="https://gitee.com/MomoiCore/HDS-Interlude/releases"><img src="docs/assets/readme/version.png" alt="当前版本 1.0.1-rc58" width="176" height="30"></a>
+  <a href="https://gitee.com/MomoiCore/HDS-Interlude/releases"><img src="docs/assets/readme/version.png" alt="当前版本 1.0.1-rc60" width="176" height="30"></a>
   <a href="https://koishi.chat/"><img src="docs/assets/readme/koishi.png" alt="适用于 Koishi 4" width="122" height="30"></a>
   <a href="https://www.typescriptlang.org/"><img src="docs/assets/readme/typescript.png" alt="使用 TypeScript 编写" width="152" height="30"></a>
   <a href="LICENSE"><img src="docs/assets/readme/license.png" alt="许可证 AGPL-3.0" width="170" height="30"></a>
 </p>
 
-**[快速开始](BEGINNER_GUIDE.md) · [一条龙向导](新人上手一条龙配置服务v1.0.1-rc58.html) · [下载发行版](https://gitee.com/MomoiCore/HDS-Interlude/releases) · [更新记录](docs/CHANGELOG.md)**
+**[快速开始](BEGINNER_GUIDE.md) · [一条龙向导](新人上手一条龙配置服务v1.0.1-rc60.html) · [下载发行版](https://gitee.com/MomoiCore/HDS-Interlude/releases) · [更新记录](docs/CHANGELOG.md)**
 
 交流群：421430402，群主24小时解答，欢迎来玩！
 
 HDS Interlude 是一个面向 Koishi 一对一与多参与者场景的持续叙事聊天框架。它让用户消息、角色的沉默、延迟回复、主动联系和自动推进，都成为同一段生活剧本中自然可见的部分，并由一次主叙事写作连贯地决定。
 
-当前版本：`1.0.1-rc58`。
+当前版本：`1.0.1-rc60`。
 
 当前文档已同步至 2026-10-27 的 rc58，累计变更以 rc57 发布包为基线。已完成源码构建、类型检查、回归测试与 rc58 安装包打包；发布包与校验信息见发行记录。旧安装包不会自动获得这些修改，运行实例须安装并重载后才生效。
 
@@ -330,6 +330,8 @@ OneBot 模式采用显式白名单：启用后，绑定的机器人 QQ 账号和
 
 对 `responseMode=always` 的活跃群，可按群开启纯算法 `willingness`：本地意愿分数会随消息、关键词和引用累积，按半衰期衰减，并在超过阈值后以概率决定是否值得调用主模型。@ 机器人可以立即通过（主角睡眠态除外：此时 @ 直通关闭且意愿按 20% 计），主角成功发言后会消耗意愿。这个层只减少不必要的群聊主模型调用，不参与私聊、Alter 或 Agency；回复后的跳过抖动详见[自动推进与生活节奏](#自动推进与生活节奏)。
 
+群语音默认无视 @、意愿与冷却必定触发主叙事（携带原生音频）。如不希望语音强制调用模型，可在群规则中关闭"语音必定触发"（`audioAlwaysTriggers`）：关闭后 mention-only 群未 @ 的语音仅落库作证据，always 群的语音与普通消息一样受意愿与冷却控制；本轮若因其它原因触发，语音仍会尝试随批携带。
+
 ## 图片与网页观察
 
 ### 图片理解
@@ -355,7 +357,7 @@ OneBot 模式采用显式白名单：启用后，绑定的机器人 QQ 账号和
 ```bash
 npm install koishi-plugin-hds-interlude@beta
 # 或使用 corepack yarn（Koishi 官方推荐）：
-corepack yarn add "koishi-plugin-hds-interlude@file:./koishi-plugin-hds-interlude-1.0.1-rc58.tgz" --exact
+corepack yarn add "koishi-plugin-hds-interlude@file:./koishi-plugin-hds-interlude-1.0.1-rc60.tgz" --exact
 ```
 
 稳定版发布后可省略 `@beta`。然后在 Koishi Console 添加 `hds-interlude` 插件并完成配置。
@@ -365,19 +367,19 @@ corepack yarn add "koishi-plugin-hds-interlude@file:./koishi-plugin-hds-interlud
 rc57 安装包由发布流程生成；安装前请确认实际 tgz 路径，必要时核对同目录的 SHA-256 校验文件。使用本地预发布包时，Koishi Desktop 实例必须使用 Yarn 4 更新 package.json 与 yarn.lock；不要用 npm 安装：
 
 ```bash
-node .yarn/releases/yarn-4.12.0.cjs add "koishi-plugin-hds-interlude@file:C:/absolute/path/to/koishi-plugin-hds-interlude-1.0.1-rc58.tgz" --exact
+node .yarn/releases/yarn-4.12.0.cjs add "koishi-plugin-hds-interlude@file:C:/absolute/path/to/koishi-plugin-hds-interlude-1.0.1-rc60.tgz" --exact
 ```
 
 Windows 示例：
 
 ```powershell
-node .yarn/releases/yarn-4.12.0.cjs add "koishi-plugin-hds-interlude@file:C:/dev/HDS-Interlude/plugins/hds-interlude/release/koishi-plugin-hds-interlude-1.0.1-rc58.tgz" --exact
+node .yarn/releases/yarn-4.12.0.cjs add "koishi-plugin-hds-interlude@file:C:/dev/HDS-Interlude/plugins/hds-interlude/release/koishi-plugin-hds-interlude-1.0.1-rc60.tgz" --exact
 ```
 
 Koishi Desktop 的实例使用 Yarn 4。请在实例目录执行以下命令，并在完成后重载插件或重启 Desktop：
 
 ```powershell
-node .yarn/releases/yarn-4.12.0.cjs add "koishi-plugin-hds-interlude@file:C:/dev/HDS-Interlude/plugins/hds-interlude/release/koishi-plugin-hds-interlude-1.0.1-rc58.tgz" --exact
+node .yarn/releases/yarn-4.12.0.cjs add "koishi-plugin-hds-interlude@file:C:/dev/HDS-Interlude/plugins/hds-interlude/release/koishi-plugin-hds-interlude-1.0.1-rc60.tgz" --exact
 ```
 
 安装后重新加载 Koishi，再在 Console 启用插件。
@@ -396,6 +398,8 @@ OneBot / NapCat 未启动时可能出现 `ECONNREFUSED`，表示适配器正在�
 
 ## Console 配置顺序
 
+HDSI 专属工作台现提供「概览 / 配置中心 / 当前故事 / 考据案头 / 通信动作 / 上下文预算」。配置中心支持全部 25 个可见配置节的搜索、保存本节、保存并重载和重新读取；当前故事设定单独保存到数据库。Koishi 标准插件配置页继续共用同一份 Schema。此项为工作区未发布增量，使用时需加载最新服务端与客户端构建。
+
 建议按以下顺序配置，以更快建立可验证的互动闭环：
 
 1. **盲区模式（原“失明模式”）**：首次配置保持关闭；稳定运行后可开启以获得无命令、极少 HDSI 日志的沉浸式对话。
@@ -404,9 +408,9 @@ OneBot / NapCat 未启动时可能出现 `ECONNREFUSED`，表示适配器正在�
 
 使用 GLM‑5.3‑Flash 时，可在对应模型连接行选择 `mode=zhipu-official`：仅填写智谱 API Key、模型名与推理强度，插件会使用官方 endpoint 和流式请求策略；同一配置内的其它模型行仍可使用普通 OpenAI-compatible 模式。
 4. **平台控制**：启用 OneBot 后填写机器人 QQ、私聊用户白名单；如需群聊，再添加群白名单。
-5. **剧情节奏**：连续消息合并、自动推进、休息时段、延迟消息和主动联系意愿阈值。
+5. **剧情节奏**：连续消息合并、自动推进、休息时段、延迟消息和统一投递策略（可选每目标日上限/最短运行间隔）。
 6. **Schedule Preplan**：近期日程覆盖天数、每日空闲审查时间和自动推进锚点。
-7. **Agency Window**：日程负荷、隐私、设备和主动联系重查边界。
+7. **Agency Window（兼容期）**：日程负荷、隐私与设备作为场景条件证据投影；旧意愿/重查裁决已退役。
 8. **记忆与上下文**：场景预算、压缩阈值、长期事实、Embedding 与 Overlay 整理策略。
 9. **Alter System**：先使用默认动态阈值和权重；需要时单独选择低成本分析模型。
 10. **可选能力**：视觉、Puppeteer、网页观察、日志级别和日志内容开关。
@@ -477,7 +481,7 @@ interlude.purge.range 2026-08-18T13:00:00+08:00 2026-08-19T02:00:00+08:00
 
 - HDSI 依赖模型的写作与结构化输出能力。较小或不稳定的模型更容易出现格式失败、过度重复或关系跳跃。
 - 自动推进基于已记录状态补写角色生活，适合叙事陪伴与角色互动；医疗、紧急救助、法律及其他高风险场景应使用相应的专业服务。
-- 主动联系需要显式开启，并始终受白名单、参与者资料、意愿阈值与单轮数量限制。
+- 主动联系需要显式开启，并始终受白名单、参与者资料、统一投递策略（可选额度/间隔）与单轮数量限制。
 - 清空数据库、删除范围剧本和清除 Overlay 均可能不可逆；执行前请先导出 Koishi 数据库。
 
 ## 开发与验证

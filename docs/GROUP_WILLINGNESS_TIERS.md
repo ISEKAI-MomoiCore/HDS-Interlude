@@ -1,6 +1,6 @@
 # 群聊发言意愿档位（Willingness Tiers）与 auto 档
 
-适用版本：`1.0.1-rc23` 起；当前实现基线为 `1.0.1-rc52`。本文记录设计来源，当前配置入口和行为以 `CONFIGURATION_GUIDE.md` 与源码为准。
+适用版本：`1.0.1-rc23` 起；当前实现基线为 `1.0.1-rc59` 工作区。本文记录设计来源，当前配置入口和行为以 `CONFIGURATION_GUIDE.md` 与源码为准。
 
 ## 定位
 
@@ -28,35 +28,37 @@
 
 ```
 willingnessPreset: off | quiet | reserved | normal | active | eager | auto | custom
-willingnessAuto:   { busy: quiet(默认), idle: active(默认), asleep: quiet(默认) }  // 三态各可选五档
+willingnessAuto:   { busy: quiet(默认), idle: active(默认), asleep: quiet(默认) }  // 三桶各可选五档
+skipJitter:        true(默认)  // §7.6.3 兼容选项：回复后跳过条数抖动；关闭后仅按评分/概率/会话相位调度
 ```
 
 - **off**：仅响应模式（mention-only/always）与冷却生效，与旧默认一致。
-- **auto**：按 `StoryState.lifeStatus` 切档——`busy→配置档`、`idle→配置档`、`asleep→配置档`；状态缺失、无效或超过 6 小时未刷新时按 **idle** 映射回退（默认 `active`；用户配置 `idle: eager` 时使用 `eager`），不写回生活状态。
+- **auto**：按五档生活节奏 `StoryState.lifeRhythm`（唯一事实源）经三桶映射切档——`occupied→busy 桶`、`asleep→asleep 桶`、`phone-focused/available/resting→idle 桶`；节奏缺失、无效或超过 2 小时未刷新时按 **idle** 桶回退（默认 `active`；用户配置 `idle: eager` 时使用 `eager`），不写回生活节奏。7.1.4 统一：旧三态 lifeStatus 已废止（存档加载迁移并入 lifeRhythm），时效口径由 6 小时显式迁移为与 Urge 共用的 2 小时。
 - **custom**：沿用旧数值对象。
+- **skipJitter（§7.6.3 兼容选项，2026-11-11）**：默认开启=现行为（回复后按档位抖动 + 五档节奏调制掷出"先观察 N 条"）。关闭后：观察路径整体停用（有既有 skipCount 也不拦截、不递减），回复后不再掷跳过数；评分/概率/会话相位/@ 与引用放行照常。默认翻转待新默认（I-1 会话迟滞 + 回合关联放行 + I-2 显著度）稳定后另行决定。
 - **存量兼容**：preset 未设置（或为 off）但旧数值门 `enabled=true` 时，自动按 `custom` 处理，存量行为字节级不变。要真正关掉旧门，把旧对象 `enabled` 设为 false 或把档位切到其他值。
 
-## 睡眠态（asleep）的三个固定行为
+另见群规则三维度（I-6b，`src/group-dimensions.ts`）：采集范围（off/directed/background）× 即时触发（mention/willingness）× 后台参与（off/background/active）——意愿档位作用于"即时触发=willingness"的群；旧 responseMode 缺省派生三维。
+
+## 睡眠态（asleep 桶）的三个固定行为
 
 1. **@ 不再直通**：她在睡觉，@ 留给醒来后的回合自然处理（主模型会写她没看手机）。
-2. **概率 ×0.2**：独立于所配档位的安全余量，对冲状态过期/误判。
+2. **概率 ×0.2**：独立于所配档位的安全余量，对冲节奏过期/误判。
 3. 掷骰失败时拒绝原因记为 `asleep`，日志可见。
 
 音频强触发维持不变：群音频仍绕过意愿与冷却直接触发主叙事。
 
-## lifeStatus 数据链
+## 生活节奏数据链（7.1.4 统一事实源）
 
-- 压缩提示词（full 与 lite 档）各加一条指令：按已压缩条目与日程上下文给出 `busy|asleep|idle`，不确定时省略字段。
-- `CompactionDecision.lifeStatus` → `normalizeLifeStatusDraft` 防御归一（仅三值合法）→ `persistCompaction` 写入 `StoryState.lifeStatus = { status, updatedAt }`（仅当值合法且变化时写库；无效/缺失保持旧值）。
-- 状态经 `KNOWN_STORY_STATE_KEYS` 登记与 `normalizeLifeStatus` 归一，旧数据无需迁移，重载不丢。
-- `storyStateForPrompt` 将其剥除——宿主调度字段不进模型上下文。
-- 群回合评估与发言后扣减（`evaluateWillingnessGate` / `consumeWillingnessGate`）共用同一档位解析层，replyCost 对齐。
+- 压缩提示词要求五档 `lifeRhythm`（phone-focused/available/occupied/resting/asleep）+ 依据；`normalizeLifeRhythmDraft` 轻校验 → `persistCompaction` 在 attention 变化时写入 `StoryState.lifeRhythm = { attention, basis, assessedAt, source: 'compactor' }`。主叙事交接与入站提升按既有路径覆盖/续期（source narrator/incoming）。
+- 旧三态 `lifeStatus` 已废止：压缩器不再派生落库；旧存档在 `decodeStoryState` 加载时经 `lifeRhythmFromLegacyStatus` 一次性并入 lifeRhythm（busy→occupied / asleep→asleep / idle→available），字段随版本 4→5 迁移消失。
+- 群回合评估与发言后扣减（`evaluateWillingnessGate` / `consumeWillingnessGate`）共用同一档位解析层（`rhythmTierBucket` 三桶映射 + `LIFE_RHYTHM_STALE_MS` 2 小时时效），replyCost 对齐；Urge 消费同一事实源的乘法倍率。
 
 ## 日志
 
 - 未触发：`群聊意愿未触发模型调用 群=%s 分数=%s 概率=%s 原因=%s 档位=%s`
 - 触发：`群聊消息准备进入主叙事 群=%s 模式=%s 意愿=%s 档位=%s`；auto 档显示 `auto(idle→active)` / `auto(无状态→idle→active)` / `auto(过期→idle→active)` 形态。
-- 状态更新：`生活状态已更新 状态=%s`（diagnostic 级）。
+- 状态更新：`生活节奏已更新 节奏=%s`（diagnostic 级）。
 
 ## 验证
 

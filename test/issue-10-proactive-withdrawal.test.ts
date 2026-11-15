@@ -3,15 +3,20 @@ import test from 'node:test'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { Config } from '../src/index'
 import { InterludeService } from '../src/service'
+import { sendOutgoingMessages } from '../src/delivery/pipeline'
 import { emptyStorySetting, emptyStoryState, type NarrativeDecision, type NarrativeIntent } from '../src/types'
 
 /**
- * Issue #10 回归：proactive-check（intent-due）相位下，模型已按契约把话写进
- * interaction.reply(mode=immediate) 但 proactiveContact 缺失/不规范时——
- *  A. host 合成 send-now 候选：真实风控（容量/日上限/端点）通过则放行投递，
- *     不再以 no-agency-candidate 静默撤回；意愿门对合成候选跳过。
- *  B. 真实风控拦截时照常撤回（真实原因 + 重查），且本轮新写的、指向同一参与
- *     者的模型意图被注入"从未发出"中和注记（summary 尾缀 + payload 标记）。
+ * Issue #10 回归（P3.1 统一动作契约重写）：proactive-check（intent-due）相位下
+ * Agency 数值裁决退役，执行许可由统一投递策略决定——
+ *  A1. 无策略限制配置（agency.enabled=false → 派生全 0）→ 回复默认放行，
+ *      投递照常、无撤回条目、无重查排期（appendProactiveCheck 退役）。
+ *  A2. 显式 deliveryPolicy（minimumRunIntervalMinutes）+ 窗口内已占用记录 →
+ *      参与者级策略拦截，撤回原因含 policy-run-interval，同轮同参与者的新
+ *      意图被注入"从未发出"中和注记（summary 尾缀 + payload 标记），不再
+ *      安排 agency 重查。
+ *  A3. 参与者不在白名单 → persistDecision 不再提前撤回（候选合成已退役），
+ *      白名单拒绝由投递边界执行：transport 层 participant-not-allowed 拦截。
  */
 
 const now = new Date('2026-10-19T08:29:11.000Z')
@@ -20,6 +25,22 @@ const future = new Date(now.getTime() + 3 * 60 * 60 * 1000)
 function proactiveCheckIntent(participantId: string, id: number): NarrativeIntent {
   return { id, storyId: 's', participantId, type: 'proactive-check', summary: 'recheck whether to reach out',
     notBefore: now, status: 'pending', payload: {}, createdAt: now, updatedAt: now } as NarrativeIntent
+}
+
+/** 投递账本里一条窗口内已结算占用的既往动作（间隔/额度评估的锚点）。 */
+function occupiedLedgerEntry(participantId: string, minutesAgo: number, id: number) {
+  const at = new Date(now.getTime() - minutesAgo * 60_000)
+  return {
+    id, storyId: 's', kind: 'script', participantId: 'p', content: 'x', occurredAt: at, createdAt: at,
+    metadata: {
+      commitId: `c${id}`,
+      deliveryActions: [{
+        commitId: `c${id}`, eventId: `e${id}`, eventKind: 'outgoing-message', participantId,
+        status: 'delivered' as const, updatedAt: at.toISOString(),
+        segments: [{ index: 0, kind: 'message' as const, content: 'hi', status: 'delivered' as const }],
+      }],
+    },
+  }
 }
 
 interface PersistResult {
@@ -34,18 +55,18 @@ interface PersistResult {
 async function persist(decision: NarrativeDecision, options: {
   phase?: 'intent-due' | 'advance'
   participantId?: string
-  lastCharacterMessageAt?: Date
-  agency?: Record<string, unknown>
+  deliveryPolicy?: Record<string, unknown>
+  seedEntries?: any[]
 } = {}): Promise<PersistResult> {
   const participantId = options.participantId ?? 'alice'
   const story: any = { id: 's', setting: emptyStorySetting(), state: emptyStoryState(), cursorAt: now }
-  const entries: any[] = []
+  const entries: any[] = [...(options.seedEntries ?? [])]
   const intents: any[] = []
   const reports: string[] = []
   const rechecks: unknown[] = []
   let intentSeq = 100
   const participants = [
-    { id: participantId, state: options.lastCharacterMessageAt ? { lastCharacterMessageAt: options.lastCharacterMessageAt.toISOString() } : {}, updatedAt: now },
+    { id: participantId, state: {}, updatedAt: now },
     { id: 'bob', state: {}, updatedAt: now },
   ]
   const queryIntents = (query: any, opts?: any) => {
@@ -63,7 +84,10 @@ async function persist(decision: NarrativeDecision, options: {
       sharedStory: { maxCrossConversationActions: 8 },
       onebot: { groupChats: [] },
       urge: { enabled: false },
-      agency: { enabled: true, contactMode: 'natural', naturalWillingnessThreshold: 0.15, minimumProactiveIntervalMinutes: 30, ...options.agency },
+      // agency.enabled=false → deliveryPolicyConfig 派生全 0（不过滤）；显式
+      // deliveryPolicy 配置优先于派生（§12.2）。
+      agency: { enabled: false },
+      ...(options.deliveryPolicy ? { deliveryPolicy: options.deliveryPolicy } : {}),
     },
     participants: async () => participants,
     canHandleParticipant: (participant: any) => participant.id !== 'carol',
@@ -90,7 +114,10 @@ async function persist(decision: NarrativeDecision, options: {
     resolveMostActiveEndpointId: () => undefined,
     dbGet: async (table: string, query: any, opts?: any) => {
       if (table === 'interlude_intent') return queryIntents(query, opts)
-      if (table === 'interlude_script_entry') return entries.filter((entry: any) => entry.id === query?.id)
+      if (table === 'interlude_script_entry') {
+        if (query?.id) return entries.filter((entry: any) => entry.id === query.id)
+        return entries.filter((entry: any) => entry.kind === 'script')
+      }
       return []
     },
     dbSet: async (table: string, query: any, patch: any) => {
@@ -113,7 +140,6 @@ async function persist(decision: NarrativeDecision, options: {
 const replyDecision = (extra: Partial<NarrativeDecision> = {}): NarrativeDecision => ({
   script: '她拿起手机，把吃饱了的消息发了出去。',
   interaction: { seen: false, reply: { mode: 'immediate', content: '吃饱了 撑得走不动路' } },
-  agencyWindow: { activityLoad: 'free', privacy: 'private', deviceAccess: 'available', validUntil: future.toISOString(), basis: '宿舍独处，手机在手上' },
   intents: [
     { type: 'follow-up', summary: '刚发过吃饱的消息，对方尚未查看', notBefore: future.toISOString(), participantId: 'alice' } as never,
     { type: 'reminder', summary: '提醒 bob 还书', notBefore: future.toISOString(), participantId: 'bob' } as never,
@@ -121,45 +147,58 @@ const replyDecision = (extra: Partial<NarrativeDecision> = {}): NarrativeDecisio
   ...extra,
 } as NarrativeDecision)
 
-test('A1: proactive-check 缺 proactiveContact 但回复就绪 → host 合成候选并放行（不再静默撤回）', async () => {
+test('A1: proactive-check 缺 proactiveContact 但回复就绪 → 无策略限制时默认放行（无撤回、无重查）', async () => {
   const result = await persist(replyDecision())
   assert.equal(result.messages.length, 1, '已写好的可见回复必须进入投递管线')
   assert.equal(result.messages[0].content, '吃饱了 撑得走不动路')
   assert.equal(result.messages[0].participantId, 'alice')
-  assert.ok(result.messages[0].proactiveContactRef, '合成放行的主动联系必须预记配额 ref')
-  assert.ok(result.reports.some(line => line.includes('候选=host合成')), '审计日志必须标记合成候选')
-  assert.ok(result.reports.some(line => line.includes('立即联系')), '风控全过应判定为立即联系')
+  assert.equal(result.messages[0].proactiveContactRef, undefined, 'proactiveContactRef 不再附着')
   assert.equal(result.entries.filter((entry: any) => entry.kind === 'outgoing-delivery-failed').length, 0, '不得出现撤回账目')
   const script = result.entries.find((entry: any) => entry.kind === 'script')
   assert.ok(script.metadata.deliveryActions.every((action: any) => action.status !== 'cancelled'), '账本不得有 cancelled')
-  // B 不触发：没有撤回就不该有中和注记
+  assert.equal(result.rechecks.length, 0, 'Agency 重查排期已退役（appendProactiveCheck 不再被调用）')
   assert.equal(result.intents.filter((intent: any) => intent.summary.includes('从未发出')).length, 0)
 })
 
-test('A2: 真实风控（安全间隔）拦截 → 撤回带真实原因 + 安排重查 + 同轮意图注入中和注记', async () => {
-  const result = await persist(replyDecision(), { lastCharacterMessageAt: new Date(now.getTime() - 10 * 60 * 1000) })
-  assert.deepEqual(result.messages, [], '风控拦截时仍不得投递')
+test('A2: 统一策略（安全间隔）拦截 → 撤回带 policy-run-interval + 同轮意图注入中和注记（不再排重查）', async () => {
+  const result = await persist(replyDecision(), {
+    deliveryPolicy: { minimumRunIntervalMinutes: 30 },
+    seedEntries: [occupiedLedgerEntry('alice', 10, 50)],
+  })
+  assert.deepEqual(result.messages, [], '策略拦截时仍不得投递')
   const failed = result.entries.filter((entry: any) => entry.kind === 'outgoing-delivery-failed')
   assert.equal(failed.length, 1, '撤回必须留痕')
-  assert.match(failed[0].metadata.reason, /blocked-by-agency-capacity:minimum-proactive-interval/, '撤回原因必须是真实风控而非 no-agency-candidate')
-  assert.ok(result.rechecks.length === 1, '容量拦截应安排重查而非让动机链静默死亡')
-  // B：同参与者的新意图被中和，其他参与者的意图不动
+  assert.equal(failed[0].metadata.reason, 'policy-run-interval', '撤回原因必须是具体统一策略而非 no-agency-candidate')
+  assert.equal(result.rechecks.length, 0, 'P3.1：Agency 重查排期退役，动机链交回正常写作')
+  // 同参与者的新意图被中和，其他参与者的意图不动
   const poisoned = result.intents.find((intent: any) => intent.participantId === 'alice')
   const untouched = result.intents.find((intent: any) => intent.participantId === 'bob')
   assert.match(poisoned.summary, /从未发出/, '同轮同参与者的意图必须携带未发送注记')
-  assert.equal(poisoned.payload.sendWithdrawnTurn, 'blocked-by-agency-capacity:minimum-proactive-interval')
+  assert.equal(poisoned.payload.sendWithdrawnTurn, 'policy-run-interval')
   assert.doesNotMatch(untouched.summary, /从未发出/, '无关参与者的意图不得被注记')
   assert.equal(untouched.payload.sendWithdrawnTurn, undefined)
   // 注记幂等
-  await result.host.annotateWithdrawnTurnIntents({ id: 's', setting: {} }, 100, new Set(['alice']), 'blocked-by-agency-capacity:minimum-proactive-interval', now)
+  await result.host.annotateWithdrawnTurnIntents({ id: 's', setting: {} }, 100, new Set(['alice']), 'policy-run-interval', now)
   assert.equal(poisoned.summary.split('从未发出').length - 1, 1, '重复调用不得叠加尾缀')
 })
 
-test('A3: 参与者不在白名单 → 合成失败，回落既有 no-agency-candidate 撤回（旧行为保留）', async () => {
+test('A3: 参与者不在白名单 → persistDecision 照常排队，白名单拒绝由投递边界执行（消息不投递）', async () => {
   const result = await persist(replyDecision(), { participantId: 'carol' })
-  assert.deepEqual(result.messages, [])
-  const failed = result.entries.filter((entry: any) => entry.kind === 'outgoing-delivery-failed')
-  assert.equal(failed.length, 1)
-  assert.equal(failed[0].metadata.reason, 'no-agency-candidate')
-  assert.ok(result.reports.some(line => line.includes('候选=host合成')) === false, '白名单外不得合成')
+  // P3.1：候选合成/agency 过滤退役后，persistDecision 不再提前撤回——
+  // 白名单拒绝移到传输边界（delivery/pipeline.ts 的 canHandleParticipant 门）。
+  assert.equal(result.messages.length, 1, '回复照常进入投递管线')
+  assert.equal(result.messages[0].participantId, 'carol')
+  assert.equal(result.entries.filter((entry: any) => entry.kind === 'outgoing-delivery-failed').length, 0)
+  // 投递边界：白名单外参与者的消息被 participant-not-allowed 拦下，不触达传输。
+  const failures: Array<{ participantId: string, reason: string }> = []
+  const deliveryHost = {
+    getParticipant: async (id: string) => (id === 'carol' ? { id: 'carol', platform: 'onebot', selfId: '100', userId: 'u1' } : undefined),
+    ensureEndpointRegistry: async () => {},
+    canHandleParticipant: () => false,
+    recordOutgoingDeliveryFailure: async (_story: unknown, participantId: string, _message: unknown, reason: string) => { failures.push({ participantId, reason }) },
+    report: () => {}, reportStandalone: () => {},
+  }
+  const delivered = await sendOutgoingMessages(deliveryHost as never, { id: 's' } as never, result.messages as never)
+  assert.deepEqual(delivered, [], '白名单外参与者不得收到消息')
+  assert.deepEqual(failures, [{ participantId: 'carol', reason: 'participant-not-allowed' }], '拦截留痕必须点名白名单原因')
 })

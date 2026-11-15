@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { compileNarrativeContext, compiledContextConflicts } from '../src/script/context-compiler'
 
-test('context compiler creates one seven-part scaffold without recomputing shared facts', () => {
+test('context compiler creates one eight-part scaffold without recomputing shared facts', () => {
   const payload = {
     setting: { character: { name: '水濑' } }, state: {}, currentParticipant: null, participants: [],
     recentScript: [{ id: 1, content: '她还坐在窗边。' }], sceneContext: { scene: null }, continuitySnapshot: null,
@@ -13,7 +13,7 @@ test('context compiler creates one seven-part scaffold without recomputing share
   const compiled = compileNarrativeContext(payload, undefined, undefined)
   assert.deepEqual(Object.keys(compiled), [
     'storyIdentity', 'relevantEstablishedEpisodes', 'currentSceneEvidence', 'ongoingThreads',
-    'availableNearFuture', 'incomingEvent', 'authoringWindow',
+    'availableNearFuture', 'writingReference', 'incomingEvent', 'authoringWindow',
   ])
   assert.deepEqual(compiledContextConflicts(payload, compiled), [])
   assert.strictEqual(compiled.relevantEstablishedEpisodes.recentScript, payload.recentScript)

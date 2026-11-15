@@ -5,10 +5,14 @@ import { AgencyConfig, AlterSystemConfig, ChatReactionName, ChatRhythmConfig, Na
 import type { ModelCaptureConfig } from './capture'
 import { HDS_INTERLUDE_VERSION } from './meta'
 import { resolveAgencyConfig } from './agency'
-import { GroupWillingnessConfig } from './group-willingness'
+import { deliveryPolicyRevision, migrateLegacyRunLimits, resolveDeliveryPolicyConfig } from './script/delivery-policy'
+import { migrateProactiveCheckIntents } from './script/contact-plan-migration'
+import { communicationActionsList } from './console/actions'
+import { GroupWillingnessConfig, migrateWillingnessPresetsConfig } from './group-willingness'
 import { resolveSchedulePreplanConfig, SchedulePreplanConfig, schedulePreplanWindow } from './schedule-preplan'
 import { formatLogTime, formatStoryDisplayTime } from './time'
 import { installDesktopBridge } from './desktop-bridge'
+import { installHdsiConsole } from './console'
 import { fetchShare, summarizeShare, formatDiffLines, buildConfigPatch, runAutoSync, readSyncState, snapshotDeepCopy } from './share-sync'
 export { fetchShare, sanitizeSharePayload, summarizeShare, formatDiffLines, buildConfigPatch, diffSection, storyDefaultsToSettingPatch, normalizeShareCode, SHARE_SECTIONS, runAutoSync, readSyncState, writeSyncState } from './share-sync'
 export type { ShareInfo, ShareSection, SectionDiff, ShareSummaryLines, SyncState, AutoUpdateResult } from './share-sync'
@@ -19,7 +23,7 @@ export const name = 'hds-interlude'
 export const version = HDS_INTERLUDE_VERSION
 // issue #6：移除死声明 'router'——@cordisjs/plugin-server 的 alias 在 provide
 // 之后早退，router 别名从未注册（ctx.router 恒 undefined）；服务访问统一走 'server'。
-export const inject = { required: ['database', 'http'], optional: ['puppeteer', 'server'] }
+export const inject = { required: ['database', 'http'], optional: ['puppeteer', 'server', 'console'] }
 
 const defaultProvider: ProviderConfig = {
   id: 'primary',
@@ -47,9 +51,10 @@ const defaultProvider: ProviderConfig = {
 /** Keep the card in the order users actually configure it: identity →
  * connection details (provided by the selected mode) → task assignment. */
 const ProviderIdentity = Schema.object({
+  id: Schema.string().default('').description('稳定连接 ID（高级）：留空可自动生成，现有连接保持原值。修改 ID 后请重新填写密钥或留空；各连接 ID 应唯一。'),
   label: Schema.string().default('Primary model').description('连接名称。'),
   enabled: Schema.boolean().default(true).description('启用此连接。'),
-  mode: Schema.union(['openai-compatible', 'zhipu-official', 'openai-official', 'deepseek-official', 'moonshot-official', 'dashscope-official', 'siliconflow-official', 'openrouter', 'gemini-openai', 'gemini-interactions']).default('openai-compatible').description('接口预设；重载后显示对应字段。'),
+  mode: Schema.union(['openai-compatible', 'zhipu-official', 'openai-official', 'deepseek-official', 'moonshot-official', 'dashscope-official', 'siliconflow-official', 'openrouter', 'gemini-openai', 'gemini-interactions']).default('openai-compatible').description('接口预设；选择后显示对应字段，保存后生效。'),
   proxyAgent: Schema.string().default('').description('HTTP(S) 代理地址，如 http://127.0.0.1:7890（可选，留空直连）。访问需要代理的服务商（如 Google Gemini）时填写；覆盖该连接的全部模型请求（普通 Chat、Embedding、Anthropic/Zhipu/OpenAI 兼容流式与实验性流式抢先回复）。'),
 })
 
@@ -61,6 +66,7 @@ const ProviderAssignments = Schema.object({
   useForStickers: Schema.boolean().default(false).description('用于表情包描述。'),
   useForVision: Schema.boolean().default(false).description('用于侧端识图。'),
   useForWorldSeeding: Schema.boolean().default(false).description('用于世界播种。'),
+  useForResearch: Schema.boolean().default(false).description('用于考据（research-lookup 意图的改写与蒸馏侧端任务；建议勾选给最便宜的连接）。'),
   priceInput: Schema.number().min(0).default(0).description('输入单价（百万 tokens；0 不计费）。'),
   priceOutput: Schema.number().min(0).default(0).description('输出单价（百万 tokens；0 不计费）。'),
   priceCachedInput: Schema.number().min(0).default(0).description('缓存输入单价（百万 tokens；0 按输入计）。'),
@@ -217,13 +223,39 @@ const RestWindowSchema: Schema<RestWindow> = Schema.object({
 })
 
 const Runtime: Schema<RuntimeConfig> = Schema.object({
+  contextEntryLimit: Schema.natural().min(1).max(200).default(18).description('近期剧本条目数（上下文锚点）：fixed 模式使用此条数，auto 模式作为日常档；较小值节省上下文，较大值保留更长的原始剧情。'),
+  contextEntryMode: Schema.union(['fixed', 'auto']).default('fixed').description('上下文预算模式：fixed 使用锚点并合并时间窗；auto 根据对话密度选择档位。私聊与群聊可分别覆写模式和档位，当前实际值可在 HDSI「上下文预算」页查看。'),
+  contextTimeWindowMinutes: Schema.natural().min(0).max(1_440).default(5).description('近期剧本时间窗（分钟）：额外并入此时间内的条目；0 表示仅按条数。fixed 模式合并后上限 500 条，auto 模式仍受当前档位上限约束。'),
+  contextEntry: Schema.object({
+    private: Schema.object({
+      mode: Schema.union(['inherit', 'fixed', 'auto']).default('inherit').description('私聊条目模式；inherit = 跟随上方总开关。'),
+      tiers: Schema.object({
+        burst: Schema.natural().min(4).max(200).default(12).description('极高密度档条目数（近 5 分钟 ≥4 条消息）。'),
+        high: Schema.natural().min(4).max(200).default(15).description('高密度档条目数（近 5 分钟 ≥2 条或近 15 分钟 ≥4 条）。'),
+        low: Schema.natural().min(4).max(200).default(22).description('低密度档条目数（近 30 分钟无消息）。'),
+        advance: Schema.natural().min(4).max(200).default(25).description('自动推进相位固定档条目数。'),
+      }).collapse(true).description('私聊档位表（日常档 = 上方锚点条目数，不在此配置）。'),
+    }).collapse(true).description('私聊覆写。'),
+    group: Schema.object({
+      mode: Schema.union(['inherit', 'fixed', 'auto']).default('inherit').description('群聊条目模式；inherit = 跟随上方总开关。'),
+      tiers: Schema.object({
+        burst: Schema.natural().min(4).max(200).default(12).description('极高密度档条目数。'),
+        high: Schema.natural().min(4).max(200).default(15).description('高密度档条目数。'),
+        low: Schema.natural().min(4).max(200).default(22).description('低密度档条目数。'),
+        advance: Schema.natural().min(4).max(200).default(25).description('自动推进相位固定档条目数。'),
+      }).collapse(true).description('群聊档位表（日常档 = 上方锚点条目数）。'),
+    }).collapse(true).description('群聊覆写。'),
+  }).collapse(true).description('按聊天类型分别覆写条目模式与档位（默认 inherit 跟随总开关，两类型一致）。'),
+  memoryLimit: Schema.natural().min(1).max(200).default(20).description('主叙事读取的长期事实数量；会经过相关性重排。'),
+  maxScriptCharacters: Schema.natural().min(500).max(12_000).default(1_400).description('单次写作允许追加的剧本文本上限。'),
+  maxMessageCharacters: Schema.natural().min(1).max(12_000).default(1_500).description('单条可见消息的最大字符数。'),
   captureDirectMessages: Schema.boolean().default(true).description('是否拦截并处理私聊文本消息。'),
   ignoreCommandMessages: Schema.boolean().default(true).description('是否跳过 interlude.* 管理命令，避免进入剧本。'),
   autoCreate: Schema.boolean().default(false).description('首次私聊时自动从 Console 档案创建故事。'),
-  userMessageDebounceSeconds: Schema.number().min(0).max(15).default(2).description('短消息合并等待秒数；0 关闭。'),
-  splitReplyMessages: Schema.boolean().default(true).description('是否将主叙事回复中的 <sep/> 拆成多条 QQ 消息。'),
-  messageSeparator: Schema.string().default('<sep/>').description('分段消息标记。通常保持 <sep/>；模型会在需要多条气泡时输出它。'),
-  convertNewlineToSeparator: Schema.boolean().default(false).description('小模型适配：模型没有输出分句标记而是用换行分条时，把每个换行自动视作一条消息的分隔再发送。默认关闭；Gemma 等不遵守 <sep/> 合约的小模型建议开启。'),
+  userMessageDebounceSeconds: Schema.number().min(0).max(15).default(2).description('短消息合并静默等待秒数；0 关闭合并。连续输入最多等待 3 秒与本值中的较大值。'),
+  splitReplyMessages: Schema.boolean().default(true).description('将主叙事回复中的 `<sep/>` 拆成多条消息气泡；各平台沿用相同分段语义。'),
+  messageSeparator: Schema.string().default('<sep/>').description('分段消息标记。通常保持 `<sep/>`；模型会在需要多条气泡时输出它。'),
+  convertNewlineToSeparator: Schema.boolean().default(false).description('小模型适配：模型没有输出分句标记而是用换行分条时，把每个换行自动视作一条消息的分隔再发送。默认关闭；Gemma 等使用换行分段的小模型建议开启。'),
   typingBaseDelaySeconds: Schema.number().min(0).max(60).default(1).description('发送第二条及后续分段消息前的基础打字等待秒数。'),
   typingCharactersPerSecond: Schema.number().min(1).max(100).default(8).description('模拟打字速度，每秒字符数；数值越小，长消息等待越久。'),
   typingMaxDelaySeconds: Schema.number().min(0).max(120).default(12).description('单条后续分段消息的最长打字等待秒数。'),
@@ -233,19 +265,14 @@ const Runtime: Schema<RuntimeConfig> = Schema.object({
     maxNodes: Schema.natural().min(1).max(100).default(30).description('单条合并转发最多读取的节点数。'),
     maxCharacters: Schema.natural().min(500).max(32_000).default(2_000).description('合并转发注入当前事件的最大字符数。'),
     maxDepth: Schema.natural().max(8).default(3).description('嵌套合并转发最多展开层数。'),
-  }).default({ enabled: true, maxNodes: 30, maxCharacters: 2_000, maxDepth: 3 }).description('【消息扩展】QQ 合并转发读取预算。'),
+  }).default({ enabled: true, maxNodes: 30, maxCharacters: 2_000, maxDepth: 3 }).collapse(true).description('QQ 合并转发：正文读取与展开预算。'),
   narrativeRetryDelaySeconds: Schema.natural().min(5).max(3_600).default(15).description('叙事模型请求失败后，自动再次尝试处理该用户回合前等待的秒数。'),
   narrativeRetryMaxAttempts: Schema.natural().min(0).max(50).default(6).description('单次用户回合因模型失败可自动重试的最多次数；0 表示关闭。'),
-  contextEntryLimit: Schema.natural().min(1).max(200).default(17).description('写入主叙事上下文的近期原始剧本条目数。小模型可调小（如 15）；注意与下方时间窗叠加——时间窗内条目会全部并入，需要更小上下文时请同时调小或关闭时间窗。'),
-  contextTimeWindowMinutes: Schema.natural().min(0).max(1_440).default(6).description('额外并入最近多少分钟内的全部条目（上限 500）；0 关闭，仅按条数保留。小模型建议与条数一起调小。'),
-  memoryLimit: Schema.natural().min(1).max(200).default(20).description('主叙事读取的长期事实数量；会经过相关性重排。'),
-  maxScriptCharacters: Schema.natural().min(500).max(12_000).default(1_400).description('单次写作允许追加的剧本文本上限。'),
-  maxMessageCharacters: Schema.natural().min(1).max(12_000).default(1_500).description('单条可见消息的最大字符数。'),
   minimumDelayedReplySeconds: Schema.natural().min(0).max(86_400).default(10).description('模型允许设置的最短延迟，单位秒。'),
   maximumDelayedReplyMinutes: Schema.natural().min(1).max(43_200).default(1_440).description('模型允许设置的最长延迟，单位分钟。'),
   cancelDelayedRepliesOnUserMessage: Schema.boolean().default(true).description('新消息到达时取消普通延迟回复。'),
   allowProactiveMessages: Schema.boolean().default(false).description('是否允许无新消息时向参与者主动发送可见消息。'),
-  proactiveWillingnessThreshold: Schema.number().min(0).max(1).step(0.05).default(0.65).description('主动联系意愿门槛。仅 Urge 关闭时生效——开启 Urge 后请改调【节奏 6】Urge 里的同名门槛；Agency 自然/平衡模式另有 naturalWillingnessThreshold。'),
+  proactiveWillingnessThreshold: Schema.number().min(0).max(1).step(0.05).default(0.65).hidden().description('【已弃用·P3】意愿数值已退出执行许可链（统一动作设计 §4.2）；兼容解析一个迁移周期，新链不再读取。'),
   sweepIntervalMinutes: Schema.natural().min(1).max(1_440).default(5).description('后台扫描周期；仅用于发现到期任务，不代表每轮都调用模型。'),
   minimumAdvanceMinutes: Schema.natural().min(1).max(10_080).default(30).description('手动“interlude.advance”的最小有效补写间隔；到期计划和对话后的短期补写不受此限制。'),
   maxStoriesPerSweep: Schema.natural().min(1).max(1_000).default(20).description('单轮后台扫描最多处理的主剧本数量。'),
@@ -275,18 +302,18 @@ const SchedulePreplan: Schema<SchedulePreplanConfig> = Schema.object({
 })
 
 const Agency: Schema<AgencyConfig> = Schema.object({
-  enabled: Schema.boolean().default(false).description('启用主体行动窗口。它只判断日程、隐私、设备和生活来源的联系理由，不读取或复用 Alter 情绪值。'),
-  maxWindowMinutes: Schema.natural().min(5).max(1_440).default(240).description('一张 Agency Window 最长有效时间；过期后必须由新的生活回合重新判断。'),
-  minimumProactiveIntervalMinutes: Schema.natural().min(0).max(10_080).default(60).description('距她上次向该参与者发出任何消息（含普通回复）的安全间隔；间隔内的普通主动联系会被拦下并安排重查，承诺型联系可以绕过。'),
-  maxCandidateHours: Schema.natural().min(1).max(168).default(24).description('生活产生的主动联系候选最长保留时间；过期后自然放下。'),
+  enabled: Schema.boolean().default(false).description('启用设备、隐私与生活负荷的场景证据更新；统一投递策略全为默认值时，也作为旧额度迁移的启用依据。人物联系由主叙事动作形成。'),
+  maxWindowMinutes: Schema.natural().min(5).max(1_440).default(240).description('场景证据窗口的最长有效时间（分钟）；过期后由新的生活回合更新。'),
+  minimumProactiveIntervalMinutes: Schema.natural().min(0).max(10_080).default(60).description('兼容迁移：统一投递策略全为默认值且 Agency 开启时，用于派生主动动作最短运行间隔。显式间隔请在统一投递策略中设置。'),
+  maxCandidateHours: Schema.natural().min(1).max(168).default(24).description('兼容旧配置的候选保留时长；当前人物计划使用各自的有效期，此项保持旧部署记录。'),
   contactMode: Schema.union([
-    Schema.const('strict').description('严格（默认）：现状行为——沉默本身不是理由，动机须落在她的生活事实上'),
-    Schema.const('natural').description('自然：想念、好奇近况、想分享此刻也是合法动机（须剧本显示她真的想到对方）；放宽意愿阈值与安全间隔'),
-    Schema.const('balanced').description('平衡：同自然，但提示词要求节制使用情感动机，多数联系仍跟随具体生活理由'),
-  ]).default('strict').description('主动联系温度。'),
-  naturalWillingnessThreshold: Schema.number().min(0).max(1).step(0.05).default(0.25).description('自然/平衡模式的意愿阈值（严格模式沿用 Urge/运行时阈值）。'),
-  naturalMinimumIntervalMinutes: Schema.natural().min(0).max(10_080).default(30).description('自然/平衡模式的安全间隔分钟；仅当小于严格间隔时生效。'),
-  proactiveDailyCap: Schema.natural().min(0).max(20).default(3).description('每参与者每 24 小时主动联系上限（全模式生效；0 = 不限）。'),
+    Schema.const('strict').description('严格：迁移时使用 minimumProactiveIntervalMinutes 作为运行间隔'),
+    Schema.const('natural').description('自然：迁移时取严格间隔与自然间隔中的较小值'),
+    Schema.const('balanced').description('平衡：迁移间隔与自然模式一致，保留旧配置标识'),
+  ]).default('strict').description('兼容迁移模式；当前用于派生默认投递间隔，主叙事依据剧本形成联系动机。'),
+  naturalWillingnessThreshold: Schema.number().min(0).max(1).step(0.05).default(0.25).description('兼容旧配置的意愿阈值；当前动作执行依据剧本动作、渠道权限和投递策略，此值仅保留配置记录。'),
+  naturalMinimumIntervalMinutes: Schema.natural().min(0).max(10_080).default(30).description('兼容迁移：自然/平衡模式用于派生运行间隔的分钟数，与严格间隔取较小值。'),
+  proactiveDailyCap: Schema.natural().min(0).max(20).default(3).description('兼容迁移：Agency 开启且统一投递策略全为默认值时，派生每目标滚动 24 小时的主动动作上限；0 = 无额外上限。'),
 }).collapse(true)
 
 const ChatRhythm: Schema<ChatRhythmConfig> = Schema.object({
@@ -453,26 +480,33 @@ const GroupChatRuleSchema: Schema<GroupChatRule> = (Schema.object({
   assignee: Schema.string().default('').description('群受理人（机器人 QQ）：填写已启用的机器人白名单账号，启动/重载时同步到 Koishi 频道受理人；留空不修改。不会解除频道忽略标记。'),
   purpose: Schema.string().role('textarea').default('').description('这个群主要做什么，例如“同事讨论项目”或“朋友闲聊”。'),
   characterRole: Schema.string().role('textarea').default('').description('主角在群里的身份和说话位置。'),
-  responseMode: Schema.union(['mention-only', 'always']).default('mention-only').description('mention-only: 仅在被 @ 时触发主叙事；always: 所有群消息进入上下文，是否调用主叙事仍受意愿与冷却控制。两种模式都受 Koishi 频道受理人限制。'),
+  responseMode: Schema.union(['mention-only', 'always']).default('mention-only').description('旧字段（等价于下方三维度的预设组合，显式维度逐维优先）：mention-only = 仅定向采集 + 仅@触发 + 关闭后台参与；always = 背景采集 + 意愿门触发 + 可主动回应。两种模式都受 Koishi 频道受理人限制。'),
+  collectionScope: Schema.union(['off', 'directed', 'background']).description('采集范围（不设置时按旧响应模式派生）：off=不采集群消息（先于故事查找丢弃，群仅作出站目标）；directed=仅定向消息落库（@、引用她的消息、语音、图片）；background=背景采集，普通消息也入库（配合"后台参与"可供推进背景与回放）。'),
+  immediateTrigger: Schema.union(['mention', 'willingness']).description('即时触发（不设置时按旧响应模式派生）：mention=仅被 @ 才触发主叙事（音频按"语音必定触发"策略）；willingness=交给意愿档位与冷却决定。'),
+  backgroundParticipation: Schema.union(['off', 'background', 'active']).description('后台参与（不设置时按旧响应模式派生）：off=不进推进背景、不作主动群发目标；background=仅背景材料（她的生活写作能看到这个群，但不会主动在群里发言）；active=可主动回应（背景材料 + 主动群发目标资格）。'),
+  audioAlwaysTriggers: Schema.boolean().default(true).description('语音必定触发：群里出现语音/音频时无视 @、意愿与冷却，直接调用主叙事。关闭后语音按普通消息处理——仅@触发群仍需 @（未 @ 语音仅落库作证据），意愿门群受意愿与冷却控制。默认开启。'),
   contextLimit: Schema.natural().min(4).max(100).default(20).description('进入主叙事时附带的最近群消息条数。'),
-  debounceSeconds: Schema.number().min(0).max(10).default(1).description('合并短时间连续群消息后再开始主叙事的等待秒数。'),
+  debounceSeconds: Schema.number().min(0).max(10).default(1).description('群消息合并的基础等待秒数；会话活跃时缩短、冷态延长，静默窗口为 0.3–3 秒，当前批次最长等待 3 秒。'),
   cooldownSeconds: Schema.natural().min(0).max(86_400).default(60).description('主角群发言后的冷却时间，避免连续刷屏。'),
   historicalImageLimit: Schema.natural().min(0).max(6).default(3).description('一次群聊主叙事最多附带的最近历史图片张数；图片消息本身不会因此自动触发模型。'),
+  stickerHarvest: Schema.boolean().default(false).description('采集表情包（偷表情包）：本群成员发送的表情图片进入暂存与判定流程（需同时开启表情包配置内的采集总开关）。mention-only 群同样可采集。'),
   willingnessPreset: Schema.union([
     Schema.const('off').description('关闭（默认）：仅响应模式与冷却生效；旧数值门已启用时自动按 custom 兼容'),
     WillingnessTierChoice,
-    Schema.const('auto').description('自动：按压缩器生活状态切换；状态缺失、无效或超过 6 小时未刷新时按 idle 档位；睡眠时 @ 不直通。'),
+    Schema.const('auto').description('自动：按五档生活节奏切换档位（忙碌→busy、入睡→asleep、玩手机/空闲/休息→idle）；节奏缺失、无效或超过 2 小时未刷新时按 idle 档位；睡眠时 @ 不直通。'),
     Schema.const('custom').description('自定义：使用下方旧数值参数'),
   ]).default('off').description('群聊发言意愿档位。'),
-  willingnessAuto: GroupWillingnessAuto.default({ busy: 'quiet', idle: 'active', asleep: 'quiet' }).description('auto 档的三态映射。数据源是三态生活状态：五档生活节奏会降维并入（忙碌→busy、入睡→asleep，玩手机/空闲/休息都按 idle 档处理）。'),
+  willingnessAuto: GroupWillingnessAuto.default({ busy: 'quiet', idle: 'active', asleep: 'quiet' }).description('auto 档的三桶映射。数据源是五档生活节奏（唯一事实源，与推进调度共用 2 小时时效口径）：忙碌→busy、入睡→asleep，玩手机/空闲/休息都按 idle 档处理。'),
   willingness: GroupWillingness.default({ enabled: false, maxScore: 1, threshold: 0.24, probabilityAmplifier: 1.3, decayHalfLifeSeconds: 180, replyCost: 0.55, baseGain: 0.12, quoteGain: 0.12, keywordGain: 0.18, keywords: [] }).description('自定义数值门（仅 willingnessPreset=custom 时生效；keywords 对所有档位生效）；@ 直接通过，睡眠态除外。'),
+  skipJitter: Schema.boolean().default(true).description('回复后跳过条数抖动（兼容选项，默认开启=现行为）。关闭后群门仅按评分/概率与会话相位调度，不再按"回复后先观察 N 条"消耗。'),
 }) as unknown as Schema<GroupChatRule>).collapse(true)
 
 const OneBot: Schema<OneBotNapCatConfig> = Schema.object({
   enabled: Schema.boolean().default(false).description('启用 OneBot/NapCat 账号过滤。默认关闭：未配置时沿用旧行为（不过滤）；启用后空白名单拒绝全部，须同时配置机器人/用户白名单。'),
   botAccounts: Schema.array(OneBotBotAccount).role('table').default([]).description('机器人账号白名单；空表拒绝全部账号。'),
-  userAccounts: Schema.array(OneBotUserAccount).default([]).description('用户白名单与初始关系；空表拒绝全部私聊。'),
+  userAccounts: Schema.array(OneBotUserAccount).role('table').default([]).description('用户白名单与初始关系；空表拒绝全部私聊。'),
   groupChats: Schema.array(GroupChatRuleSchema).default([]).description('群聊白名单与角色定位。'),
+  willingnessPresetMigrated: Schema.boolean().default(false).description('自动迁移标记：历史 off+enabled 群规则已在加载时一次性归一为 custom。请勿手动修改。'),
   ignoreSelfMessages: Schema.boolean().default(true).description('忽略机器人自身产生的消息事件。'),
 })
 
@@ -504,6 +538,17 @@ const Stickers: Schema<StickerLibraryConfig> = Schema.object({
     Schema.const('http').description('强制 HTTP 回源（分容器部署，需保证 deliveryBaseUrl 可达）'),
     Schema.const('file').description('强制 file:// 本地路径（OneBot 实现与 Koishi 共享文件系统）'),
   ]).default('auto').description('表情包投递模式。'),
+  harvest: Schema.object({
+    enabled: Schema.boolean().default(false).description('实验性·偷表情包：开启后他人发送的表情图片会即时暂存，并按下方间隔交给"用于表情包描述"的模型判定去留；保留的自动进入表情库等待编目描述。需同时启用表情包库。'),
+    privateChats: Schema.boolean().default(false).description('私聊是否采集对方发送的表情包。'),
+    stagingDirectory: Schema.path({ allowCreate: true, filters: ['directory'] }).default('data/hds-interlude/sticker-harvest').description('暂存目录（判定前的临时存放）。'),
+    keptSubfolder: Schema.string().default('harvested').description('保留表情进入表情库的一级子目录（素材分组名）。'),
+    scanIntervalMinutes: Schema.natural().min(5).max(1_440).default(30).description('判定扫描间隔（分钟）；暂存为空时不产生模型调用。'),
+    harvestPrompt: Schema.string().role('textarea').default('').description('判定准则提示词；留空使用内置默认（保留情绪清晰/通用性强的表情，丢弃低俗敏感/截图/广告水印/模糊图）。'),
+    maxPerChatPerDay: Schema.natural().min(0).max(500).default(20).description('单个聊天每日最多采集张数（0=不再采集）。'),
+    maxStagingFiles: Schema.natural().min(10).max(2_000).default(200).description('暂存积压上限；超出时最旧的直接清理、不再判定。'),
+    maxFileSizeMB: Schema.natural().min(1).max(30).default(10).description('单张采集表情的最大体积，单位 MB。'),
+  }).collapse(true).description('表情包采集（偷表情包）：采集→判定→入库，判定走表情包识别连接。'),
 }).collapse(true)
 
 const SharedStory: Schema<SharedStoryConfig> = Schema.object({
@@ -516,24 +561,14 @@ const SharedStory: Schema<SharedStoryConfig> = Schema.object({
 }).collapse(true)
 
 const UrgeAdvanced = Schema.object({
-  hotMin: Schema.number().min(1).max(1440).description('密聊最短等待（分钟）；留空按档位。'),
-  hotMax: Schema.number().min(1).max(1440).description('密聊最长等待（分钟）。'),
   idleMin: Schema.number().min(1).max(1440).description('安静期最短等待（分钟）。'),
   idleMax: Schema.number().min(1).max(1440).description('安静期最长等待（分钟）。'),
-  burstMin: Schema.number().min(1).max(1440).description('加速首轮最短等待（分钟）；以后逐步翻倍。'),
-  burstMax: Schema.number().min(1).max(1440).description('加速首轮最长等待（分钟）。'),
   slowMin: Schema.number().min(1).max(1440).description('剧本 slow 最短等待（分钟）。'),
   slowMax: Schema.number().min(1).max(1440).description('剧本 slow 最长等待（分钟）。'),
   halfLifeMinutes: Schema.number().min(5).max(240).default(90).description('真实对话热度半衰期（分钟）。对话结束后高密度推进的持续期。'),
-  burstThreshold: Schema.number().min(0).max(1).step(.05).default(.75).description('启动加速的有效 Urge；仍需主动行动和发送回执。'),
-  jitter: Schema.number().min(0).max(1).step(.05).default(.15).description('Urge 值随机偏移幅度，不改变联系意愿。'),
-  extremeChance: Schema.number().min(0).max(1).step(.01).default(.03).description('改为全区间抽样的概率；0 关闭。'),
-  burstTtlMinutes: Schema.number().min(5).max(120).default(35).description('同一联系加速段有效期（分钟），不会自行续满。'),
-  burstBudget: Schema.natural().max(10).default(3).description('一段最多额外推进次数；0 关闭加速。'),
-  burstContactMinMinutes: Schema.number().min(1).max(60).default(5).description('有效加速段中本对象的最短联系间隔，其他 Agency 条件保留。'),
   activeMultiplier: Schema.number().min(1).max(3).step(.1).default(1.4).description('对话密度满值时的推进加速倍率（乘法因子；与生活节奏倍率相乘）。1.4 = 密集对话时推进密度提升 40%。'),
   restMultiplier: Schema.number().min(.05).max(1).step(.05).default(.6).description('无节奏数据且在休息窗口时的兜底倍率（乘法因子，不再替换间隔）。0.6 = 推进密度打六折。'),
-}).collapse(true)
+}).collapse(true).description('生活补写的时间范围、对话热度半衰期与调度倍率。')
 
 const ModelCapture: Schema<ModelCaptureConfig> = Schema.object({
   enabled: Schema.boolean().default(false).description('实验性：记录主叙事模型的原始输入与输出，作为微调数据。覆盖对话推进（用户消息、对话后续、到期意图）与自动推进全部回合；只保留解析成功的往返，HTTP 失败或无效 JSON 直接丢弃。文件包含完整聊天内容与剧本原文，仅写入本机目录；盲模式下此开关无效。'),
@@ -544,8 +579,7 @@ export const Config: Schema<InterludeConfig> = Schema.object({
   presetSync: Schema.object({
     enabled: Schema.boolean().default(false).description('启用预设同步：从 typ0.space 直接拉取并应用角色人设与配置。需填写预设分享码；默认关闭。'),
     baseUrl: Schema.string().default('https://typ0.space').description('预设站地址。局域网自托管可填 http://192.168.x.x:5177。'),
-    shareCode: Schema.string().default('').description('8 位预设分享码(大小写均可,可带连字符)。在 typ0.space 人设/预设详情页获取。'),
-    autoUpdate: Schema.boolean().default(false).description('自动更新：重载时检查远端 revision,有新版本才应用。关闭时仅通过 interlude.preset.sync 手动触发。'),
+    shareCode: Schema.string().default('').description('8 位预设分享码(大小写均可,可带连字符)。在 typ0.space 人设/预设详情页获取。首次填写或更换新码并重载时自动同步一次；码未变化的重载不再联网检查。'),
     sections: Schema.array(Schema.string()).role('table').default([]).description('要同步的分区(留空 = 预设里有什么就同步什么)。可选:storyDefaults(配合"应用到当前故事"),runtime,urge,agency,memory,alterSystem,schedulePreplan,timelineDirector,chatActions,stickers,sharedStory,browser,worldSeeder,weather,longHorizon,qzone,blindMode,logging。'),
     applyToCurrentStory: Schema.boolean().default(false).description('同时将 storyDefaults 应用到当前运行中的故事(修改角色名/人设/世界等)。'),
     }).collapse(true).description('【预设入口】从 typ0.space 直接拉取角色人设/配置；默认关闭。'),
@@ -553,16 +587,20 @@ export const Config: Schema<InterludeConfig> = Schema.object({
   model: Model.description('【必填 2】模型中心：先添加连接并勾选用途；主叙事参数与高级模块保持在同一处。'),
   onebot: OneBot.description('【必填 3】QQ 接入：机器人账号、私聊白名单、群聊与语音。'),
   sharedStory: SharedStory.description('【结构 4】共享主剧本：多人参与、跨账号行为与管理员权限。'),
-  runtime: Runtime.description('【节奏 5】运行时：消息合并、打字、失败重试与自动生活推进。'),
+  runtime: Runtime.description('【节奏 5】上下文与运行时：先设置近期剧本预算，再调整消息处理与自动推进。'),
   urge: Schema.object({
     enabled: Schema.boolean().default(false).description('启用弹性推进，替代固定间隔及对话后 10/20 分钟补写；不改变剧本文本。总自动推进开关仍优先。'),
     frequency: Schema.union(['low', 'medium', 'high', 'custom']).default('medium').description('低/中/高频或自定义；自定义未填写项沿用中频。高频会增加主叙事和时间导演调用。'),
     advanced: UrgeAdvanced.description('高级时间范围、随机性与调用预算；填写时间覆盖档位。'),
-    proactiveWillingnessThreshold: Schema.number().min(0).max(1).step(.05).default(.4).description('仅 Urge 启用时的主动联系意愿门槛(Agency strict 模式使用;natural/balanced 模式改用 Agency 的 naturalWillingnessThreshold,调这里不生效)；不是发送概率。'),
-  }).description('【节奏 6】Urge 弹性推进：剧本驱动的自动调度，压缩器五档生活节奏×对话密度双因子乘法模型（可选，替代固定间隔）。'),
+  }).description('【节奏 6】Urge 弹性推进：依据主叙事回合形成的生活节奏与对话密度安排补写时机（可选，替代固定间隔）。'),
   schedulePreplan: SchedulePreplan.description('【节奏 7】日程预排：近期稳定日程与变化颗粒度；主提示词只读取未来约半天。'),
   timelineDirector: Schema.object({ enabled: Schema.boolean().default(true).description('启用时间导演：自动回合先生成相对时间账本——只提供客观时间事实与可能的时间逻辑，不做笃定的未来预测（如几点起床）；用户消息对主角的影响由主模型判断。失败时降级为无账本推进，不冻结自动推进。'), }).description('【节奏 8】时间导演：自动回合的时间账本与熔断保护。'),
-  agency: Agency.description('【节奏 9】Agency 行动窗口：日程压力、隐私、设备和生活来源的联系条件。'),
+  agency: Agency.description('【节奏 9】Agency 行动窗口（兼容期）：设备、隐私与负荷的场景证据，以及旧部署额度的迁移参数；主动出站额度集中在【运行 9b】设置。'),
+  deliveryPolicy: Schema.object({
+    proactivePerTargetDailyCap: Schema.natural().min(0).max(200).default(0).description('每目标滚动 24 小时逻辑主动动作上限；0 = 无额外额度约束（总开关与渠道权限仍作为前提）。全默认值时按旧 Agency 实际生效限制保守派生。'),
+    minimumRunIntervalMinutes: Schema.natural().min(0).max(10_080).default(0).description('逻辑主动动作最短运行间隔（分钟）；0 = 不设间隔。承诺或实际事务类联系沿用兼容的间隔豁免。'),
+    deferralValidityMinutes: Schema.natural().min(0).max(10_080).default(0).description('预留：明确延期动作的有效期（分钟），当前运行链尚无生产延期路径（策略阻塞默认未执行结束），0 = 不设有效期。'),
+  }).description('【运行 9b】统一投递策略：设置主动动作的部署额度与间隔；显式值优先，全默认时按旧 Agency 配置保守派生。'),
   chatActions: ChatActions.default({ enabled: false, platforms: ['qq'], quoteReply: true, messageReactions: true, allowedReactions: ['like', 'smile', 'laugh', 'heart'], nativeFaces: true, expressionThreshold: 0.7, allowedNativeFaces: ['smile', 'laugh', 'sweat', 'awkward'] }).description('【表达 10】聊天动作：引用回复、贴反应与 QQ 原生表情。'),
   stickers: Stickers.default({ enabled: false, directory: 'data/hds-interlude/stickers', maxFileSizeMB: 10, catalogLimit: 40 }).description('【表达 11】本地表情包：启用后扫描素材，并由视觉模型建立描述。'),
   memory: Memory.description('【内在 12】记忆与连续性：场景压缩、事实召回、剧情余波和设定演化。'),
@@ -606,9 +644,49 @@ export const Config: Schema<InterludeConfig> = Schema.object({
   blindMode: BlindMode.description('【维护 19】盲区模式：低频心跳的最小运行形态。'),
   logging: Logging.description('【维护 20】日志：级别、信息密度、布局和隐私预览。'),
   modelCapture: ModelCapture.description('【维护 21】实验性：主叙事微调数据采集——原始输入/输出 JSONL 落盘（默认关闭）。'),
-  mainPrompt: Schema.string().role('textarea').default('').description('⚠️ 除非有把握，否则不要修改。系统主提示词（主叙事行为指令）：与固定合约、文风和特化块协作，塑造全部回合的写作行为；留空使用内置默认，改动下回合立即生效，出问题清空即可恢复默认。'),
+  research: Schema.object({
+    enabled: Schema.boolean().default(false).description('实验性·考据 Agent：她说"我去查查"→ 后台检索核实 → 资料案头供主叙事作者参考（author-facing，主角是否记得由作者裁决）。需在模型中心勾选"用于考据"或至少启用一条压缩连接。'),
+    searchBackend: Schema.union(['auto', 'tavily', 'bocha', 'searxng', 'duckduckgo-html']).default('auto').description('搜索后端：auto 按 Key 自动推断；duckduckgo-html 零配置可用（限流脆弱，建议配置 API 后端）。'),
+    searchApiKey: Schema.string().role('secret').default('').description('搜索后端 API Key（Tavily/博查）。'),
+    searxngBaseUrl: Schema.string().default('').description('自托管 SearXNG 实例地址（如 http://127.0.0.1:8888）。'),
+    proxyAgent: Schema.string().default('').description('考据网络出口的 HTTP(S) 代理（如 http://127.0.0.1:7890）；留空自动沿用考据连接上配置的代理。cordis http 不读系统代理，国内直连 DuckDuckGo/Tavily/TypeSafe 大概率失败，建议填写。'),
+    responseFormat: Schema.union(['json-object', 'prompt-only']).default('json-object').description('侧端 JSON 协议：json-object 使用 API JSON mode；模型/中转站报 JSON mode 错误时改 prompt-only（不再发送 response_format，靠宽容解析取 JSON）。'),
+    maxRounds: Schema.natural().min(1).max(2).default(2).description('检索轮数上限；仅在蒸馏报告证据不足时追加第二轮。'),
+    taskTokenBudget: Schema.natural().min(600).max(20000).default(6000).description('单任务出向 token 预算；低于 1200 自动降级单轮（跳过查询改写）。'),
+    deskCapacity: Schema.natural().min(2).max(32).default(8).description('资料案头容量（条）；超出淘汰最旧。'),
+    stableFactTtlHours: Schema.natural().min(1).max(2160).default(168).description('稳定事实（片长/距离）案头保留时长（小时）。'),
+    volatileFactTtlHours: Schema.natural().min(1).max(168).default(12).description('易变事实（营业中/票价）案头保留时长（小时）。'),
+    prefetchEnabled: Schema.boolean().default(false).description('预取式考据（日程窗口规则触发）；随 P3 开放。').hidden(),
+    jev: Schema.object({
+      enabled: Schema.boolean().default(false).description('Jev 门控（TypeSafe AI System One 决策模型）：自动生活推进在主叙事前做一次外部考据判定，TRUE 才先查后写；FALSE/不可用直通。需 API Key（console.typesafe.ai）。注意：判断内容包含聊天消息摘要与近期剧本尾部，会发送至 TypeSafe AI 服务。'),
+      apiKey: Schema.string().role('secret').default('').description('TypeSafe AI API Key。'),
+      baseUrl: Schema.string().default('https://api.typesafe.ai').description('Jev 服务地址（自托管/代理可改）。'),
+      model: Schema.string().default('jev-1.13.0').description('决策模型版本（建议钉死版本，不用 jev-latest）。'),
+      noulThreshold: Schema.number().min(0.5).max(0.95).step(0.05).default(0.6).description('Noul 概率阈值：概率 ≥ 阈值视为 TRUE 触发考据；越低越敏感。'),
+      timeoutMs: Schema.natural().min(500).max(10000).default(2500).description('Jev 调用超时（毫秒）；超时按 FALSE 直通。').hidden(),
+    }).collapse(true).description('Jev 考据门控：考据总开关、门控开关与 API Key 就绪时生效；判定未触发或服务不可用时继续生活写作。'),
+  }).collapse(true).description('【扩展 22】实验性·考据 Agent：资料案头为作者供应经核实的写作参考（默认关闭）。'),
+  mainPrompt: Schema.string().role('textarea').default('').description('高级写作设置。系统主提示词（主叙事行为指令）：与固定合约、文风和特化块协作，塑造全部回合的写作行为；留空使用内置默认，改动下回合立即生效，出问题清空即可恢复默认。'),
   chatRhythm: ChatRhythm.description('【已弃用】对话节奏：仅兼容旧配置，不再统计、干预写作或重试。').hidden(),
 })
+
+/** F7：启动时一次性迁移历史 off+enabled 群规则（归一为 custom）并持久化
+ * 迁移标志。整树经 Config Schema 预校验（scope.update 内部 resolveConfig
+ * 失败会 cancel 整个插件作用域——必须先校验）；任何失败静默放弃，运行时
+ * 归一继续兜底。幂等：标志已置位即跳过。审计修正：函数体首个语句制造
+ * await 边界——此前 scope.update 在 apply() 同步栈内执行，cordis 的嵌套
+ * 重启会让 apply 尾部（命令/中间件注册）在旧 service 实例上二次执行；
+ * 微任务边界保证重启发生在 apply 完整返回之后（与 runAutoSync 的实际
+ * 时序对齐）。 */
+async function migrateWillingnessPresetsAtStartup(ctx: Context, service: InterludeService, config: InterludeConfig) {
+  await Promise.resolve()
+  const result = migrateWillingnessPresetsConfig(config.onebot)
+  if (!result) return
+  const next = { ...config, onebot: { ...config.onebot, ...result.next } } as InterludeConfig
+  ;(Config as unknown as (input: unknown) => unknown)(next)
+  service.updatePluginConfig(next)
+  if (result.changed) ctx.logger('hds-interlude').info('意愿档位一次性迁移:历史 off+enabled 群规则已归一为 custom 并写入迁移标志')
+}
 
 export function apply(ctx: Context, config: InterludeConfig) {
   const startupLogger = ctx.logger('hds-interlude')
@@ -622,12 +700,22 @@ export function apply(ctx: Context, config: InterludeConfig) {
   // not register any Console field or change ordinary Koishi behaviour.
   const disposeDesktopBridge = installDesktopBridge(service)
   if (disposeDesktopBridge) ctx.on('dispose', disposeDesktopBridge)
-  // 预设同步:启动时 autoUpdate 检查(失败静默,不影响启动)
-  if (config.presetSync?.enabled && config.presetSync?.autoUpdate && config.presetSync?.shareCode?.trim()) {
+  // HDSI Console 界面（可选服务）：Console 插件安装后注入运行，未安装时静默跳过。
+  // Config Schema 随行传入：配置中心渲染与保存预校验的数据源（设计 §2/§6）。
+  ctx.inject(['console'], ctx2 => installHdsiConsole(ctx2 as Context, service, Config))
+  // 预设同步(码变更触发):第一次填写或人设码更换并重载时同步一次;码未
+  // 变化完全跳过(零网络请求)。失败静默,不影响启动,下次重载自动重试。
+  if (config.presetSync?.enabled && config.presetSync?.shareCode?.trim()) {
     void runAutoSync(ctx, service).catch((error) => {
       startupLogger.warn('预设同步启动检查失败(不影响运行):%s', (error as Error).message)
     })
   }
+  // F7:意愿档位一次性迁移——历史 off+enabled 规则归一为 custom 并持久化
+  // 迁移标志(整树经 Config 预校验后 scope.update)。失败静默降级:标志未
+  // 落库前 groupRule 的运行时归一继续兜底;成功后 off 稳定表达关闭。
+  void migrateWillingnessPresetsAtStartup(ctx, service, config).catch((error) => {
+    startupLogger.warn('意愿档位一次性迁移失败(保留运行时兼容):%s', (error as Error).message)
+  })
   if (blindModeEnabled) {
     // Registered commands from every plugin reach this hook before their
     // action runs. Returning an empty fragment consumes them silently.
@@ -749,7 +837,7 @@ function registerCommands(ctx: Context, service: InterludeService, config: Inter
       const id = String(participantId ?? '').trim()
       const account = String(userId ?? '').trim()
       if (!id || !account) return '用法：interlude.participant.link <参与者ID> <用户ID>'
-      const participant = await (service as any).getParticipant(id).catch(() => undefined)
+      const participant = await (service as any).getParticipant(id).catch((): undefined => undefined)
       if (!participant) return `参与者不存在：${id}`
       const result = await service.linkParticipantEndpoint(participant, session?.platform ?? 'onebot', account)
       return result.ok ? `用户端点已链接（${account} → ${participant.displayName || id}）。` : `链接失败：${result.error}`
@@ -774,7 +862,7 @@ function registerCommands(ctx: Context, service: InterludeService, config: Inter
       if (!id) return '用法：interlude.participant.endpoints <参与者ID>'
       const endpoints = service.listParticipantEndpoints(id)
       if (!endpoints.length) return `参与者 ${id} 没有用户端点。`
-      return '用户端点（' + endpoints.length + ' 个）：\n' + endpoints.map(item => (item.enabled ? '●' : '○') + ' ' + item.platform + ' ' + item.userId + ' 端点=' + item.endpointId).join('\n')
+      return '用户端点（' + endpoints.length + ' 个）：\n' + endpoints.map((item: any) => (item.enabled ? '●' : '○') + ' ' + item.platform + ' ' + item.userId + ' 端点=' + item.endpointId).join('\n')
     })
 
   ctx.command('interlude.story.endpoint [operation:text]', '管理员：管理剧本的角色端点（账号迁移的唯一显式途径）。`add <平台> <账号> [qq|wechat]` 注册端点；`disable <端点ID>` 停用；不带参数列出。')
@@ -798,7 +886,7 @@ function registerCommands(ctx: Context, service: InterludeService, config: Inter
       if (parts.length) return '用法：interlude.story.endpoint [add <平台> <账号> [qq|wechat] | disable <端点ID>]'
       const endpoints = service.listStoryEndpoints(story.id)
       if (!endpoints.length) return '当前故事没有登记任何角色端点。'
-      return '角色端点（' + endpoints.length + ' 个）：\n' + endpoints.map(item => (item.enabled ? '●' : '○') + ' ' + item.platform + ' ' + item.selfId + '（' + item.channelKind + (item.online ? '·在线' : '·离线') + '）端点=' + item.endpointId).join('\n')
+      return '角色端点（' + endpoints.length + ' 个）：\n' + endpoints.map((item: any) => (item.enabled ? '●' : '○') + ' ' + item.platform + ' ' + item.selfId + '（' + item.channelKind + (item.online ? '·在线' : '·离线') + '）端点=' + item.endpointId).join('\n')
     })
 
   ctx.command('interlude.story.alias [operation:text]', '管理员：查看/回滚剧本别名重定向（单剧本多通道 M1b）。不带参数列出全部别名；`remove <别名ID>` 回滚一条（写审计）。')
@@ -816,6 +904,12 @@ function registerCommands(ctx: Context, service: InterludeService, config: Inter
       if (!aliases.length) return '当前没有剧本别名。'
       return `剧本别名（${aliases.length} 条）：\n` + aliases.map(row => `${row.aliasStoryId} → ${row.canonicalStoryId}（${row.reason}，${row.createdAt.toLocaleString()}）`).join('\n')
     })
+
+  ctx.command('interlude.stickerharvest.status', '查看表情包采集（偷表情包）状态：开关、暂存、累计与判定模型')
+    .action(async () => (await service.stickerHarvestStatusLines()).join('\n'))
+
+  ctx.command('interlude.research.status', '查看考据 Agent 状态：开关、搜索后端、案头与考据模型')
+    .action(() => service.researchStatusLines().join('\n'))
 
   ctx.command('interlude.status', '查看当前故事、游标、主模型连接与主动消息开关')
     .action(async ({ session }) => {
@@ -1036,6 +1130,48 @@ function registerCommands(ctx: Context, service: InterludeService, config: Inter
       return `已清理 ${normalized} overlay${participantNote}；剧本、长期事实和普通记忆均未删除。`
     })
 
+  ctx.command('interlude.attention.status', '查看生活关注词状态(只读)：当前生效词集、候选与最近命中。观察性阶段——词集由压缩器维护,尚未接入群聊门控。')
+    .action(async ({ session }) => {
+      const story = await requireStory(service, session)
+      if (typeof story === 'string') return story
+      const state = service.attentionWordState(story)
+      const hits = service.attentionHitsFor?.(story.id) ?? []
+      const effective = state.effective.length
+        ? state.effective.map(word => `· ${word.term}${word.stable ? '(稳定)' : ''}${word.basis ? ` — ${word.basis.slice(0, 30)}` : ''}`).join('\n')
+        : '(空——首个压缩评估后接管)'
+      const candidates = state.candidates.length
+        ? state.candidates.map(word => `· ${word.term}（提名 ${word.nominations}/2）`).join('\n')
+        : '(无)'
+      const recentHits = hits.length
+        ? hits.slice(-8).map(hit => `· ${new Date(hit.at).toLocaleString('zh-CN', { hour12: false })} 群=${hit.groupId} 词=${hit.terms.join('、')}`).join('\n')
+        : '(尚无命中记录)'
+      return [
+        '生活关注词（I-7 观察性产出——未接门控）：',
+        `生效词集（上限 6）：`,
+        effective,
+        '',
+        `候选（连续两轮提名晋升）：`,
+        candidates,
+        '',
+        `最近命中（观察性记录）：`,
+        recentHits,
+      ].join('\n')
+    })
+
+  ctx.command('interlude.rhythm.status', '查看交往节奏观测(只读)：每位参与者"她确认开场→对方承接"的样本、中位时长与待定数（II-1/II-4）。')
+    .action(async ({ session }) => {
+      const story = await requireStory(service, session)
+      if (typeof story === 'string') return story
+      return (await service.interactionRhythmStatusLines(story)).join('\n')
+    })
+
+  ctx.command('interlude.model.test', '模型调用自检(管理员)：按任务路由逐提供商发送最小探测请求，报告来源/耗时/失败原文头（消耗少量 token）。')
+    .action(async ({ session }) => {
+      const denial = service.manageSessionDenial(session)
+      if (denial) return `无权限：${denial.detail}`
+      return (await service.modelProbeLines()).join('\n')
+    })
+
   ctx.command('interlude.overlay.status', '查看当前 overlay、待积累提案和压缩归档状态(只读,对白名单用户开放)')
     .action(async ({ session }) => {
       const story = await requireStory(service, session)
@@ -1092,11 +1228,93 @@ function registerCommands(ctx: Context, service: InterludeService, config: Inter
   ctx.command('interlude.schedule.rebuild', '管理员：兼容别名，等同于 interlude.schedule.refresh')
     .action(({ session }) => requestScheduleRefresh(session))
 
+  ctx.command('interlude.policy.migrate', '管理员：迁移旧 proactive-check 任务到 contact-plan/终结（§8.2 处置表；先预览后确认，幂等可重跑；执行前请确保已建立配置与数据库快照）')
+    .action(async ({ session }) => {
+      if (!requireManager(service, session)) return '当前 QQ 没有共享主剧本的管理权限。'
+      const now = new Date()
+      const svc = service as any
+      const storyIds = [...new Set((await svc.dbGet('interlude_intent', { type: 'proactive-check', status: 'pending' }))
+        .map((intent: any) => String(intent.storyId)))]
+      const adapter = {
+        getPendingProactiveChecks: async (storyId: string, afterId: number, limit: number) =>
+          (await svc.dbGet('interlude_intent', { storyId, type: 'proactive-check', status: 'pending', id: { $gt: afterId } }, { sort: { id: 'asc' }, limit })),
+        writeConverted: async (row: any, plan: any, legacy: Record<string, unknown>) => {
+          await svc.dbSet('interlude_intent', { id: row.id, status: 'pending' }, {
+            type: 'contact-plan', notBefore: plan.earliestAt ?? row.notBefore,
+            summary: `人物联系计划：${String(plan.sourceQuote ?? '').slice(0, 120)}`,
+            payload: { plan, legacy }, updatedAt: now,
+          })
+        },
+        retire: async (row: any, reason: string) => {
+          await svc.dbSet('interlude_intent', { id: row.id, status: 'pending' }, {
+            status: 'cancelled', payload: { ...(row.payload ?? {}), retiredReason: reason, retiredAt: now.toISOString() }, updatedAt: now,
+          })
+        },
+      }
+      const preview: Array<Record<string, number | string>> = []
+      let total = { scanned: 0, converted: 0, retiredPolicyRecheck: 0, retiredExpired: 0, retiredSuperseded: 0, pausedUnidentifiable: 0 }
+      for (const storyId of storyIds) {
+        const summary = await migrateProactiveCheckIntents(adapter, String(storyId), now, { dryRun: true })
+        total = { ...total, scanned: total.scanned + summary.scanned, converted: total.converted + summary.converted,
+          retiredPolicyRecheck: total.retiredPolicyRecheck + summary.retiredPolicyRecheck, retiredExpired: total.retiredExpired + summary.retiredExpired,
+          retiredSuperseded: total.retiredSuperseded + summary.retiredSuperseded, pausedUnidentifiable: total.pausedUnidentifiable + summary.pausedUnidentifiable }
+        preview.push({ story: storyId, ...summary } as any)
+      }
+      if (!total.scanned) return '没有待迁移的 proactive-check 任务。'
+      const lines = preview.filter(item => item.scanned).map(item =>
+        `故事 ${item.story}：扫描=${item.scanned} 转计划=${item.converted} 策略重查终结=${item.retiredPolicyRecheck} 过期终结=${item.retiredExpired} 被替代终结=${item.retiredSuperseded} 来源不可识别暂停=${item.pausedUnidentifiable}`)
+      const confirmed = await askConfirmation(session,
+        `迁移预览（只读未写入）：\n${lines.join('\n')}\n合计：扫描=${total.scanned} 转 contact-plan=${total.converted}，终结/暂停=${total.scanned - total.converted}。确认执行吗？(y/n)`)
+      if (!confirmed) return '操作已取消。'
+      let executed = 0
+      for (const storyId of storyIds) {
+        const summary = await migrateProactiveCheckIntents(adapter, String(storyId), now)
+        executed += summary.converted + summary.retiredPolicyRecheck + summary.retiredExpired + summary.retiredSuperseded + summary.pausedUnidentifiable
+      }
+      return `迁移完成：共处置 ${executed} 条（转 contact-plan 的计划将按 notBefore 到期进入正常写作；终结/暂停条目保留只读审计）。重复执行幂等。`
+    })
+
+  ctx.command('interlude.actions [limit:number]', '管理员：查看通信动作只读列表（账本+人物计划/确定延迟，最新在前）')
+    .action(async ({ session }, limit) => {
+      if (!requireManager(service, session)) return '当前 QQ 没有共享主剧本的管理权限。'
+      const result = await communicationActionsList(service as any, { limit: Math.min(Math.max(1, Number(limit) || 10), 50) })
+      if (!result.rows.length) return '暂无通信动作记录。'
+      const kindLabel: Record<string, string> = { action: '当前动作', plan: '人物计划', 'fixed-delay': '确定延迟' }
+      const lines = result.rows.map(row =>
+        `[${kindLabel[row.kind] ?? row.kind}] ${row.target} → ${row.head}${row.segmentCount ? `（${row.deliveredCount}/${row.segmentCount} 段）` : ''}｜${row.status}${row.dueAt ? `｜到期 ${row.dueAt.slice(0, 16).replace('T', ' ')}` : ''}`)
+      return `通信动作（最近 ${result.rows.length}/${result.total} 条）：\n${lines.join('\n')}\n详情与分段请用 Console「通信动作」页。`
+    })
+
+  ctx.command('interlude.policy', '管理员：查看统一投递策略——有效额度、来源（显式/按旧限制保守派生）、旧链对照与迁移预览（只读，不修改配置）')
+    .action(async ({ session }) => {
+      if (!requireManager(service, session)) return '当前 QQ 没有共享主剧本的管理权限。'
+      const explicit = resolveDeliveryPolicyConfig(config.deliveryPolicy)
+      const agency = resolveAgencyConfig(config.agency)
+      const derived = migrateLegacyRunLimits({
+        agencyEnabled: agency.enabled,
+        contactMode: agency.contactMode,
+        minimumProactiveIntervalMinutes: agency.minimumProactiveIntervalMinutes,
+        naturalMinimumIntervalMinutes: agency.naturalMinimumIntervalMinutes ?? agency.minimumProactiveIntervalMinutes,
+        proactiveDailyCap: agency.proactiveDailyCap,
+      })
+      const effective = service.deliveryPolicyConfig
+      const explicitSet = explicit.proactivePerTargetDailyCap > 0 || explicit.minimumRunIntervalMinutes > 0
+        || explicit.deferralValidityMinutes > 0
+      return [
+        `有效策略（${explicitSet ? '来源=显式配置' : '来源=按旧 Agency 实际生效限制保守派生'}）：每目标 24h 上限=${effective.proactivePerTargetDailyCap || '无'}；最短运行间隔=${effective.minimumRunIntervalMinutes || '无'} 分钟；延期有效期=${effective.deferralValidityMinutes > 0 ? `${effective.deferralValidityMinutes} 分钟（预留）` : '无'}（revision ${deliveryPolicyRevision(effective)}）。`,
+        `旧链对照：Agency ${agency.enabled
+          ? `开启（${agency.contactMode}，安全间隔=${agency.minimumProactiveIntervalMinutes} 分钟${agency.contactMode !== 'strict' ? `，自然间隔=${agency.naturalMinimumIntervalMinutes} 分钟` : ''}，日上限=${agency.proactiveDailyCap}，按"任何上次发言"计）`
+          : '关闭（意愿/容量/间隔/上限从未实际生效）'}。`,
+        ...derived.notes.map(note => `迁移预览：${note}`),
+        '统一策略已进入实际执行边界；本命令只读，配置迁移与旧任务迁移分别通过配置中心和 interlude.policy.migrate 完成。',
+      ].join('\n')
+    })
+
   ctx.command('interlude.reset', '管理员：完全重置——清空数据库并将故事设定重置为 Console 档案当前值（角色身份回到 storyDefaults 模板）；执行前会询问 y/n').action(async ({ session }) => {
     if (!await requireManager(service, session)) return '无权限。'
     const story = await requireStory(service, session)
     if (typeof story === 'string') return story
-    const confirmed = await askConfirmation(session, '这将删除所有剧本、记忆、事实，并将角色设定重置为 Console 档案当前值。确定吗？(y/n)')
+    const confirmed = await askConfirmation(session, '这将删除所有剧本、记忆、事实、空间记录及共同作品，保留全局表情资产库，并将角色设定重置为 Console 档案当前值。确定吗？(y/n)')
     if (!confirmed) return '已取消。'
     await service.clearDatabase()
     await service.purgeAllStoryData(story.id)
@@ -1109,10 +1327,10 @@ function registerCommands(ctx: Context, service: InterludeService, config: Inter
 如需更换角色身份，请在 Console 修改故事档案后重新开始。`
   })
 
-  ctx.command('interlude.database.clear', '管理员：清空 HDSI 自有 SQLite 数据表（剧本/记忆/事实等运行时数据）；角色人设和世界观来自 Console 故事档案（storyDefaults），清库后角色身份不变——如需重置人设请在 Console 修改或使用 interlude.reset；执行前会询问 y/n')
+  ctx.command('interlude.database.clear', '管理员：清空 HDSI 自有 SQLite 数据表（剧本/记忆/事实等运行时数据，全局表情资产库保留）；角色人设和世界观来自 Console 故事档案（storyDefaults），清库后角色身份不变——如需重置人设请在 Console 修改或使用 interlude.reset；执行前会询问 y/n')
     .action(async ({ session }) => {
       if (!requireManager(service, session)) return '无权限：当前账号不是 HDSI 管理员。'
-      if (!await askConfirmation(session, '即将清空 HDSI 自有数据库，剧本、记忆和状态记录都会删除。确认执行吗？(y/n)')) return '操作已取消。'
+      if (!await askConfirmation(session, '即将清空 HDSI 自有数据库，剧本、记忆、空间记录、共同作品和状态记录都会删除，全局表情资产库保留。确认执行吗？(y/n)')) return '操作已取消。'
       const result = await service.clearDatabase()
       // 清库同时重置分享码同步状态:否则"已同步 revision N"的记忆会让下次
       // 自动同步跳过,重建的故事只能孵化自旧配置模板(rc48 修复)
@@ -1123,17 +1341,17 @@ function registerCommands(ctx: Context, service: InterludeService, config: Inter
         fs.unlinkSync(path.join(ctx.baseDir, 'data', 'hds-interlude', 'preset-sync-state.json'))
         syncStateReset = true
       } catch { /* 状态文件本就不存在时无需处理 */ }
-      return `HDSI 数据库清空完成：处理 ${result.removed} 条记录${result.logicallyCleared ? `，其中 ${result.logicallyCleared} 条因 SQLite 锁定改为逻辑清空` : ''}。${syncStateReset ? '分享码同步状态已重置：下次启动/手动 sync 会重新拉取并应用预设。' : ''}`
+      return `HDSI 运行数据库清空完成（全局表情资产库保留）：处理 ${result.removed} 条记录${result.logicallyCleared ? `，其中 ${result.logicallyCleared} 条因 SQLite 锁定改为逻辑清空` : ''}。${syncStateReset ? '分享码同步状态已重置：下次启动/手动 sync 会重新拉取并应用预设。' : ''}`
     })
 
-  ctx.command('interlude.purge.all', '管理员：彻底重置所有平台的剧本、记忆与 Canon；执行前会询问 y/n')
+  ctx.command('interlude.purge.all', '管理员：彻底重置所有平台的剧本、记忆、空间记录、共同作品与 Canon；执行前会询问 y/n')
     .action(async ({ session }) => {
       if (!requireManager(service, session)) return '当前 QQ 没有共享主剧本的管理权限。'
-      if (!await askConfirmation(session, '即将删除所有平台的剧本、记忆、事实、意图和状态。确认执行吗？(y/n)')) return '操作已取消。'
+      if (!await askConfirmation(session, '即将删除所有平台的剧本、记忆、事实、意图、状态、空间记录及共同作品内容。确认执行吗？(y/n)')) return '操作已取消。'
       const story = await requireStory(service, session)
       if (typeof story === 'string') return story
       await service.purgeAllData(story.id)
-      return '已彻底重置所有平台：旧剧本、场景摘要、剧情弧线、长期事实、记忆、意图、状态演化和参与者关系状态均已清除；当前故事保留为空白的全局主剧本，Canon 已按当前 Console 配置重建。'
+      return '已彻底重置所有平台：旧剧本、场景摘要、剧情弧线、长期事实、记忆、意图、状态演化、参与者关系状态、QQ 空间发布与追踪记录及共同作品内容均已清除（全局表情资产库保留）；当前故事保留为空白的全局主剧本，Canon 已按当前 Console 配置重建。'
     })
 
   ctx.command('interlude.purge.platform <platform:string>', '管理员：删除指定平台的全部剧本和记忆；例如 sandbox 或 onebot；执行前会询问 y/n')
@@ -1364,16 +1582,15 @@ function registerPresetCommands(ctx: Context, service: InterludeService) {
           '请在 Console 第一项“预设同步”中配置:',
           '  1. 启用预设同步',
           '  2. 填写分享码(8 位,在 typ0-site 详情页获取)',
-          `  3.${sync?.autoUpdate ? ' 自动更新已开启(重载时检查)' : ' 自动更新未开启(仅手动触发)'}`,
           '',
-          '填好后保存并重载,再执行 interlude.preset.sync 手动触发一次同步。',
+          '填好后保存并重载——首次填写或更换新码时自动同步一次;也可执行本命令手动触发。',
         ].join('\n')
       }
       // 显示配置状态
       const state = await readSyncState(ctx.baseDir)
       const statusLines = [
         `同步配置:${sync.baseUrl} · 分享码 ${sync.shareCode}`,
-        `自动更新:${sync.autoUpdate ? '开启(重载时检查)' : '关闭(仅手动)'}`,
+        `同步时机:分享码首次填写/更换时自动同步一次;码未变化的重载不联网检查(本命令可强制)`,
         `应用分区:${sync.sections?.length ? sync.sections.join('、') : '预设里有什么就同步什么'}`,
         `应用到当前故事:${sync.applyToCurrentStory ? '是' : '否'}`,
       ]
@@ -1403,8 +1620,8 @@ function registerPresetCommands(ctx: Context, service: InterludeService) {
         const path = await import('node:path')
         snap = JSON.parse(fs.readFileSync(path.join(ctx.baseDir, SHARE_SNAPSHOT_FILE()), 'utf8'))
       } catch {
-        // 手动 apply 无记录时,回退读自动同步的状态文件(含同样的应用前快照),
-        // 否则 autoUpdate 应用后无法回滚
+        // 手动 apply 无记录时,回退读变更触发同步的状态文件(含同样的应用前快照),
+        // 否则码变更自动应用后无法回滚
         const syncState = await readSyncState(ctx.baseDir)
         if (syncState && syncState.configSections && Object.keys(syncState.configSections).length) {
           snap = {

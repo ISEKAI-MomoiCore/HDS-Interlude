@@ -10,8 +10,20 @@
  * 必须与旧字段逐字节一致（equivalence 测试锚定）。
  */
 
-export type EndpointChannelKind = 'qq' | 'wechat'
+/** D2.5（解耦设计 §4.5）：通道种类自封闭二元枚举开放为字符串——新平台
+ * （telegram/discord/…）无需改类型即可登记。已知值见 KNOWN_CHANNEL_KINDS；
+ * 展示名统一经 channelDisplayLabel（合约词汇与 [标签] 的中心映射）。 */
+export type EndpointChannelKind = string
 export type EndpointOwnerKind = 'story-role' | 'participant-user' | 'group'
+
+export const KNOWN_CHANNEL_KINDS = ['qq', 'wechat'] as const
+
+/** 通道种类 → 展示名（合约/标签中心映射；未知种类回退原字符串）。 */
+export function channelDisplayLabel(kind: string): string {
+  if (kind === 'qq') return 'QQ'
+  if (kind === 'wechat') return '微信'
+  return kind
+}
 
 /** 身份与地址分离：主键是持久随机 ID；账号/对端标识是可变字段。 */
 export interface EndpointDescriptor {

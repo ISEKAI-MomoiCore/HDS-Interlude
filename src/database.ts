@@ -44,6 +44,9 @@ export function registerTables(ctx: Context) {
   // genuinely new tables introduced by later releases.
   if (existingTables.interlude_story) {
     registerScriptEntryEmbedding(ctx, existingTables)
+    if (existingTables.interlude_fact && !existingTables.interlude_fact.fields?.sourceChannel) {
+      ctx.model.extend('interlude_fact', { sourceChannel: 'string(16)' })
+    }
     if (existingTables.interlude_fact && !existingTables.interlude_fact.fields?.knowledge) {
       ctx.model.extend('interlude_fact', { knowledge: 'json' })
     }
@@ -123,6 +126,7 @@ export function registerTables(ctx: Context) {
     knowledge: 'json',
     id: 'unsigned', storyId: 'string(255)', participantId: 'string(255)', scope: 'string(32)', content: 'text',
     importance: 'double', confidence: 'double', unresolved: 'boolean', embedding: 'json', status: 'string(16)', sourceEntryIds: 'json',
+    sourceChannel: 'string(16)',
     lastSeenAt: 'timestamp', createdAt: 'timestamp', updatedAt: 'timestamp',
   }, { primary: 'id', autoInc: true, indexes: ['storyId', 'status', 'importance'] })
 

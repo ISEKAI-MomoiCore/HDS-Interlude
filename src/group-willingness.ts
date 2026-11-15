@@ -4,6 +4,7 @@
  * v3, but remains scoped to one HDSI group and never affects private turns,
  * Agency Window, Alter, prompts, or durable story state.
  */
+import { LIFE_RHYTHM_STALE_MS } from './story-state'
 export interface GroupWillingnessConfig {
   enabled: boolean
   maxScore: number
@@ -57,7 +58,7 @@ export function resolveGroupWillingness(config?: Partial<GroupWillingnessConfig>
 export function evaluateGroupWillingness(
   previous: GroupWillingnessState | undefined,
   configInput: Partial<GroupWillingnessConfig> | undefined,
-  input: { now: number; messageCount: number; content: string; quotedBot: boolean; mentionedBot: boolean; random?: number },
+  input: { now: number; messageCount: number; content: string; quotedBot: boolean; mentionedBot: boolean; sessionActive?: boolean; attentionBusy?: boolean; random?: number; skipJitter?: boolean },
 ): GroupWillingnessDecision {
   const config = resolveGroupWillingness(configInput)
   const state = decay(previous, config, input.now)
@@ -65,11 +66,14 @@ export function evaluateGroupWillingness(
 
   // 回复后跳过抖动：skipCount > 0 时观察消息但不参与评分。@ 直通（不清零
   // 跳过计数，下一次仍需消耗剩余条数——否则一次 @ 就重置整个抖动周期）。
-  if ((state.skipCount ?? 0) > 0) {
-    if (!input.mentionedBot) {
-      state.skipCount = Math.max(0, (state.skipCount ?? 0) - input.messageCount)
-      return { state: { ...state, updatedAt: input.now }, shouldCall: false, probability: 0, reason: 'skip-jitter' }
-    }
+  // §3.2 微调一：引用她的消息同样放行——回复她的话不是"又一条消息"，是
+  // 接她的话（会话内响应 92% vs 冷启动 72%，CHI06）；计数不清零，同 @。
+  // I-1 会话迟滞：她近期（确认送达的群消息在窗口内）参与对话时，抖动
+  // 让位于会话延续——skipCount 视为已观察完毕但不消耗（退出会话态后恢复）。
+  // §7.6.3 兼容选项：skipJitter=false 关闭整条观察路径（不进入不递减）。
+  if ((state.skipCount ?? 0) > 0 && input.skipJitter !== false && !input.mentionedBot && !input.quotedBot && !input.sessionActive) {
+    state.skipCount = Math.max(0, (state.skipCount ?? 0) - input.messageCount)
+    return { state: { ...state, updatedAt: input.now }, shouldCall: false, probability: 0, reason: 'skip-jitter' }
   }
 
   const keywordHit = config.keywords.some(keyword => input.content.includes(keyword))
@@ -80,8 +84,11 @@ export function evaluateGroupWillingness(
   state.score = clamp(state.score + rawGain * Math.max(0, marginal), 0, config.maxScore)
 
   if (input.mentionedBot) return { state, shouldCall: true, probability: 1, reason: 'forced-mention' }
-  if (state.score <= config.threshold) return { state, shouldCall: false, probability: 0, reason: 'below-threshold' }
-  const probability = clamp((state.score - config.threshold) * config.probabilityAmplifier, 0, 1)
+  // I-3 共享注意力：私聊活跃（她在跟人认真说话）时收紧群门槛——可解释的分档
+  // （阈值 × 1.5），不做硬拒（@ 与引用照常走各自通道；只读消费既有信号）。
+  const effectiveThreshold = input.attentionBusy ? config.threshold * 1.5 : config.threshold
+  if (state.score <= effectiveThreshold) return { state, shouldCall: false, probability: 0, reason: 'below-threshold' }
+  const probability = clamp((state.score - effectiveThreshold) * config.probabilityAmplifier, 0, 1)
   return {
     state,
     shouldCall: (input.random ?? Math.random()) < probability,
@@ -117,7 +124,18 @@ function clamp(value: number, min: number, max: number) {
 
 export type WillingnessTier = 'quiet' | 'reserved' | 'normal' | 'active' | 'eager'
 export type WillingnessPreset = 'off' | WillingnessTier | 'auto' | 'custom'
-export type LifeStatusValue = 'busy' | 'asleep' | 'idle'
+
+/** auto 档的三桶（档位配置键，沿用旧三态命名）。 */
+export type WillingnessBucket = 'busy' | 'asleep' | 'idle'
+
+/** 7.1.4 统一事实源：五档生活节奏 → 三桶映射（与压缩器旧派生同映射）。
+ * phone-focused/available/resting 都按 idle 桶处理。 */
+export function rhythmTierBucket(attention: string): WillingnessBucket | undefined {
+  if (attention === 'occupied') return 'busy'
+  if (attention === 'asleep') return 'asleep'
+  if (attention === 'phone-focused' || attention === 'available' || attention === 'resting') return 'idle'
+  return undefined
+}
 
 /** 档位参数表。基线：normal 约每 4~5 条普通群消息触发一次模型调用
  * （单条批次连续到达、随机数公平时的期望值；密集批次会更快）。 */
@@ -159,15 +177,13 @@ export const RHYTHM_SKIP_MODIFIER: Record<string, number> = {
   'asleep': 3,
 }
 
-/** 睡眠态安全余量：概率乘数（对压缩器状态过期/误判的兜底）。 */
+/** 睡眠态安全余量：概率乘数（对节奏过期/误判的兜底）。 */
 export const ASLEEP_PROBABILITY_MULTIPLIER = 0.2
 
-/** lifeStatus 超过该时长未刷新时，auto 档按 idle 映射回退。 */
-export const LIFE_STATUS_STALE_MS = 6 * 60 * 60 * 1_000
-
-export function normalizeLifeStatusDraft(value: unknown): LifeStatusValue | undefined {
-  return value === 'busy' || value === 'asleep' || value === 'idle' ? value : undefined
-}
+/** 7.1.4：生活节奏时效口径统一为 lifeRhythm 的 2 小时（旧 lifeStatus 的
+ * 6 小时窗口随字段并入废止——显式语义迁移，见 CHANGELOG）。节奏超过该
+ * 时长未刷新时，auto 档按 idle 桶回退。 */
+export { LIFE_RHYTHM_STALE_MS }
 
 function normalizeTier(value: unknown): WillingnessTier | undefined {
   return value === 'quiet' || value === 'reserved' || value === 'normal' || value === 'active' || value === 'eager' ? value : undefined
@@ -185,9 +201,9 @@ export function resolveAutoWillingness(value: unknown): AutoWillingnessConfig {
 export interface WillingnessGateDiagnosis {
   preset: WillingnessPreset
   tier?: WillingnessTier
-  /** auto 档有效生活状态；回退时为 idle，不写回剧本状态。 */
-  lifeStatus?: LifeStatusValue
-  /** lifeStatus 存在但已过期或无效。 */
+  /** auto 档有效生活状态桶（五档节奏经 rhythmTierBucket 映射）；回退时为 idle，不写回剧本状态。 */
+  bucket?: WillingnessBucket
+  /** 节奏存在但已过期或无效。 */
   stale?: boolean
   fallback?: 'missing' | 'invalid' | 'stale'
   asleep: boolean
@@ -200,38 +216,61 @@ interface ResolvedWillingnessLayers {
   diagnosis: WillingnessGateDiagnosis
 }
 
+/** 热身 B（收敛 §7.1.5）：规则解析入口的一次性迁移——旧数值门已启用而档位
+ * 未设置或为 off 时，显式归一为 custom。此后 off 稳定表达关闭；分享码、预设
+ * 导入与旧配置重载经 groupRule() 读取时走同一入口。幂等。 */
+export function normalizeWillingnessPreset<T extends { willingnessPreset?: string, willingness?: { enabled?: boolean } }>(rule: T): T {
+  if (rule.willingness?.enabled === true && (!rule.willingnessPreset || rule.willingnessPreset === 'off' || rule.willingnessPreset === '')) {
+    return { ...rule, willingnessPreset: 'custom' }
+  }
+  return rule
+}
+
+/** F7：一次性配置迁移（加载时执行并持久化）——历史 off+enabled 规则显式
+ * 归一为 custom，并写入 willingnessPresetMigrated 标志。标志落库后
+ * groupRule() 不再运行时归一：用户此后显式选择的 off 稳定表达关闭。
+ * 返回 undefined 表示已迁移过（跳过）；否则返回下一份 onebot 节
+ * （groupChats 已归一 + 标志置 true）。 */
+export function migrateWillingnessPresetsConfig(onebot: { groupChats?: unknown[], willingnessPresetMigrated?: boolean } | undefined): { changed: boolean, next: { groupChats: unknown[], willingnessPresetMigrated: true } } | undefined {
+  if (onebot?.willingnessPresetMigrated === true) return undefined
+  const rules = Array.isArray(onebot?.groupChats) ? onebot!.groupChats! : []
+  const migrated = rules.map(rule => normalizeWillingnessPreset(rule as never))
+  const changed = migrated.some((rule, index) => rule !== rules[index])
+  return { changed, next: { groupChats: migrated, willingnessPresetMigrated: true } }
+}
+
 function resolveWillingnessLayers(
   preset: unknown,
   autoInput: unknown,
-  lifeStatus: { status: unknown, updatedAt: string } | undefined,
+  lifeRhythm: { attention: unknown, assessedAt: string } | undefined,
   now: number,
   legacyInput: Partial<GroupWillingnessConfig> | undefined,
 ): ResolvedWillingnessLayers {
   const rawPreset = typeof preset === 'string' ? preset : ''
-  const legacyEnabled = legacyInput?.enabled === true
-  // 兼容：未设置档位（或显式 off）但旧数值门已启用 → 按存量数值继续（custom）。
-  const resolved = legacyEnabled && (rawPreset === '' || rawPreset === 'off')
-    ? 'custom' as const
-    : rawPreset === 'quiet' || rawPreset === 'reserved' || rawPreset === 'normal' || rawPreset === 'active' || rawPreset === 'eager' || rawPreset === 'auto' || rawPreset === 'custom'
-      ? rawPreset
-      : 'off' as const
+  // 热身 B：隐式兼容分支已删——旧 enabled+off 组合由 normalizeWillingnessPreset
+  // 在规则解析入口（groupRule）归一为 custom；此处 off 稳定表达关闭。
+  const resolved = rawPreset === 'quiet' || rawPreset === 'reserved' || rawPreset === 'normal' || rawPreset === 'active' || rawPreset === 'eager' || rawPreset === 'auto' || rawPreset === 'custom'
+    ? rawPreset
+    : 'off' as const
   const diagnosis: WillingnessGateDiagnosis = { preset: resolved, asleep: false }
   if (resolved === 'off' || resolved === 'custom') {
     return { preset: resolved, config: resolved === 'off' ? { ...legacyInput, enabled: false } : legacyInput ?? {}, diagnosis }
   }
   let tier: WillingnessTier
   if (resolved === 'auto') {
-    const status = lifeStatus ? normalizeLifeStatusDraft(lifeStatus.status) : undefined
-    const updatedAt = lifeStatus ? Date.parse(lifeStatus.updatedAt) : Number.NaN
-    if (!status || !Number.isFinite(updatedAt) || now - updatedAt > LIFE_STATUS_STALE_MS) {
+    // 7.1.4：数据源是五档生活节奏（唯一事实源），经三桶映射选档位；
+    // 时效口径与 Urge 共用 2 小时（旧 6 小时窗口已废止）。
+    const bucket = lifeRhythm ? rhythmTierBucket(String(lifeRhythm.attention)) : undefined
+    const assessedAt = lifeRhythm ? Date.parse(lifeRhythm.assessedAt) : Number.NaN
+    if (!bucket || !Number.isFinite(assessedAt) || now - assessedAt > LIFE_RHYTHM_STALE_MS) {
       tier = resolveAutoWillingness(autoInput).idle
-      diagnosis.lifeStatus = 'idle'
-      diagnosis.fallback = !lifeStatus ? 'missing' : !status || !Number.isFinite(updatedAt) ? 'invalid' : 'stale'
-      if (lifeStatus) diagnosis.stale = true
+      diagnosis.bucket = 'idle'
+      diagnosis.fallback = !lifeRhythm ? 'missing' : !bucket || !Number.isFinite(assessedAt) ? 'invalid' : 'stale'
+      if (lifeRhythm) diagnosis.stale = true
     } else {
-      tier = resolveAutoWillingness(autoInput)[status]
-      diagnosis.lifeStatus = status
-      diagnosis.asleep = status === 'asleep'
+      tier = resolveAutoWillingness(autoInput)[bucket]
+      diagnosis.bucket = bucket
+      diagnosis.asleep = bucket === 'asleep'
     }
   } else {
     tier = resolved
@@ -246,26 +285,26 @@ export function formatWillingnessGateDiagnosis(diagnosis: WillingnessGateDiagnos
   const fallback = diagnosis.fallback === 'missing' ? '无状态→'
     : diagnosis.fallback === 'invalid' ? '无效→'
       : diagnosis.fallback === 'stale' ? '过期→' : ''
-  return `auto(${fallback}${diagnosis.lifeStatus ?? 'idle'}→${diagnosis.tier}${diagnosis.asleep ? '×0.2' : ''})`
+  return `auto(${fallback}${diagnosis.bucket ?? 'idle'}→${diagnosis.tier}${diagnosis.asleep ? '×0.2' : ''})`
 }
 
 export interface WillingnessGateDecision extends GroupWillingnessDecision {
   diagnosis: WillingnessGateDiagnosis
 }
 
-/** 档位统一评估门：按 preset 解析参数后走核心打分。auto 档按压缩器写入的
- * lifeStatus 切换档位（三态各可配档位）；asleep 态概率 ×0.2 且 @ 不再直通
- * （她在睡觉，主模型会写她没看手机）。旧配置兼容：preset 为 off 但旧数值门
- * enabled=true 时按 custom 处理，存量行为不变。 */
+/** 档位统一评估门：按 preset 解析参数后走核心打分。auto 档按五档生活节奏
+ * （唯一事实源）经三桶映射切换档位（桶各可配档位）；asleep 桶概率 ×0.2 且
+ * @ 不再直通（她在睡觉，主模型会写她没看手机）。节奏缺失、无效或超过
+ * 2 小时未刷新时按 idle 桶档位回退（7.1.4：与 Urge 共用时效口径）。 */
 export function evaluateWillingnessGate(
   previous: GroupWillingnessState | undefined,
   preset: unknown,
   autoInput: unknown,
-  lifeStatus: { status: unknown, updatedAt: string } | undefined,
+  lifeRhythm: { attention: unknown, assessedAt: string } | undefined,
   legacyInput: Partial<GroupWillingnessConfig> | undefined,
-  input: { now: number, messageCount: number, content: string, quotedBot: boolean, mentionedBot: boolean, random?: number },
+  input: { now: number, messageCount: number, content: string, quotedBot: boolean, mentionedBot: boolean, sessionActive?: boolean, attentionBusy?: boolean, random?: number, skipJitter?: boolean },
 ): WillingnessGateDecision {
-  const layers = resolveWillingnessLayers(preset, autoInput, lifeStatus, input.now, legacyInput)
+  const layers = resolveWillingnessLayers(preset, autoInput, lifeRhythm, input.now, legacyInput)
   if (layers.diagnosis.asleep) {
     // 概率乘数独立于档位：先取未乘的概率（random=1 阻断核心掷骰），再手动掷。
     const base = evaluateGroupWillingness(previous, layers.config, { ...input, mentionedBot: false, random: 1 })
@@ -282,18 +321,20 @@ export function consumeWillingnessGate(
   previous: GroupWillingnessState | undefined,
   preset: unknown,
   autoInput: unknown,
-  lifeStatus: { status: unknown, updatedAt: string } | undefined,
+  lifeRhythm: { attention: unknown, assessedAt: string } | undefined,
   legacyInput: Partial<GroupWillingnessConfig> | undefined,
   now: number,
   rhythmAttention?: string,
   random: () => number = Math.random,
+  skipJitter = true,
 ): GroupWillingnessState {
-  const layers = resolveWillingnessLayers(preset, autoInput, lifeStatus, now, legacyInput)
+  const layers = resolveWillingnessLayers(preset, autoInput, lifeRhythm, now, legacyInput)
   const consumed = consumeGroupWillingness(previous, layers.config, now)
-  // 回复成功→掷下一次触发前的跳过条数（档位抖动 + 节奏调制）
+  // 回复成功→掷下一次触发前的跳过条数（档位抖动 + 节奏调制）。
+  // §7.6.3 兼容选项：skipJitter=false 时不掷（既有 skipCount 归零，观察路径整体停用）。
   const tier = layers.diagnosis.tier as WillingnessTier | undefined
   const [jitterMin, jitterMax] = tier && WILLINGNESS_JITTER[tier] ? WILLINGNESS_JITTER[tier] : [0, 3] as const
   const rhythmMod = rhythmAttention && RHYTHM_SKIP_MODIFIER[rhythmAttention] !== undefined ? RHYTHM_SKIP_MODIFIER[rhythmAttention] : 0
   const raw = jitterMin + Math.floor(random() * (jitterMax - jitterMin + 1)) + rhythmMod
-  return { ...consumed, skipCount: Math.max(0, raw) }
+  return { ...consumed, skipCount: skipJitter === false ? 0 : Math.max(0, raw) }
 }

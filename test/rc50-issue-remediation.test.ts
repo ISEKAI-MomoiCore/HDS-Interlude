@@ -58,11 +58,11 @@ test('issue7 repairBareQuotes 修补散文内裸引号且不动合法 JSON', () 
   assert.equal(JSON.parse(repairBareQuotes('{"k":"v","k2":"v2"}')).k, 'v')
 })
 
-/* ── 问题九:信任域(经由导出的判定间接验证——isTrustedImageHost 未导出,从模块级单测旁证) ── */
+/* ── 问题九:信任域(源码文本断言;P8-S2 后 isTrustedImageHost 随媒体加载迁至 media-loading.ts) ── */
 test('issue9 gxh.vip.qq.com 进入信任域', async () => {
   const svc = await import('../src/service')
   // fetchNativeImage 的域检查在函数内部;此处以源码文本断言替代(集成面由冒烟覆盖)
-  const source = await import('node:fs').then(fs => fs.readFileSync(new URL('../src/service.ts', import.meta.url), 'utf8'))
+  const source = await import('node:fs').then(fs => fs.readFileSync(new URL('../src/media-loading.ts', import.meta.url), 'utf8'))
   assert.ok(source.includes("'gxh.vip.qq.com'"), '信任域数组应包含 gxh.vip.qq.com')
   assert.ok(typeof svc.normalizeScriptField === 'function')
 })

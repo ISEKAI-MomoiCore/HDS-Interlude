@@ -78,3 +78,20 @@ test('长时间沉默不清零 skipCount(由消息条数驱动,不随时钟)', (
   })
   assert.equal(later.state.skipCount, skip, '沉默不消耗 skipCount')
 })
+
+// ── §7.6.3 兼容选项：跳过条数抖动可关闭 ─────────────────────────────
+
+test('§7.6.3 skipJitter=false：有 skipCount 也不进入观察路径，直接评分', () => {
+  const consumed = consumeWillingnessGate(undefined, 'eager', undefined, undefined, undefined, now, undefined, () => 1)
+  assert.ok((consumed.skipCount ?? 0) > 0, '默认开启时掷出跳过数')
+  const decision = evaluateWillingnessGate(consumed, 'eager', undefined, undefined, undefined, {
+    now, messageCount: 1, content: 'hello', quotedBot: false, mentionedBot: false, random: 0.99, skipJitter: false,
+  })
+  assert.notEqual(decision.reason, 'skip-jitter', '关闭后不再被观察路径拦截')
+  assert.equal(decision.state.skipCount, consumed.skipCount, '关闭时不递减既有 skipCount')
+})
+
+test('§7.6.3 skipJitter=false：回复后不掷跳过数（skipCount 归零）', () => {
+  const consumed = consumeWillingnessGate(undefined, 'eager', undefined, undefined, undefined, now, 'resting', () => 1, false)
+  assert.equal(consumed.skipCount, 0, '关闭后回复不再产生观察条数')
+})

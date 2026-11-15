@@ -118,7 +118,7 @@ export declare class SharedWorks {
         proposals: {
             id: string;
             reason: string;
-            status: "rejected" | "pending" | "accepted";
+            status: "pending" | "rejected" | "accepted";
             baseRevisionId: string;
         }[];
         generationMode: "main" | "separate";

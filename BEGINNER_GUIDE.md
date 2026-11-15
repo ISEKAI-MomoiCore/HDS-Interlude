@@ -1,6 +1,6 @@
 # HDS Interlude 新手引导
 
-适用版本：`1.0.1-rc58`
+适用版本：`1.0.1-rc60`
 
 当前文档已同步至 2026-10-17 的 rc57，累计变更以 rc56 发布包为基线。已完成源码构建、类型检查、回归测试与 rc57 安装包打包；发布包与校验信息见发行记录。旧安装包不会自动获得这些修改，运行实例须安装并重载后才生效。
 
@@ -25,6 +25,8 @@ HDS Interlude 是 Koishi 的持续叙事聊天插件。插件使用共享主剧�
 interlude.doctor
 interlude.story.start
 ```
+
+当前工作区还提供 HDSI 专属工作台：进入「配置中心」可搜索并编辑完整配置，表单底部提供「保存本节 / 保存并重载 / 重新读取」。编辑已运行故事的人设和世界设定时，进入「当前故事」并保存到故事数据库；新故事默认档案在配置中心的「故事档案」中设置。
 
 Console 配置页第一项是可选的 `presetSync` 预设同步：可通过 typ0.space 分享码直接拉取角色人设/配置（默认关闭）。其后按【必填→结构→节奏→表达→内在→扩展→维护】分组编号；不使用在线预设时可跳过首项，先完成必填三项（故事档案 → 模型中心 → QQ 接入），再按需开启共享主剧本与节奏类（运行时/Urge/日程预排/时间导演/行动窗口）；表达（聊天动作/表情包）、内在（记忆/Alter）、扩展与维护项在基础私聊稳定后逐项开启。`blindMode`（盲区模式）首次保持关闭。
 
@@ -200,15 +202,13 @@ schedulePreplan.reviewAfterLocalHour: 3
 schedulePreplan.anchorAutoAdvance: true
 runtime.conversationFollowUpJitterMinutes: 1
 runtime.allowProactiveMessages: false
-runtime.proactiveWillingnessThreshold: 0.65
 
-agency.enabled: false
-agency.maxWindowMinutes: 240
-agency.minimumProactiveIntervalMinutes: 60
-agency.maxCandidateHours: 24
+# 主动联系额度（可选；全 0 = 无额外额度约束，总开关与白名单仍有效）
+deliveryPolicy.proactivePerTargetDailyCap: 0
+deliveryPolicy.minimumRunIntervalMinutes: 0
 ```
 
-第一次测试建议关闭 `runtime.allowProactiveMessages`。确认剧本、延迟回复和自动推进稳定后再开启。Agency Window 不用随机频率制造联系；它要求生活来源、现实行动条件和意愿门槛，同时保留 60 分钟默认安全间隔防止连续主动打扰。
+第一次测试建议关闭 `runtime.allowProactiveMessages`。确认剧本、延迟回复和自动推进稳定后再开启。主动联系由统一动作契约管理：模型在剧本中用 <say> 标记真实发送并由宿主策略（总开关 + 白名单 + 可选运行额度）决定执行；意愿数值门槛已退役。想要限制打扰频率时，用【运行 9b】统一投递策略设置每目标日上限或最短运行间隔，而不是旧的意愿阈值。
 
 睡眠或休息时间可以使用：
 

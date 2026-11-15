@@ -300,36 +300,34 @@ export interface AutoUpdateResult {
 }
 
 /**
- * 自动/手动同步入口。自动路径(enabled && autoUpdate && shareCode)在重载时执行;
- * 手动路径由 interlude.preset.sync 以 force 调用。
- * - 自动:远端 revision == lastRevision → 跳过(幂等)
- * - 手动(force):revision 未变也强制重新应用
+ * 变更触发/手动同步入口。重载路径(enabled && shareCode)以"配置码 vs 已
+ * 同步码"判定:第一次填写(无持久化状态)或人设码更换时同步一次;码未变化
+ * 完全跳过——不发任何网络请求(替代旧 autoUpdate 的"每次重载都拉远端比对
+ * revision")。手动路径由 interlude.preset.sync 以 force 调用,码未变也
+ * 强制重新应用(清库重建/配置漂移后的恢复手段,rc48)。
  * - storyDefaults(若选中):同时写入配置模板(Console 可见、清库重建与新故事
  *   的孵化来源)并按 applyToCurrentStory 打到当前故事
- * - 网络失败 → 静默保留本地配置,记录 lastError,不影响启动
+ * - 网络失败 → 静默保留本地配置,记录 lastError,下次重载自动重试
+ *   (码仍与已同步码不同)
  */
 export async function runAutoSync(ctx: Context, service: InterludeService, opts: { force?: boolean } = {}): Promise<AutoUpdateResult | null> {
   const sync = service.config.presetSync
-  // 手动 sync 只要求 enabled+shareCode;autoUpdate 闸只属于自动路径
   if (!sync?.enabled || !sync.shareCode?.trim()) return null
-  if (!opts.force && !sync?.autoUpdate) return null
   const baseUrl = sync.baseUrl?.trim() || 'https://typ0.space'
-  const code = sync.shareCode.trim()
+  const code = normalizeShareCode(sync.shareCode) ?? sync.shareCode.trim()
   const logger = ctx.logger('hds-interlude')
 
   try {
-    // 拉取远端
-    const { info } = await fetchShare(ctx, baseUrl, code)
+    // 码变更闸:配置码与已同步码一致且非强制 → 跳过,零网络请求。作者修改
+    // 预设后旧码在站点侧失效、发放新码,所以"远端有更新"的主路径就是换码。
     const state = await readSyncState(ctx.baseDir)
-
-    // revision 未变 → 自动路径跳过;手动路径强制重新应用
-    if (state && state.code === info.code && state.revision === info.revision) {
-      if (!opts.force) {
-        logger.info('预设同步:远端 revision %d 未变,跳过', info.revision)
-        return { applied: false, reason: 'revision 未变', revision: info.revision, title: info.title }
-      }
-      logger.info('预设同步:revision %d 未变,手动触发强制重新应用', info.revision)
+    if (!opts.force && state && state.code === code) {
+      logger.info('预设同步:分享码 %s 未变化,跳过(强制重新应用可执行 interlude.preset.sync)', code)
+      return { applied: false, reason: '分享码未变化', revision: state.revision, title: state.title }
     }
+
+    // 拉取远端(能走到这里 = 首次填写 / 更换了人设码 / 手动强制)
+    const { info } = await fetchShare(ctx, baseUrl, sync.shareCode.trim())
 
     // 确定要应用的分区
     const sectionFilter = sync.sections?.length ? sync.sections : info.sections
@@ -393,10 +391,10 @@ export async function runAutoSync(ctx: Context, service: InterludeService, opts:
     return { applied: true, reason: `已应用 ${changes || '配置'}${templateNote ? `(${templateNote})` : ''}`, revision: info.revision, title: info.title }
   } catch (error) {
     // 静默保留本地配置,仅记录错误
-    const state = await readSyncState(ctx.baseDir).catch(() => null)
+    const state = await readSyncState(ctx.baseDir).catch((): null => null)
     if (state) {
       state.lastError = `${new Date().toISOString()}: ${(error as Error).message}`
-      await writeSyncState(ctx.baseDir, state).catch(() => undefined)
+      await writeSyncState(ctx.baseDir, state).catch((): undefined => undefined)
     }
     // 404 时给出明确提示(分享码可能因作者修改而过期)
     const is404 = /分享码不存在|已过期/.test((error as Error).message)

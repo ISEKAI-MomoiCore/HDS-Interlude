@@ -8,6 +8,7 @@ import { desktopProcessingContext } from './processing-context'
 import { randomUUID } from 'node:crypto'
 import type { Session } from 'koishi'
 import type { DesktopTimelineRangeRequest, InterludeService } from './service'
+import { communicationActionsList } from './console/actions'
 
 export type DesktopRuntimePhase = 'running' | 'muted' | 'paused'
 /** `unknown` = 宿主回执超时/连接断开等"请求已写出、结果不可知"——与
@@ -30,13 +31,16 @@ function createProcessingId() {
  * envelope/schema version; optional behavior is negotiated independently. */
 const DESKTOP_BRIDGE_API_VERSION = 1
 const DESKTOP_BRIDGE_PROTOCOL = 4
-const DESKTOP_BRIDGE_CAPABILITIES = [
+export const DESKTOP_BRIDGE_CAPABILITIES = [
   'phase', 'inbound', 'replay-inbox', 'snapshot', 'timeline-range',
   'delivery', 'purge-range', 'cursor-set', 'endpoint-health',
   // B1-3（W2/W3）：multi-account = worker 入站按端点注册表解析（第二账号事件
   // 直达既有剧本）；onebot-action = worker 认识动作代理协议（宿主可安全启用
   // handler，见 C 阶段）。旧桌面不识别这两个能力位，无副作用。
   'multi-account', 'onebot-action', 'processing-context',
+  // P4（§15.1）：communication-actions-v1 = 宿主可请求通信动作列表（统一动作
+  // 只读投影，actions-list 命令）；旧宿主不识别此能力位，无副作用。
+  'communication-actions-v1',
 ] as const
 
 /** W3 桥接动作代理结果帧（宿主 → worker）。ambiguous 与插件 QzoneActionError 同族：
@@ -75,6 +79,7 @@ type DesktopCommand =
   | { type: 'hdsi-desktop', command: 'snapshot', value: { requestId: string } }
   | { type: 'hdsi-desktop', command: 'endpoint-health', value: { requestId: string } }
   | { type: 'hdsi-desktop', command: 'timeline-range', value: { requestId: string, query?: DesktopTimelineRangeRequest } }
+  | { type: 'hdsi-desktop', command: 'actions-list', value: { requestId: string, cursor?: string, limit?: number } }
   | { type: 'hdsi-desktop', command: 'delivery-result', value: { deliveryId: string, status: DesktopDeliveryStatus, messageIds?: string[], error?: string } }
   | { type: 'hdsi-desktop', command: 'purge-range', value: { requestId: string, from: string, to: string } }
   | { type: 'hdsi-desktop', command: 'cursor-set', value: { requestId: string, cursorAt: string } }
@@ -407,6 +412,16 @@ export function installDesktopBridge(service: InterludeService) {
         })
         return
       }
+      if (command.command === 'actions-list') {
+        // P4（§15.1）：通信动作只读投影（游标分页，authority 语义由宿主连接承载）。
+        if (!isRequestId(command.value?.requestId)) throw new Error('动作列表请求缺少 requestId。')
+        const { rows, cursor, total } = await communicationActionsList(service as any, {
+          ...(command.value.cursor !== undefined ? { cursor: String(command.value.cursor) } : {}),
+          ...(command.value.limit !== undefined ? { limit: Number(command.value.limit) } : {}),
+        })
+        sendToDesktop('actions-list-result', { ok: true, requestId: command.value.requestId, rows, cursor, total })
+        return
+      }
       if (command.command === 'timeline-range') {
         if (!isRequestId(command.value?.requestId) || !isTimelineRangeRequest(command.value.query)) throw new Error('无效时间线范围请求。')
         sendToDesktop('timeline-range-result', { ok: true, requestId: command.value.requestId, projection: await service.desktopTimelineRange(command.value.query) })
@@ -431,6 +446,7 @@ export function installDesktopBridge(service: InterludeService) {
             : command.command === 'snapshot' ? 'snapshot-result'
               : command.command === 'endpoint-health' ? 'endpoint-health-result'
                 : command.command === 'timeline-range' ? 'timeline-range-result'
+                : command.command === 'actions-list' ? 'actions-list-result'
                 : command.command === 'purge-range' ? 'purge-range-result'
                   : command.command === 'cursor-set' ? 'cursor-set-result' : 'error'
       sendToDesktop(response, { ok: false, requestId, accepted: false, error: String(error), errorCode: 'BRIDGE_REQUEST_FAILED', results: command.command === 'replay-inbox' ? [] : undefined })

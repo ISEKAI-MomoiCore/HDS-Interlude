@@ -1,6 +1,6 @@
 # 开发与维护资料
 
-当前源码工作区版本为 `1.0.1-rc50`，汇总相对 rc48 的累计修复；全量回归与严格类型检查已通过，本次发布流程已构建 rc50 对应 `lib/` 并交付安装包，真实运行环境验收仍由维护者执行。当前行为以源码、[当前架构](../ARCHITECTURE.md)、[V2 实施表](../V2_IN_PLACE_REFACTOR_IMPLEMENTATION_FORM.md) 与[更新记录](../CHANGELOG.md)为准；以下 beta6/M10 文档用于追溯，不能覆盖当前实现。
+当前已发布版本为 `1.0.1-rc58`（2026-10-27），工作区另有未发布增量（考据 Agent / 密度自适应 / HDSI Console / 表情包采集）——见[更新记录](../CHANGELOG.md)顶部。当前行为以源码、[当前架构](../ARCHITECTURE.md)、[V2 实施表](../V2_IN_PLACE_REFACTOR_IMPLEMENTATION_FORM.md) 与[更新记录](../CHANGELOG.md)为准；本目录全部文档用于追溯，不能覆盖当前实现。
 
 ## 当前发布与近期增量
 
@@ -28,6 +28,8 @@
 
 - [M10_FUNCTIONAL_COOPERATION_REPORT.md](M10_FUNCTIONAL_COOPERATION_REPORT.md)：当前功能组合、调度、投递和实机验收边界。
 - [SECONDARY_FEATURE_ALIGNMENT_BACKLOG.md](SECONDARY_FEATURE_ALIGNMENT_BACKLOG.md)：后续次级功能与剧本核心的非破坏式对齐方向。
+- [TIMELINE_DIRECTOR_REPLAN_REPORT.md](TIMELINE_DIRECTOR_REPLAN_REPORT.md)：时间导演重规划只读调查（2026-09-10，自 docs 顶层归位——历史报告不覆盖当前实现）。
+- [CORE_SYSTEMS_RISK_TRIAGE_RC48.md](CORE_SYSTEMS_RISK_TRIAGE_RC48.md)：rc48 基线核心系统风险普查与复核（自 docs 顶层归位，结论已被后续修复推进）。
 - [logging/LAYERED_LOG_IMPLEMENTATION.md](logging/LAYERED_LOG_IMPLEMENTATION.md)：当前日志实现。
 - [logging/LOG_FORMAT_DESIGN.md](logging/LOG_FORMAT_DESIGN.md)：日志字段与输出约束。
 

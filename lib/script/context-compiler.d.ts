@@ -5,6 +5,8 @@ export interface CompiledNarrativeContext {
     currentSceneEvidence: Record<string, unknown>;
     ongoingThreads: Record<string, unknown>;
     availableNearFuture: Record<string, unknown>;
+    /** 考据案头：author-facing 写作参考（researchDesk），与[世界事件]语义隔离。 */
+    writingReference: Record<string, unknown>;
     incomingEvent: Record<string, unknown>;
     authoringWindow: Record<string, unknown>;
 }

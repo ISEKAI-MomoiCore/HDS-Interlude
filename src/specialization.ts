@@ -118,7 +118,7 @@ export const LITE_TRANSPORT_PRIVATE = 'For this private turn, return interaction
 
 export const LITE_TRANSPORT_GROUP = 'For this group turn, return groupReply as {"mode":"immediate","content":"the exact words posted to the group now"}. The content must be exactly the words posted in the script. Use mode=none when no group post occurs.'
 
-export const LITE_TRANSPORT_ADVANCE = 'In this independent-life phase there is normally no current reply channel; reply.mode=none unless a message is genuinely sent now. A present outbound action uses crossConversationActions with the listed participantId, exact content and a willingness value.'
+export const LITE_TRANSPORT_ADVANCE = 'In this independent-life phase there is normally no current reply channel; reply.mode=none unless a message is genuinely sent now. A present outbound action uses communicationActions per the CONTACT ACTIONS contract (say-bound text, no willingness).'
 
 export const LITE_JSON_CONTRACT = 'Return one JSON object with a continuous prose field named script first, followed by interaction (groupReply in group turns) and only the other structured fields that the current phase permits. Do not wrap it in Markdown fences.'
 

@@ -1,10 +1,22 @@
 # HDS Interlude 配置指南
 
-适用版本：`1.0.1-rc58`
+适用版本：`1.0.1-rc60`
 
-当前文档已同步至 2026-10-17 的 rc57，累计变更以 rc56 发布包为基线。已完成源码构建、类型检查、回归测试与 rc57 安装包打包；发布包与校验信息见发行记录。旧安装包不会自动获得这些修改，运行实例须安装并重载后才生效。
+本指南包含当前工作区截至 2026-11-15 的未发布增量，已发布版本与工作区改动以更新记录为准。安装包需要包含最新服务端与 client-dist，并重载插件和刷新 Console 后生效。
 
 第一次安装先看 `BEGINNER_GUIDE.md`。本文件按配置依赖关系组织字段；下方先列出当前 Console 的实际顺序，旧版本已经移除或隐藏的字段集中列在末尾，不再混入正常配置流程。
+
+## HDSI 专属工作台
+
+Koishi 左侧活动栏的 HDSI 入口提供六个页面：概览、配置中心、当前故事、考据案头、通信动作、上下文预算。
+
+- **配置中心**按用途组织全部 25 个可见配置节，与 Koishi 标准插件配置页共用同一份 Schema。菜单支持按名称、字段键和说明搜索。
+- **保存本节**提交当前节，经整份配置校验后通过 Koishi 持久化到 `koishi.yml`，插件按需自动重载。**保存并重载**明确请求重载 HDSI；**重新读取**使用服务器配置替换本节表单。切换配置节或离开页面时，未保存修改会触发确认。
+- 已设置的密钥显示掩码。保留掩码可保留原值，填写新值可替换，留空可清除。模型连接重排时按连接 ID 保留对应密钥；修改 ID 后应重新填写密钥或留空。
+- **当前故事**编辑已启动故事的姓名、人设、世界、视角、文风等设定，写入故事数据库。配置中心的 `storyDefaults` 是新故事默认档案，两者分别保存。
+- **上下文预算**显示实际锚点与私聊/群聊档位。`runtime` 中的上下文设置位于最前面，QQ 合并转发是独立折叠项。
+
+Koishi 标准插件配置页继续提供完整入口；隐藏的旧兼容参数仍按 Schema 的隐藏状态处理。
 
 ## Console 顺序
 
@@ -17,11 +29,12 @@
 | 2 | 【必填】 | 2 | `model` | 模型中心 |
 | 3 | 【必填】 | 3 | `onebot` | QQ 接入 |
 | 4 | 【结构】 | 4 | `sharedStory` | 共享主剧本 |
-| 5 | 【节奏】 | 5 | `runtime` | 运行时与节奏 |
+| 5 | 【节奏】 | 5 | `runtime` | 上下文与运行时 |
 | 6 | 【节奏】 | 6 | `urge` | Urge 弹性推进 |
 | 7 | 【节奏】 | 7 | `schedulePreplan` | 日程预排 |
 | 8 | 【节奏】 | 8 | `timelineDirector` | 时间导演 |
-| 9 | 【节奏】 | 9 | `agency` | 行动窗口 |
+| 9 | 【节奏】 | 9 | `agency` | 行动窗口（兼容迁移与场景证据） |
+| — | 【运行】 | 9b | `deliveryPolicy` | 统一投递策略 |
 | 10 | 【表达】 | 10 | `chatActions` | 聊天动作 |
 | 11 | 【表达】 | 11 | `stickers` | 本地表情包 |
 | 12 | 【内在】 | 12 | `memory` | 记忆与连续性 |
@@ -33,6 +46,9 @@
 | 18 | 【扩展】 | 18 | `qzone` | QQ 空间通道 |
 | 19 | 【维护】 | 19 | `blindMode` | 盲区模式 |
 | 20 | 【维护】 | 20 | `logging` | 日志 |
+| — | 【维护】 | 21 | `modelCapture` | 模型数据采集 |
+| — | 【扩展】 | 22 | `research` | 考据 Agent |
+| — | 【高级】 | — | `mainPrompt` | 主提示词 |
 
 不使用在线预设时可保持首位的 `presetSync` 关闭；使用 typ0.space 分享码可直接拉取角色人设并按分区应用。首次测试再完成 `storyDefaults`、`model`、`onebot`、`sharedStory` 和 `runtime`；`blindMode` 保持关闭。Embedding、网页观察、主动联系和内容日志应在基础私聊稳定后逐项开启。
 
@@ -195,6 +211,7 @@ Embedding 地址留空时，插件会尝试从标准 `/chat/completions` 地址�
 | `purpose` | 群的用途和背景。 |
 | `characterRole` | 主角在群中的身份和说话位置。 |
 | `responseMode` | `mention-only` 只在被 @ 时进入主叙事；`always` 处理所有消息。 |
+| `audioAlwaysTriggers` | 语音必定触发（默认开启）：群里出现语音/音频时无视 @、意愿与冷却直接调用主叙事。关闭后语音按普通消息处理——mention-only 群仍需 @（未 @ 语音仅落库作证据），always 群受意愿与冷却控制。 |
 | `contextLimit` | 主叙事读取的最近群消息数。 |
 | `debounceSeconds` | 合并连续群消息的等待时间。 |
 | `cooldownSeconds` | 主角群发言后的最短冷却。 |
@@ -202,9 +219,9 @@ Embedding 地址留空时，插件会尝试从标准 `/chat/completions` 地址�
 
 **先确认 Koishi 频道受理人**：受理人不等于当前机器人时，未 @ 的消息会在 Koishi 核心层被拦截，HDSI 无法落库或把它们加入上下文；这与私聊用户白名单无关，群友不需要加入 `userAccounts`。换机器人账号后，可在 Console → HDSI → QQ 接入 → 群聊白名单中，为目标群填写 `assignee` 并保存。这里只修改已启用且明确配置的 OneBot 群，不解除频道/用户忽略标记；留空、停用或删除配置不会撤销已经写入的受理人。一个频道只有一个受理人，多机器人实例不要为同一群配置冲突值。
 
-群聊不再调用独立快速筛选模型。普通消息合并后仍经过意愿与冷却判断，再交给主叙事。rc12 对可提取的音频文件/语音跳过意愿、冷却与仅 @ 门槛，直接进入合并写作队列，携带本批原生音频；仍由主叙事决定是否输出 `groupReply`。群白名单、原生音频开关、数量及大小限制保留；音频读取失败会警告。使用 Messages 协议时，还需要服务商真正支持音频输入；必要时应准备兼容的 Chat Completions 故障转移连接。
+群聊不再调用独立快速筛选模型。普通消息合并后仍经过意愿与冷却判断，再交给主叙事。rc12 对可提取的音频文件/语音跳过意愿、冷却与仅 @ 门槛，直接进入合并写作队列，携带本批原生音频；仍由主叙事决定是否输出 `groupReply`。自本版起该"必定触发"改为每群可选项 `audioAlwaysTriggers`（默认开启保持旧行为）；关闭后语音回到普通消息的门控路径，但若本轮因其它原因触发，仍会尝试携带原生音频。群白名单、原生音频开关、数量及大小限制保留；音频读取失败会警告。使用 Messages 协议时，还需要服务商真正支持音频输入；必要时应准备兼容的 Chat Completions 故障转移连接。
 
-对 `responseMode=always` 的活跃群，可使用 `willingnessPreset` 选择 `quiet`、`reserved`、`normal`、`active`、`eager`、`auto` 或 `custom`。`off`（默认）只保留响应模式与冷却；`custom` 才使用下方旧数值对象。意愿门完全在本地运行，不增加模型调用。普通状态下 @ 通常绕过意愿概率；睡眠态例外，@ 不会立即直通，而交给后续主叙事自然处理。群音频仍独立绕过意愿和冷却门槛。关键词与引用机器人消息可增加意愿，主角成功群发言后会扣除意愿。该功能只作用于当前群，不影响私聊、Alter、Agency、自动推进或主提示词。
+对 `responseMode=always` 的活跃群，可使用 `willingnessPreset` 选择 `quiet`、`reserved`、`normal`、`active`、`eager`、`auto` 或 `custom`。`off`（默认）只保留响应模式与冷却；`custom` 才使用下方旧数值对象。意愿门完全在本地运行，不增加模型调用。普通状态下 @ 通常绕过意愿概率；睡眠态例外，@ 不会立即直通，而交给后续主叙事自然处理。群音频默认仍独立绕过意愿和冷却门槛（每群 `audioAlwaysTriggers` 可关闭）。关键词与引用机器人消息可增加意愿，主角成功群发言后会扣除意愿。该功能只作用于当前群，不影响私聊、Alter、Agency、自动推进或主提示词。
 
 `willingnessPreset=auto` 时，若 `lifeStatus` 缺失、无效或超过 6 小时未刷新，按 **idle** 生活状态使用 `willingnessAuto.idle`（默认 `active`）；例如配置 `idle: eager` 就回退到 `eager`，不再固定回退 `normal`。这是本地门控回退，不会伪造或写回生活状态。有效的 busy/asleep 状态仍保留原行为；评估调用和成功发言后的意愿扣减使用相同档位。
 
@@ -276,7 +293,7 @@ Embedding 地址留空时，插件会尝试从标准 `/chat/completions` 地址�
 
 主模型尚未提交第一条回复时，新消息会废弃旧请求，并把旧、新消息合并后重新写作，不再受固定秒数窗口限制。第一条回复已经提交后，新消息会取消剩余分段；未发送文字以 `interruptedOutgoingDrafts` 进入替代提示词，表示主角想发送但被新消息打断，不能视为已送达内容。
 
-### 5.4 自动生活和主动联系
+### 5.4 自动生活和通信动作
 
 | 字段 | 说明 |
 | --- | --- |
@@ -286,12 +303,20 @@ Embedding 地址留空时，插件会尝试从标准 `/chat/completions` 地址�
 | `restWindows` | 睡眠、工作等低频推进窗口，可跨午夜。 |
 | `sweepIntervalMinutes` / `maxStoriesPerSweep` | 后台发现到期任务的频率和单轮故事上限。 |
 | `minimumAdvanceMinutes` | 手动推进在没有到期任务时需要的最小时间差。 |
-| `allowProactiveMessages` | 是否允许无新消息时产生可见主动联系。 |
-| `proactiveWillingnessThreshold` | 主模型主动联系意愿门槛。 |
-| `contextEntryLimit` | 写入主叙事上下文的近期原始剧本条目数，默认 `17`。小模型可调小（如 `15`）——低于默认值的设置真实生效（旧版的 35 硬地板已移除）。 |
-| `contextTimeWindowMinutes` | 与条目数取并集的时间窗口，默认 `6` 分钟（窗口内条目全部并入，上限 500）；`0` 关闭。小模型收缩上下文时需与条数一起调小或关闭。 |
+| `allowProactiveMessages` | 是否允许后台写作产生可见出站动作；仍受白名单和端点权限约束。 |
+| `contextEntryLimit` | 写入主叙事上下文的近期原始剧本条目数。 |
+| `contextTimeWindowMinutes` | 与条目数取并集的时间窗口。 |
 | `memoryLimit` | 主叙事携带的长期事实数量。 |
 
+主动联系的作者表达使用 CONTACT ACTIONS：即时消息绑定剧本中的 `<say id>`，未来联系形成 `contact-plan`，确定延迟形成延迟意图。投递限制集中在【运行 9b】`deliveryPolicy`：
+
+| 字段 | 说明 |
+| --- | --- |
+| `proactivePerTargetDailyCap` | 每目标滚动 24 小时逻辑主动动作上限；0 表示无额外额度约束。 |
+| `minimumRunIntervalMinutes` | 逻辑主动动作最短运行间隔；0 表示不设置。 |
+| `deferralValidityMinutes` | 明确延期动作的有效期限；0 表示不设置。 |
+
+【节奏 9】`agency` 保留 Agency Window 的场景证据与旧配置迁移字段。旧 `contactMode`、意愿阈值和 Agency 数值限制不会进入新的运行裁决；历史 `proactive-check` 可用 `interlude.policy.migrate` 迁移。详见 [Agency Window](docs/AGENCY_WINDOW.md)。
 ### 5.5 承诺回访的调度终止
 
 `follow-up-commitment` 每位参与者最多两项待处理承诺。到期写作没有明确可见结算时，通常 20 分钟后重查，但必须遵守 `expiresAt` 硬截止及最多 5 次未结算顺延；达到限制后不再调用模型，由宿主将意图退役为 `cancelled`。新承诺有效期最多 24 小时，旧记录缺失/无效截止时间时固定采用 `createdAt + 24h`，不会每次读取续命。等待分段只是调度等待，不增加顺延计数，也不延长截止时间；到期时优先退役。
@@ -300,17 +325,15 @@ Embedding 地址留空时，插件会尝试从标准 `/chat/completions` 地址�
 
 ## 6. urge：弹性推进（【节奏 6】）
 
-`urge.enabled` 默认关闭。开启后，它仍使用同一条自动剧本链，但以真实用户消息的热度、已提交剧本中的 `urge`／`slow` 交接和既有 Agency 行动决定下一次 `nextAdvanceAt`；它替代固定的对话后短期补写与普通固定间隔，不新增独立模型调用，不降低原文精细度。
+`urge.enabled` 默认关闭。开启后使用真实消息热度、生活节奏交接、休息窗口和日程锚点计算下一次生活推进，不增加固定模型调用，也不生成通信动作。
 
 | 字段 | 默认值 | 说明 |
 | --- | --- | --- |
-| `enabled` | `false` | 开启弹性调度。`runtime.autoAdvanceEnabled` 仍是总开关。 |
-| `frequency` | `medium` | `low`／`medium`／`high`／`custom`；只改变推进时间范围，不改变角色性格或联系文本。 |
-| `proactiveWillingnessThreshold` | `0.4` | 仅 Urge 开启时的主动联系门槛；关闭后使用 runtime 原门槛。 |
-| `advanced` | 折叠 | 密聊、安静、加速与 slow 的时间范围；热度半衰期、随机量、加速有效期／预算及同对象临时最短联系间隔。 |
+| `enabled` | `false` | 开启弹性调度；`runtime.autoAdvanceEnabled` 仍是总开关。 |
+| `frequency` | `medium` | `low/medium/high/custom`；只改变生活推进范围。 |
+| `advanced` | 折叠 | 安静、slow、对话密度半衰期、活动倍率和休息兜底倍率。 |
 
-高 Urge 必须同时有既有 Agency 允许的实际联系行动，且等到首个真实发送回执后，才会开始有限的短期加速。休息、设备不可用、隐私和负荷仍优先；自动发言不增加对话热度。关闭 Urge 后，下一次调度回到 runtime 的普通计划。详见 [Urge 实现记录](docs/development/URGE_SYSTEM_IMPLEMENTATION.md)。
-
+旧版联系意愿门槛、contact burst、contact jitter、contactMin 和联系后确认已经完成迁移。Urge 只保留 `pace`、建议间隔、`rhythmAttention` 与 `basisQuote` 交接；通信动作和投递权限由 CONTACT ACTIONS、端点边界和 `deliveryPolicy` 负责。详见 [Urge 实现记录](docs/development/URGE_SYSTEM_IMPLEMENTATION.md)。
 ## 7. schedulePreplan：日程预排（【节奏 7】）
 
 Schedule Preplan 每天在后台空闲整理时检查主角近期日程。它复用 `useForCompaction` 模型，不增加独立模型选择；已有计划覆盖充足且没有新剧本证据时，程序直接保持原计划，不调用模型。首次尚无可靠规律时，插件会保存“已审查、暂无线索”的空日程记录，并等待后续新的生活证据，不会反复消耗压缩调用。
@@ -336,24 +359,19 @@ Schedule Preplan 每天在后台空闲整理时检查主角近期日程。它复
 | 字段 | 说明 |
 | --- | --- |
 | `enabled` | 默认开启；关闭后自动回合直接续写原始剧本。 |
-## 9. agency：行动窗口（【节奏 9】）
+## 9. agency：行动窗口（【节奏 9】，兼容期）
 
-Agency Window 只描述角色能否采取外部联系行动的现实条件，不描述情绪、关系阶段或联系风格。
+**本节已进入兼容期**：意愿数值、容量裁决、联系温度与重查排期已随统一动作架构（P3/P5）退役，不再参与运行。显式保留的旧配置仅作为【运行 9b】统一投递策略的**保守迁移依据**（未显式配置 deliveryPolicy 时按旧 Agency 实际生效的间隔/上限派生），以及场景条件缓存的有效期参数。
 
-| 字段 | 默认值 | 说明 |
-| --- | --- | --- |
-| `enabled` | `false` | 默认关闭；显式开启后启用生活来源的联系候选、容量判断和 `proactive-check` 重查。已有显式 `true` 配置保持开启。 |
-| `maxWindowMinutes` | `240` | 当前日程/隐私/设备判断最长有效时间，过期后必须重新生成。 |
-| `minimumProactiveIntervalMinutes` | `60` | 同一参与者普通主动联系的安全间隔；承诺型联系可绕过。 |
-| `maxCandidateHours` | `24` | 联系理由最长保留时间，过期后自然放下。 |
-| `contactMode` | `strict` | 联系温度三档：`strict`（沉默不是理由，阈值取运行时/Urge 有效值）；`natural`（想念、好奇近况等情感动机合法，阈值降为 `naturalWillingnessThreshold`，安全间隔取 `naturalMinimumIntervalMinutes`）；`balanced`（同 natural 但要求节制使用情感动机）。设备/隐私/负荷容量硬门三档均不放宽。 |
-| `naturalWillingnessThreshold` | `0.25` | natural/balanced 模式的意愿阈值。 |
-| `naturalMinimumIntervalMinutes` | `30` | natural/balanced 模式的安全间隔（仅当小于严格间隔时生效）。 |
-| `proactiveDailyCap` | `3` | 每参与者每 24 小时主动联系上限（`0` 不限），全模式生效；按**送达**计数——放行时预记、投递终态失败即作废，被拦截或失败的发送不消耗配额。 |
+| 字段 | 现状 |
+| --- | --- |
+| `enabled` | 兼容期保留；不再启用任何裁决链。 |
+| `maxWindowMinutes` | 仍作为场景条件证据（agencyWindow）的有效期上限。 |
+| `minimumProactiveIntervalMinutes` / `naturalMinimumIntervalMinutes` / `contactMode` | 仅作迁移依据：派生统一策略的最短运行间隔（strict 取前者；natural/balanced 取较小值）。 |
+| `proactiveDailyCap` | 仅作迁移依据：派生统一策略的每目标滚动 24h 上限。新链按投递账本结算（送达/待核实占用，确定未送达释放），不再有预记/作废语义。 |
+| `naturalWillingnessThreshold` / `maxCandidateHours` | 已无运行消费者；历史配置保留可读。 |
 
-Agency Window 包含 `activityLoad`、`privacy` 和 `deviceAccess`。自动生活剧本先完成，之后才允许产生由真实生活事件、承诺、实际安排或关系后续支撑的联系候选。候选可以立即联系、稍后重查或放下；稍后重查不会预写未来消息。
-
-`runtime.allowProactiveMessages=false` 时 Agency 不产生可见联系。`proactiveWillingnessThreshold`、白名单和单回合动作上限仍然是最终安全边界。Agency 不读取 Alter 数值，也不会影响文风。
+`runtime.allowProactiveMessages`、账号/群白名单与端点权限仍是最终安全边界（与统一策略串联生效）。旧任务用 `interlude.policy.migrate` 迁移；当前有效策略用 `interlude.policy` 或 Console 配置中心查看。`runtime.proactiveWillingnessThreshold` 已弃用（隐藏字段，新链不再读取）。
 
 ## 10-11. chatActions 与 stickers：聊天动作与本地表情包（【表达】）
 
@@ -364,6 +382,17 @@ Agency Window 包含 `activityLoad`、`privacy` 和 `deviceAccess`。自动生�
 `stickers.enabled` 默认关闭。开启后插件每五分钟扫描 `directory`，只对新增或变化的图片调用勾选了 `useForStickers` 的视觉模型生成描述；`maxFileSizeMB` 和 `catalogLimit` 分别限制单文件大小及主提示词可见素材数量。`stickers.descriptionResponseFormat` 可独立选择描述模型的返回格式：`json-object` 使用 API JSON mode；模型或中转站频繁报 JSON mode 错误时改为 `prompt-only`，插件不再发送 `response_format`，但仍会从模型输出中解析描述 JSON。
 
 **发送与投递**：表情包经 Koishi 自身 HTTP 服务回源投递（路由 `/hds-interlude/sticker/<素材ID>`），不再使用 `file:///` 本地路径——OneBot 实现（NapCat/Lagrange）与 Koishi 分容器或分进程部署时读不到对方文件系统（表现为 retcode 1200/100、路径明明正常）。基址自动推导顺序：`stickers.deliveryBaseUrl` 显式配置 > Koishi `selfUrl` > `http://127.0.0.1:5140`。NapCat 与 Koishi 不同机/不同容器时，把 `deliveryBaseUrl` 设为 NapCat 可访问的 Koishi 服务地址（如 `http://192.168.x.x:5140` 或 docker 网络内的服务名）。
+
+### 11.1 stickers.harvest：表情包采集（偷表情包，实验性，默认关闭）
+
+开启后，他人发送的表情图片会被**即时下载暂存**（QQ CDN 链接会过期，必须到达时抓取），并按 `scanIntervalMinutes` 周期交给勾选了 `useForStickers` 的视觉连接看图判定去留；保留的自动移入表情库 `keptSubfolder` 子目录（默认分组 `harvested`），由既有表情库管线（5 分钟轮询）完成编目与描述——之后主模型就能自然使用这些"偷来"的表情。
+
+- **开关分三层**：`stickers.harvest.enabled` 总开关（需 `stickers.enabled` 同时开启）；`stickers.harvest.privateChats` 私聊开关；群聊在每条群规则的"采集表情包"（`groupChats[].stickerHarvest`）单独开启，mention-only 群同样可采集。
+- **判定准则**：`harvestPrompt` 留空使用内置默认（保留情绪/语义清晰、通用性强的表情；丢弃低俗敏感内容、纯文字截图、二维码/广告水印、模糊图）；可整体替换为自定义准则。
+- **防重复与防刷**：SHA-256 三重去重（丢弃记忆 / 暂存区 / 表情库已有素材）——同一张被丢弃的表情不会再次进入判定；`maxPerChatPerDay` 限制单聊天每日采集量；`maxStagingFiles` 积压上限超出时清理最旧的；判定连续失败 3 次的图片按丢弃处理，防止无法判定的图片无限消耗调用。
+- **旁路保证**：采集与判定全部锁外异步，任何失败（下载失败、模型不可用、暂存为空）只跳过或留待下轮，不影响消息与叙事路径；暂存为空时零模型调用。
+- **隐私提示**：开启后用户发送的表情图片会下载到本机暂存目录，并交给表情包识别模型判定——与既有侧端识图的数据流向一致，分享部署环境时请知悉。
+- 运行状态用 `interlude.stickerharvest.status` 查看（开关、暂存数、累计计数与判定模型可用性）。
 
 ## 12. memory：记忆与连续性（【内在 12】）
 
@@ -504,10 +533,11 @@ Alter 模型由上方 `useForAlter` 选择。`temperature`、`topP`、`maxTokens
 | --- | --- | --- |
 | `enabled` | `false` | 启用预设同步，需填写分享码。 |
 | `baseUrl` | `https://typ0.space` | 分享站地址；自托管可填写自己的站点地址。 |
-| `shareCode` | 空 | 8 位分享码，支持大小写及连字符。 |
-| `autoUpdate` | `false` | 开启后在重载时检查远端 revision，有新版本才应用；关闭时由 `interlude.preset.sync` 手动触发。 |
+| `shareCode` | 空 | 8 位分享码，支持大小写及连字符。**首次填写或更换新码并重载时自动同步一次**；码未变化的重载不再联网检查（旧版 `autoUpdate` 的"每次重载拉远端比对 revision"已移除）。 |
 | `sections` | 空数组 | 留空同步预设中所有支持的分区；填写时只同步选定分区。 |
 | `applyToCurrentStory` | `false` | 是否把 storyDefaults 同时应用到正在运行的故事。 |
+
+同步时机说明：作者修改预设后旧分享码会在站点侧失效并发放新码，所以"远端有更新"的主路径就是**换新码**——换码重载即自动同步。同码想强制重新拉取（如清库重建后）用 `interlude.preset.sync`。
 
 同步可能改变当前配置；首次使用建议明确选择分区并保持 `applyToCurrentStory=false`。
 
@@ -543,6 +573,8 @@ Alter 模型由上方 `useForAlter` 选择。`temperature`、`topP`、`maxTokens
 | `logScriptPreview` | 是否记录剧本正文预览。 |
 | `logMessageContent` | 是否记录用户和主角可见消息。 |
 | `previewLength` | 内容预览字符上限。 |
+
+**向量检索日志（分级）**：standard 档可见——回合向量完成行（用途/模型/维度/耗时）、请求失败警告（"语义检索本轮降级为规则排序"）、启动时"Embedding 已启用但无可用连接"的静默降级警告，以及事实/历史/贴纸三种后台向量补齐的批次行（补齐数/剩余/耗时，全部补齐升 summary）。diagnostic 档追加——事实语义重排统计（候选/有向量/语义命中/最高相似度）、历史语义召回行（缓存/进入评分/向量可用/召回数）与贴纸语义过滤行（目录/过滤后）。排障语义检索时把 `verbosity` 调到 `diagnostic` 即可完整观测。
 
 标准档只保留直观业务事件；扫描、队列、计时器和 SQLite 临时重试进入诊断档。内容开关可能记录私聊和网页文本，排障结束后应关闭。
 

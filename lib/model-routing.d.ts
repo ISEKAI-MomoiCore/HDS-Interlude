@@ -1,6 +1,6 @@
 import type { ModelConfig, ProviderConfig, ProviderResponseFormat } from './narrator';
 import type { AlterSystemConfig } from './types';
-export type ModelTask = 'main' | 'compaction' | 'timeline' | 'alter' | 'embedding' | 'stickers' | 'vision';
+export type ModelTask = 'main' | 'compaction' | 'timeline' | 'alter' | 'embedding' | 'stickers' | 'vision' | 'research';
 export interface ResolvedModelTarget {
     providerId: string;
     model: string;
@@ -26,6 +26,7 @@ export interface ModelRoutingTable {
     embedding: ResolvedModelRoute;
     stickers: ResolvedModelRoute;
     vision: ResolvedModelRoute;
+    research: ResolvedModelRoute;
 }
 export declare const ZHIPU_OFFICIAL_CHAT_ENDPOINT = "https://open.bigmodel.cn/api/paas/v4/chat/completions";
 export declare function resolveModelRouting(config: ModelConfig, alterConfig?: AlterSystemConfig): ModelRoutingTable;

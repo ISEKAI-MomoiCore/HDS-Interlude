@@ -29,7 +29,7 @@ function fixture(target = 'p', count = 1) {
     recordAutomaticDelivery: async () => {}, reportStandalone: () => {}, report: () => {},
     interruptedTypingParticipants: new Set<string>(),
     appendIntent: async (_s: string, draft: any) => { intents.push({ id: intents.length + 1, ...draft, participantId: target }) },
-    scheduleDueIntentWake: () => {}, scheduleNextSplitWake: async () => {},
+    scheduleDueIntentWake: () => {}, scheduleNextPendingWake: async () => {},
     dbGet: async (table: string, query: any) => {
       if (table === 'interlude_intent') return intents.filter(row => !query.id || row.id === query.id)
       if (table !== 'interlude_script_entry') return []

@@ -63,6 +63,8 @@ export interface ProviderConfig {
     useForEmbedding?: boolean;
     useForStickers?: boolean;
     useForVision?: boolean;
+    /** 考据 Agent（research）：改写与蒸馏侧端任务；未勾选回退压缩路由。 */
+    useForResearch?: boolean;
     useForWorldSeeding?: boolean;
     zhipuOfficial?: boolean;
     reasoningEffort?: ZhipuReasoningEffort;
@@ -219,6 +221,12 @@ export declare class OpenAICompatibleEmbedder implements NarrativeEmbedder {
     identity(): string;
     embed(input: string): Promise<number[]>;
 }
+/** Issue #20：解析失败时保留模型原文摘录（压空白、截断）随错误到达日志——
+ * 此前侧端任务的原文在 catch 中被直接丢弃，部署者无从判断是 JSON 包裹在
+ * 文本里、拒答还是思考截断。 */
+export declare function rawResponseExcerpt(text: string, limit?: number): string;
+/** Issue #20：提供商端点主机（不打印完整 URL——路径段可能携带中转站令牌）。 */
+export declare function providerEndpointHost(endpoint: unknown): string;
 export declare class OpenAICompatibleNarrator implements NarrativeProvider {
     private ctx;
     private config;
@@ -243,8 +251,14 @@ export declare class OpenAICompatibleNarrator implements NarrativeProvider {
     visionAvailable(): boolean;
     decide(request: NarrativeRequest): Promise<NarrativeDecision>;
     /** 独立配置块（世界播种器等）复用侧任务请求链：提供商与参数显式传入，
-     * 不经主叙事/压缩路由。JSON 合约与压缩器一致（json-object + 宽容解析）。 */
-    customSideTask<T>(provider: ProviderConfig, task: string, timeout: number, temperature: number, maxTokens: number, system: string, user: string): Promise<T>;
+   * 不经主叙事/压缩路由。JSON 合约与压缩器一致（json-object + 宽容解析）。 */
+    customSideTask<T>(provider: ProviderConfig, task: string, timeout: number, temperature: number, maxTokens: number, system: string, user: string, 
+    /** 审计修复 #6：prompt-only 不发送 response_format（不兼容网关）；
+     * 解析仍走宽容链，模型把 JSON 包在文本里也能取出。默认 json-object。 */
+    responseFormat?: 'json-object' | 'prompt-only'): Promise<T>;
+    /** customSideTask 的多模态变体：user 内容 = 文本 + 单张图片（表情包采集
+     * 判定必须看图）。请求链、宽容解析与去 max_tokens 重试全部复用 sideTaskJson。 */
+    customSideTaskWithImage<T>(provider: ProviderConfig, task: string, timeout: number, temperature: number, maxTokens: number, system: string, userText: string, imageDataUri: string): Promise<T>;
     /** 思考型网关把 reasoning 计入 completion 预算：带小 cap 的侧端 JSON 任务
      * 会被推理挤到只剩残句（invalid JSON / Unterminated string at position N）。
      * 首次解析失败时去掉 max_tokens 原样重试一次；成功路径不多发任何请求。
@@ -326,7 +340,24 @@ export declare function formatTokenUsageLine(record: TokenUsageRecord): string;
  * systemPrompt 空值兜底共用同一常量——两处漂移会造成"清空后文风不一致"。
  * 2026-10-15：默认从英文一句话恢复为完整的中文生活剧本写作指引。 */
 export declare const DEFAULT_STYLE_PROMPT: string;
-export declare function systemPrompt(phase: NarrativeRequest['phase'], mainPrompt: string | undefined, formatPrompt: string | undefined, fixedPrompt: string, baseStylePrompt: string, storyStylePrompt: string, refreshContinuity?: boolean, alterEnabled?: boolean, agencyEnabled?: boolean, perspectiveEnabled?: boolean, outputRecovery?: boolean, chatCapabilities?: ChatActionCapabilities, hasQuotedMessage?: boolean, stickerCatalog?: StickerCatalogEntry[], schedulePreplanEnabled?: boolean, streamingReplyFirst?: boolean, cacheFirstPayload?: boolean, groupTurn?: boolean, writingOptions?: NarrativeRequest['writingOptions'], specialty?: SpecialtyProfile, proactiveContactMode?: 'strict' | 'natural' | 'balanced', channelSelectionEnabled?: boolean, longHorizonGuidance?: string, features?: Partial<NarrativeContractFeatures>): string;
+/** D2.5（解耦设计 §4.5）：平台词汇表——主叙事合约中全部平台特定措辞的
+ * 参数化注入点。默认值 = 现状 QQ/微信字面量，QQ 路径渲染逐字节不变
+ * （快照测试为证）；新平台由其适配器提供自己的词汇（暂无第二实现），
+ * 经 NarrativeRequest.platformWording 注入。 */
+export interface PlatformContractWording {
+    /** 原生表情指令中的称呼（如 "native QQ face"）。 */
+    faceTerm: string;
+    /** 群身份规则中的稳定 ID 称呼（如 "QQ number"）。 */
+    stableIdTerm: string;
+    /** 双平台枚举短语（如 "QQ and WeChat"）。 */
+    platformPair: string;
+    /** 双平台标签示例列表。 */
+    tagListDual: string;
+    /** 单平台标签示例列表。 */
+    tagListSingle: string;
+}
+export declare const DEFAULT_PLATFORM_WORDING: PlatformContractWording;
+export declare function systemPrompt(phase: NarrativeRequest['phase'], mainPrompt: string | undefined, formatPrompt: string | undefined, fixedPrompt: string, baseStylePrompt: string, storyStylePrompt: string, refreshContinuity?: boolean, alterEnabled?: boolean, _agencyEnabled?: boolean, perspectiveEnabled?: boolean, outputRecovery?: boolean, chatCapabilities?: ChatActionCapabilities, hasQuotedMessage?: boolean, stickerCatalog?: StickerCatalogEntry[], schedulePreplanEnabled?: boolean, streamingReplyFirst?: boolean, cacheFirstPayload?: boolean, groupTurn?: boolean, writingOptions?: NarrativeRequest['writingOptions'], specialty?: SpecialtyProfile, _proactiveContactMode?: 'strict' | 'natural' | 'balanced', channelSelectionEnabled?: boolean, longHorizonGuidance?: string, features?: Partial<NarrativeContractFeatures>, platformWording?: Partial<PlatformContractWording>): string;
 export declare function writingAffordances(options?: NarrativeRequest['writingOptions']): string;
 /** A guard paragraph rendered into the writing affordances when the host has
  * detected a fixed bubble-count run in her recent delivered replies. */

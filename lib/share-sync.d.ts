@@ -79,13 +79,15 @@ export interface AutoUpdateResult {
     title?: string;
 }
 /**
- * 自动/手动同步入口。自动路径(enabled && autoUpdate && shareCode)在重载时执行;
- * 手动路径由 interlude.preset.sync 以 force 调用。
- * - 自动:远端 revision == lastRevision → 跳过(幂等)
- * - 手动(force):revision 未变也强制重新应用
+ * 变更触发/手动同步入口。重载路径(enabled && shareCode)以"配置码 vs 已
+ * 同步码"判定:第一次填写(无持久化状态)或人设码更换时同步一次;码未变化
+ * 完全跳过——不发任何网络请求(替代旧 autoUpdate 的"每次重载都拉远端比对
+ * revision")。手动路径由 interlude.preset.sync 以 force 调用,码未变也
+ * 强制重新应用(清库重建/配置漂移后的恢复手段,rc48)。
  * - storyDefaults(若选中):同时写入配置模板(Console 可见、清库重建与新故事
  *   的孵化来源)并按 applyToCurrentStory 打到当前故事
- * - 网络失败 → 静默保留本地配置,记录 lastError,不影响启动
+ * - 网络失败 → 静默保留本地配置,记录 lastError,下次重载自动重试
+ *   (码仍与已同步码不同)
  */
 export declare function runAutoSync(ctx: Context, service: InterludeService, opts?: {
     force?: boolean;

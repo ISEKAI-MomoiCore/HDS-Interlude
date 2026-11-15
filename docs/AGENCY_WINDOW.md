@@ -1,23 +1,16 @@
 # Agency Window
 
-适用版本：`1.0.1-rc58`
+适用版本：`1.0.1-rc60`
 
 ## 定位
 
-当前工作区默认 `agency.enabled=false`，仅在显式开启时使用下述行动窗口门控；已有配置中的显式 `true` 保持生效。此默认值调整属于 rc50 后续修复，已发布的 rc50 安装包不会自动获得该变化。关闭 Agency 不改变 `runtime.allowProactiveMessages` 的独立控制。
+Agency Window 是主角生活条件的证据投影。它记录日程负荷、隐私环境、设备可用性和证据时效，为剧本写作提供可解释的情境材料。它与统一通信动作契约协作：主模型先写出主角真实发生的生活和动作，宿主再依据总开关、白名单、端点能力和统一投递策略执行。
 
-Agency Window 只负责外部联系行动的现实容量：日程负荷、隐私和设备可用性。它不描述情绪、不计算关系阶段或联系风格，也不读取 Alter 数值。
+当前默认值为 `agency.enabled=false`。已有显式配置仍可读取；Agency Window 开启后只增加场景条件投影，不建立独立的联系裁决链。`runtime.allowProactiveMessages`、跨会话权限、账号白名单和端点权限继续承担部署边界。
 
-主动联系遵循：
+典型数据流：
 
-```text
-先写主角自己的生活
-→ 生活产生真实联系理由
-→ 检查日程、隐私、设备、意愿和安全间隔
-→ 立即联系 / proactive-check 稍后重查 / 自然放下
-```
-
-用户长时间沉默本身不能成为联系理由。
+`生活剧本 → Agency Window 条件证据 → CONTACT ACTIONS 原文动作 → 统一策略 → ScriptCommit/Delivery Ledger → 平台投递与回执`
 
 ## 状态
 
@@ -32,65 +25,38 @@ Agency Window 只负责外部联系行动的现实容量：日程负荷、隐私
 - `sourceEntryIds`
 - `updatedAt`
 
-状态必须引用真实剧本条目，并被 `maxWindowMinutes` 限制。过期状态不会进入主模型。
+每个状态都绑定真实剧本条目，并受到 `maxWindowMinutes` 限制。证据过期后以“未知”进入概览和提示词，下一次生活回合可以重新建立条件。
 
-## 联系候选
+## 联系动作
 
-`proactiveContact` 支持：
+当前作者动作使用统一 CONTACT ACTIONS 契约：
 
-- 来源：生活事件、承诺、实际安排、关系后续
-- 内容敏感度：普通或私人
-- 目标参与者
-- 具体 motive
-- 真实来源条目
-- willingness
-- `send-now | recheck-later | let-go`
-- 最早重查时间和过期时间
+- 即时动作把原文消息放在 `<say id="...">` 中，并由 `communicationActions` 引用目标。
+- `timing="future"` 表示人物形成了未来联系计划，落入 `contact-plan` 意图，在到期回合重新进入正常写作。
+- `timing="fixed-delay"` 表示确定的延迟投递，保留为确定延迟意图并由投递管线执行。
+- 旧 `crossConversationActions`、`interaction.reply` 和 `proactiveContact` 仍作为输入适配；旧 `recheck-later` 会转换为同一 `contact-plan`。
 
-候选参与者必须通过当前白名单；来源 ID 必须来自提供给模型的真实条目。当前新剧本产生的理由由宿主自动绑定到该剧本条目。
+动作文本、投递接受、平台回执和对方阅读分别记录。未知回执保持“待核实”，后续回执可以升级为已送达。
 
-## 容量矩阵
+## 执行边界
 
-- 设备不可用或受限：不立即发送。
-- 日程过载：不立即发送。
-- 私人内容且环境不私密：不立即发送。
-- 普通忙碌状态只允许承诺或实际安排突破。
-- 普通联系受 `minimumProactiveIntervalMinutes` 限制；承诺可绕过。
-- `strict` 模式使用运行时或 Urge 的有效主动联系意愿阈值；`natural`/`balanced` 模式使用 `agency.naturalWillingnessThreshold`。设备、隐私、日程容量、白名单和每日上限仍独立生效。
+统一策略位于 `deliveryPolicy`：
 
-## 延后重查
+- `proactivePerTargetDailyCap`：每目标滚动 24 小时逻辑主动动作上限。
+- `minimumRunIntervalMinutes`：逻辑主动动作的最短运行间隔。
+- `deferralValidityMinutes`：明确延期动作的有效期限。
 
-`recheck-later` 复用 `interlude_intent` 创建 `proactive-check`，只保存 motive、来源和约束，不保存预写消息。到期后单独成批处理，重新读取当前生活和 Agency Window：
+总开关、白名单、端点健康、端点发起资格、设备和真实平台能力在各自边界执行。额度从投递账本派生，稳定的脚本事件身份贯穿重启、回执、人工核实和取消。
 
-- `send-now`：当前参与者使用 `interaction.reply.immediate`。
-- `recheck-later`：创建新的未来检查。
-- `let-go` 或候选过期：不发送并结束。
+## 历史兼容
 
-同一 `participantId + origin + sourceEntryIds` 的 pending 候选会去重。
+旧配置中的 `contactMode`、`naturalWillingnessThreshold`、`naturalMinimumIntervalMinutes`、`proactiveDailyCap` 继续作为迁移依据；统一运行链使用 `deliveryPolicy`。旧 `proactive-check` 任务通过 `interlude.policy.migrate` 预览、确认并迁移为 `contact-plan` 或终结。历史 `proactiveContactLog` 继续由故事状态解码器读取，新的额度计算使用投递账本。
+
+旧的 Agency 容量函数、候选指纹、专用重查排期和发送前 shadow 复核已经退出生产链，因此运行过程只保留一套策略结果和一套动作账本。
 
 ## 与其它系统的边界
 
-- Alter：只影响剧情氛围和表达，不参与联系容量。
-- Memory/Overlay：提供已发生事实和稳定变化，不直接触发发送。
-- Active consequence / promise：可以成为生活来源，但最终仍通过 Agency 判断。
-- 原始私聊：后台不重新加入原始对话；仅提供受控的参与者姓名、资料和关系摘要。
-
-## 现有主动联系失效原因
-
-0.1.2 虽然可以开启主动消息，但后台 participant payload 实际只包含 opaque ID、未读数和时间戳；名称、资料和关系没有进入请求。advance 同时移除了原始私聊，又要求具体理由和较高 willingness，因此模型几乎没有足够信息生成合法 crossConversationAction。
-
-0.1.3-beta1 修正了参与者摘要，并使用 Agency Window 提供完整的产生、延后和重新裁决路径。
-
-## 联系温度（contactMode，随 rc24 后版本加入）
-
-`agency.contactMode` 三档，默认 `strict`（与既有行为完全一致）：
-
-- **strict**：现状——沉默本身不是理由，动机须落在她的生活事实上。
-- **natural**：提示词追加教义——想念、好奇近况、想分享此刻也是合法动机（须剧本显示她真的想到对方；`participants[].lastUserMessageAt` 的沉默时长作为事实已在载荷中）；意愿阈值降为 `naturalWillingnessThreshold`（默认 0.25），安全间隔取 `naturalMinimumIntervalMinutes`（默认 30，仅当小于严格间隔时生效）。
-- **balanced**：教义同 natural，但要求节制使用情感动机，多数联系仍跟随具体生活理由。
-
-三模式共有的保护：容量硬门（设备/隐私/负荷）不放宽——想聊天也需要手机和隐私；Urge 爆发间隔优先于模式放宽；**每参与者每 24 小时主动联系上限 `proactiveDailyCap`（默认 3，0=不限）全模式生效**，计数来自 `story.state.proactiveContactLog`（最近 20 条审计窗，不进模型上下文）。rc51 起计数为**送达语义**：放行时预记条目携带投递关联 `ref`，投递终态失败按 `ref` 作废——被端点拦截或传输失败的发送不再消耗配额；可恢复（pending）失败不作废。触顶时不排重查，交由下一次推进自然判断。
-
-另有两项 rc51 行为注记：其一，端点门控判定离线前会按账号键回查 `ctx.bots` 实况，适配器生命周期事件丢失（如 `getLogin` 失败但连接仍收发）不再造成"直到下一条入站消息"的拦截窗，且每轮后台 sweep 重同步连接状态；其二，出站失败的 5 分钟端点冷却不再拦截用户触发（`userInitiated`）的回复——冷却的防轰炸语义只针对后台与主动重试路径。
-
-
+- Urge 负责生活推进节奏，提供 `slow/normal`、建议间隔和原文依据；它不生成独立消息，也不决定联系许可。
+- Alter 负责氛围偏移，不参与投递资格。
+- Memory、Overlay、Active Consequence 和日程预排提供已经建立的事实与压力材料，不直接制造发送事件。
+- Console 概览显示出站限制与当前行动条件；通信动作页显示原文、计划、分段状态和人工核实入口。

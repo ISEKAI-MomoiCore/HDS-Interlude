@@ -19,7 +19,7 @@ test('service persists and restores typ-0 correlation for a background split del
   service.serial = async (_storyId: string, task: () => Promise<unknown>) => task()
   service.getStory = async (_storyId: string) => story
   service.getParticipant = async (_participantId: string) => participant
-  service.scheduleNextSplitWake = async (_storyId: string) => undefined
+  service.scheduleNextPendingWake = async (_storyId: string) => undefined
   service.sendOutgoingMessages = async (_story: unknown, messages: any[]) => {
     delivered.push(...messages)
     return messages

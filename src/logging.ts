@@ -17,6 +17,32 @@ export interface LayeredLogInput {
   colorTheme?: InterludeLogColorTheme
   kaomoji?: boolean
   standalone?: boolean
+  /** P4（§13.1）：显式动作分类优先于中文正则识别。 */
+  action?: InterludeLogAction
+  /** P4（§13.1）：新链通信事件的结构化载荷；字段随文本一起渲染，
+   * 旧消息继续走正则分类，两者兼容。 */
+  communication?: CommunicationEventLog
+}
+
+/** P4（§13.1 设计草图）：统一动作链路的结构化事件信封。具体字段按事件
+ * 类型可选；文本渲染与 Console/桌面展示共用同一对象。 */
+export interface CommunicationEventLog {
+  type: 'action-authored' | 'action-policy' | 'delivery-result'
+      | 'contact-plan-updated' | 'migration-summary'
+  storyId: string
+  commitId?: string
+  eventId?: string
+  segmentIndex?: number
+  intentId?: number
+  traceId?: string
+  processingId?: string
+  targetId?: string
+  endpointId?: string
+  domain: 'authoring' | 'policy' | 'transport' | 'integrity' | 'migration'
+  reasonCode: string
+  status: string
+  policyRevision?: string
+  elapsedMs?: number
 }
 
 const KAOMOJI: Record<InterludeLogAction, string> = {
@@ -120,8 +146,9 @@ export function detectLogAction(message: string, level: InterludeLogLevel): Inte
 
 export function formatLayeredLog(input: LayeredLogInput) {
   const text = renderLogMessage(input.message, input.args)
-  const action = detectLogAction(text, input.level)
-  const details = extractFields(text)
+  const action = input.action ?? detectLogAction(text, input.level)
+  const communicationFields = communicationLogFields(input.communication)
+  const details = { ...extractFields(text), fields: [...extractFields(text).fields, ...communicationFields] }
   const summary = details.summary || text
   const root = isRootLog(summary, action, input.level, input.standalone === true)
   const branch = root ? '' : isFinalBranch(summary, action) ? '└─' : '├─'
@@ -148,6 +175,18 @@ export function phaseLabel(phase?: NarrativePhase) {
     advance: '自动推进',
     'intent-due': '到期意图',
   } as Record<NarrativePhase, string>)[phase]
+}
+
+/** 结构化载荷中值得进入文本渲染的字段（§13.2：策略修订与动作身份供诊断，
+ * 其余经事件对象供 Console/桌面消费）。 */
+function communicationLogFields(communication: CommunicationEventLog | undefined) {
+  if (!communication) return [] as Array<{ label: string, value: string }>
+  const fields: Array<{ label: string, value: string }> = []
+  if (communication.commitId) fields.push({ label: '委托', value: communication.commitId })
+  if (communication.eventId) fields.push({ label: '事件', value: communication.eventId })
+  if (communication.intentId !== undefined) fields.push({ label: '计划', value: String(communication.intentId) })
+  if (communication.policyRevision) fields.push({ label: '策略版本', value: communication.policyRevision })
+  return fields
 }
 
 function logCategory(action: InterludeLogAction, phase?: NarrativePhase, standalone = false, message = '') {

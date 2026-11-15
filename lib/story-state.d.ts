@@ -3,7 +3,7 @@ import { AutomaticDeliverySummary, ContinuitySnapshot, ScenePresenceState, Story
  * Version 1 is the first state envelope that is decoded and encoded in one
  * place. Older beta10 rows have no version and are upgraded on read.
  */
-export declare const CURRENT_STORY_STATE_VERSION = 4;
+export declare const CURRENT_STORY_STATE_VERSION = 5;
 export interface StoryStateMigrationInspection {
     sourceVersion: number;
     targetVersion: number;
@@ -30,14 +30,21 @@ export declare function normalizeWorkingDetails(value: unknown): WorkingDetail[]
 /** 主动联系审计窗：每参与者每日上限的计数来源（最近 20 条；不进模型上下文）。 */
 export declare function normalizeProactiveContactLog(value: unknown): NonNullable<StoryState['proactiveContactLog']>;
 /** 作废条目不再计入每日上限：一次被端点/传输拦下的主动联系不该烧掉配额。 */
-export declare function countProactiveContactsInWindow(log: StoryState['proactiveContactLog'] | undefined, participantId: string, now: Date, windowMs?: number): number;
-export declare function appendProactiveContact(log: StoryState['proactiveContactLog'] | undefined, participantId: string, at: Date, endpointId?: string, ref?: string): NonNullable<StoryState['proactiveContactLog']>;
-export declare function normalizeLifeStatus(value: unknown): StoryState['lifeStatus'];
+/** 旧三值 lifeStatus 的归一化（7.1.4 后仅服务加载迁移读取）。 */
+export declare function normalizeLifeStatus(value: unknown): {
+    status: 'busy' | 'asleep' | 'idle';
+    updatedAt: string;
+} | undefined;
 /** 五档节奏归一化：合法档位+有效时间戳+合法来源才保留。 */
 export declare function normalizeLifeRhythm(value: unknown): StoryState['lifeRhythm'];
-/** 节奏过期判定（>2h 无更新视为 stale，退回 restWindows 兜底）。 */
+/** 节奏过期判定（>2h 无更新视为 stale，退回 restWindows 兜底）。
+ * 7.1.4：该窗口是生活节奏唯一时效口径——Urge 与群聊意愿 auto 档共用。 */
+export declare const LIFE_RHYTHM_STALE_MS: number;
 export declare function lifeRhythmStale(rhythm: StoryState['lifeRhythm'] | undefined, now?: number): boolean;
-/** 旧三值 lifeStatus → 五档映射（读侧兼容：升级前的存量状态在首次读取时转换）。 */
-export declare function lifeRhythmFromLegacyStatus(status: StoryState['lifeStatus'] | undefined): StoryState['lifeRhythm'] | undefined;
+/** 旧三值 lifeStatus → 五档映射（迁移读取：升级前的存量状态在加载时转换并入）。 */
+export declare function lifeRhythmFromLegacyStatus(status: {
+    status: 'busy' | 'asleep' | 'idle';
+    updatedAt: string;
+} | undefined): StoryState['lifeRhythm'] | undefined;
 export declare function normalizeTimelineCarry(value: unknown): string[];
 export declare function normalizeContinuitySnapshot(value: unknown): ContinuitySnapshot | undefined;

@@ -1,5 +1,7 @@
 # QQ 合并转发阅读设计（1.0.1-rc6）
 
+> **实施状态（2026-10-28 标注）**：本文写作时（rc6）合并转发**尚未读取**；该能力现已实施——`src/forward-message.ts` 的 `readForwardContent` 经 OneBot `get_forward_msg` 读取节点正文（预算控制 + 来源标注 + 图片可加载引用收集）。正文保留作当时的设计依据，"目前不会读取"等现状描述以本文写作时点为准。
+
 本文针对 QQ OneBot/NapCat 发送的“合并转发”（forward message），说明当前实现为何只能看到卡片、SnowLuma 提供了什么能力，以及 HDSI 后续应如何接入。本文是实现设计，不包含运行时代码改动。
 
 ## 结论

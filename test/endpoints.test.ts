@@ -334,20 +334,12 @@ test('M3: resolveMostActiveEndpointId 选最近在线端点，无在线取首个
   assert.equal((proto as any).resolveMostActiveEndpointId.call(svc, 'p999'), undefined)
 })
 
-test('M3: appendProactiveContact 携带 endpointId 并保留审计窗口', async () => {
-  const { appendProactiveContact } = await import('../src/story-state')
-  const now = new Date()
-  const log1 = appendProactiveContact(undefined, 'p1', now, 'ep-qq')
-  assert.equal(log1.length, 1)
-  assert.equal(log1[0].endpointId, 'ep-qq')
-  const log2 = appendProactiveContact(log1, 'p2', now)  // 无 endpointId
-  assert.equal(log2.length, 2)
-  assert.equal(log2[1].endpointId, undefined, '无端点时不落键')
-  // 滚动窗口 20 条
-  let log = log2
-  for (let i = 0; i < 25; i++) log = appendProactiveContact(log, 'px', now, 'ep-x')
-  assert.equal(log.length, 20)
-  assert.equal(log[0].participantId, 'px', '窗口滚动丢弃最旧')
+test('M3: normalizeProactiveContactLog 保留审计窗口且历史行可读（P5 后为只读历史）', async () => {
+  const { normalizeProactiveContactLog } = await import('../src/story-state')
+  const at = new Date().toISOString()
+  const rows = normalizeProactiveContactLog(Array.from({ length: 25 }, (_, i) => ({ participantId: 'px', at, endpointId: 'ep-x', ref: `ref-${i}` })))
+  assert.equal(rows.length, 20)
+  assert.equal(rows[0].ref, 'ref-5', '窗口滚动丢弃最旧')
 })
 
 // ── M4 验收（§十：确定性标注 + CHANNELS 规则行）────────────────────────────

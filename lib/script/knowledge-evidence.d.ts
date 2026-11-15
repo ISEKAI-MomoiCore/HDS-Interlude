@@ -23,6 +23,8 @@ export declare function knowledgeClauses(knowledge: KnowledgeEvidence | undefine
 }[];
 export declare function knowledgeRelatedIds(knowledge: KnowledgeEvidence | undefined): number[];
 export declare function factEvidenceForPrompt(fact: NarrativeFact): {
+    knowledge: KnowledgeEvidence;
+    sourceChannel?: "group" | "private" | "mixed";
     id: number;
     scope: "character" | "world" | "relationship" | "event" | "promise";
     content: string;
@@ -30,7 +32,6 @@ export declare function factEvidenceForPrompt(fact: NarrativeFact): {
     status: "active" | "superseded";
     sourceEntryIds: number[];
     authority: string;
-    knowledge: KnowledgeEvidence;
 };
 export declare function supportsRecordedOutcome(knowledge: KnowledgeEvidence): boolean;
 /** Navigation only for pre-evidence records. Literal condition wording earns
@@ -52,4 +53,4 @@ export interface ContactEvidenceThread {
  * but their original source entries still obey the caller's privacy boundary;
  * a hidden source is represented as missing rather than reconstructed. */
 export declare function contactEvidenceThreads(facts: NarrativeFact[], entries: ScriptEntry[]): ContactEvidenceThread[];
-export declare const KNOWLEDGE_WRITING_FRAME = "EVIDENCE AND EXPECTATION: the original remains the life script. Her belief, wish and imagined explanation belong to her perspective; an observed action belongs to its actor. Derived records retain these roles and conditions. contactThreads supplies original proposals, conditions and replies, not a second plot: unfinished contact may motivate another question or private anticipation while confirmation and timing stay open. Elapsed silence can change her feelings without changing what the other person promised; platform delivery alone establishes neither reading nor agreement.";
+export declare const KNOWLEDGE_WRITING_FRAME = "EVIDENCE AND EXPECTATION: the original remains the life script. Her belief, wish and imagined explanation belong to her perspective; an observed action belongs to its actor. Derived records retain these roles and conditions. contactThreads supplies original proposals, conditions and replies, not a second plot: unfinished contact may motivate another question or private anticipation while confirmation and timing stay open. Elapsed silence can change her feelings without changing what the other person promised; platform delivery alone establishes neither reading nor agreement. Facts carry a sourceChannel when the channel matters: group means she heard or saw it in a group chat \u2014 an overheard thing she may retell as something picked up in the group, never her own direct experience; private means it was established in a private exchange with that person; absent means her own lived experience. Hearsay from a group stays hearsay unless later evidence in her own life confirms it.";

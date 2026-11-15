@@ -1,8 +1,11 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import {
   sanitizeSharePayload, normalizeShareCode, diffSection, buildConfigPatch,
-  storyDefaultsToSettingPatch, SHARE_SECTIONS,
+  storyDefaultsToSettingPatch, SHARE_SECTIONS, runAutoSync, readSyncState, writeSyncState,
 } from '../src/share-sync'
 
 describe('share-sync 分享码同步', () => {
@@ -96,5 +99,75 @@ describe('share-sync 分享码同步', () => {
     assert.ok(SHARE_SECTIONS.includes('weather'), 'weather 与站点白名单对齐（审计 C1）')
     assert.ok(!SHARE_SECTIONS.includes('model' as any))
     assert.ok(!SHARE_SECTIONS.includes('onebot' as any))
+  })
+})
+
+describe('runAutoSync 码变更闸（替代旧 autoUpdate）', () => {
+  const REMOTE = { code: '1PD21Q04', slug: 's', title: '远端预设', type: 'character', nsfw: false, author: { id: 1, name: '作者' }, hdsi_version: '1.0.1-rc59', revision: 5, sections: ['runtime'], payload: { runtime: { contextEntryLimit: 12 } } }
+
+  function harness(configCode: string, enabled = true) {
+    const baseDir = mkdtempSync(join(tmpdir(), 'hdsi-sync-'))
+    let httpCalls = 0
+    const updates: unknown[] = []
+    const ctx: any = {
+      baseDir,
+      logger: () => ({ info() {}, warn() {} }),
+      http: { get: async () => { httpCalls++; return REMOTE } },
+      scope: { update: (patch: unknown) => { updates.push(patch) } },
+    }
+    const service: any = { config: { presetSync: { enabled, baseUrl: 'https://typ0.space', shareCode: configCode, sections: [], applyToCurrentStory: false }, runtime: { contextEntryLimit: 18 } } }
+    return { ctx, service, baseDir, httpCalls: () => httpCalls, updates }
+  }
+
+  it('分享码未变化：跳过且零网络请求（不再每次重载都拉远端比对 revision）', async () => {
+    const { ctx, service, baseDir, httpCalls, updates } = harness('1pd2-1q04')
+    await writeSyncState(baseDir, { code: '1PD21Q04', revision: 5, title: '远端预设', appliedAt: new Date().toISOString() })
+    const result = await runAutoSync(ctx, service)
+    assert.equal(result?.applied, false)
+    assert.match(result!.reason, /分享码未变化/)
+    assert.equal(httpCalls(), 0, '码未变化不得发任何网络请求')
+    assert.equal(updates.length, 0)
+    rmSync(baseDir, { recursive: true, force: true })
+  })
+
+  it('首次填写（无持久化状态）：拉取并应用，状态落盘', async () => {
+    const { ctx, service, baseDir, httpCalls, updates } = harness('1PD21Q04')
+    const result = await runAutoSync(ctx, service)
+    assert.equal(result?.applied, true)
+    assert.equal(httpCalls(), 1)
+    assert.equal((updates[0] as any).runtime.contextEntryLimit, 12, 'runtime 整段替换')
+    const state = await readSyncState(baseDir)
+    assert.equal(state?.code, '1PD21Q04')
+    assert.equal(state?.revision, 5)
+    rmSync(baseDir, { recursive: true, force: true })
+  })
+
+  it('更换人设码：重新拉取并应用，状态更新为新码', async () => {
+    const { ctx, service, baseDir, httpCalls, updates } = harness('1PD21Q04')
+    await writeSyncState(baseDir, { code: 'AAAAAAAA', revision: 2, title: '旧预设', appliedAt: new Date().toISOString() })
+    const result = await runAutoSync(ctx, service)
+    assert.equal(result?.applied, true)
+    assert.equal(httpCalls(), 1)
+    assert.equal((updates[0] as any).runtime.contextEntryLimit, 12)
+    assert.equal((await readSyncState(baseDir))?.code, '1PD21Q04')
+    rmSync(baseDir, { recursive: true, force: true })
+  })
+
+  it('手动 force：码未变也强制重新应用（清库/配置漂移后的恢复手段）', async () => {
+    const { ctx, service, baseDir, httpCalls, updates } = harness('1PD21Q04')
+    await writeSyncState(baseDir, { code: '1PD21Q04', revision: 5, title: '远端预设', appliedAt: new Date().toISOString() })
+    const result = await runAutoSync(ctx, service, { force: true })
+    assert.equal(result?.applied, true)
+    assert.equal(httpCalls(), 1, 'force 绕过码变更闸')
+    assert.equal(updates.length, 1)
+    rmSync(baseDir, { recursive: true, force: true })
+  })
+
+  it('未启用或未填码：直接返回 null', async () => {
+    const disabled = harness('1PD21Q04', false)
+    assert.equal(await runAutoSync(disabled.ctx, disabled.service), null)
+    const noCode = harness('   ')
+    assert.equal(await runAutoSync(noCode.ctx, noCode.service), null)
+    for (const h of [disabled, noCode]) rmSync(h.baseDir, { recursive: true, force: true })
   })
 })

@@ -1,4 +1,7 @@
 import { calendarDayKey, localClockMinutes, storyLocalTimeContext } from './time'
+
+/** P5：自 service.ts 迁入（2026-10-29），行为不变。 */
+export const SCHEDULE_PREPLAN_RETRY_BACKOFF = 2 * 60 * 60 * 1000
 import {
   SchedulePreplanBlock, SchedulePreplanBlockKind, SchedulePreplanDay, SchedulePreplanException,
   SchedulePreplanProposal, SchedulePreplanRecord, SchedulePreplanRegime, SchedulePreplanWeekday,

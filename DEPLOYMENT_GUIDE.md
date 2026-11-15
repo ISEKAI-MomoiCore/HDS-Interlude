@@ -1,6 +1,6 @@
 # HDS Interlude 部署教程
 
-适用版本：`1.0.1-rc58`
+适用版本：`1.0.1-rc60`
 
 当前文档已同步至 2026-10-17 的 rc57，累计变更以 rc56 发布包为基线。已完成源码构建、类型检查、回归测试与 rc57 安装包打包；发布包与校验信息见发行记录。旧安装包不会自动获得这些修改，运行实例须安装并重载后才生效。
 
@@ -49,7 +49,7 @@ Koishi 第一次启动会准备运行环境，耐心等待即可。
 
 ```powershell
 cd C:\Users\你的用户名\AppData\Roaming\Koishi\Desktop\data\instances\default
-node .yarn/releases/yarn-4.5.3.cjs add "koishi-plugin-hds-interlude@file:C:/路径/koishi-plugin-hds-interlude-1.0.1-rc58.tgz" --exact
+node .yarn/releases/yarn-4.5.3.cjs add "koishi-plugin-hds-interlude@file:C:/路径/koishi-plugin-hds-interlude-1.0.1-rc60.tgz" --exact
 ```
 
 安装完成后回到 Koishi Console，添加或启用 `hds-interlude`。
@@ -182,7 +182,7 @@ interlude.story.start
 
 1. 自动推进与对话后续；
 2. Alter System；
-3. Agency Window 与主动联系；
+3. Agency Window 场景条件（兼容期）与统一投递策略/主动联系；
 4. Embedding、网页观察、群聊与视觉能力；
 5. 最后才考虑失明模式。
 
