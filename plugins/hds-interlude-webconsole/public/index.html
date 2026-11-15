@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>HDSI · 本地观测站</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 64 64%27%3E%3Crect width=%2764%27 height=%2764%27 fill=%27%232563eb%27/%3E%3Ctext x=%2714%27 y=%2747%27 fill=%27white%27 font-size=%2744%27 font-family=%27sans-serif%27%3EH%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div class="layout">
+  <aside class="sidebar">
+    <div class="brand"><div class="brand-row"><h1><span>HDSI</span><span>本地观测站</span></h1><button class="theme-toggle" id="theme-toggle" aria-label="切换浅色 / 暖纸深色主题" aria-pressed="false" title="切换主题">◐</button></div><small>WEBCONSOLE · READ ONLY</small></div>
+    <div class="story-control"><label for="story-select">当前故事</label><select id="story-select"><option value="">加载中…</option></select></div>
+    <nav class="steps" aria-label="观测页面">
+      <button class="step-nav" data-nav="overview"><span class="num">01</span><span class="title">故事总览</span></button>
+      <button class="step-nav" data-nav="script"><span class="num">02</span><span class="title">剧本流</span></button>
+      <button class="step-nav" data-nav="scenes"><span class="num">03</span><span class="title">场景与弧线</span></button>
+      <button class="step-nav" data-nav="alter"><span class="num">04</span><span class="title">Alter 历史</span></button>
+      <button class="step-nav" data-nav="overlay"><span class="num">05</span><span class="title">Overlay 演化</span></button>
+      <button class="step-nav" data-nav="preplan"><span class="num">06</span><span class="title">Preplan 周日历</span></button>
+      <button class="step-nav" data-nav="facts"><span class="num">07</span><span class="title">事实与意图</span></button>
+      <button class="step-nav" data-nav="participants"><span class="num">08</span><span class="title">参与者</span></button>
+      <button class="step-nav" data-nav="logs"><span class="num">09</span><span class="title">进程日志</span></button>
+    </nav>
+    <div class="side-foot">
+      <details class="access"><summary>本地访问令牌</summary><label for="access-token">API token（仅此标签页会话）</label><input type="password" id="access-token" autocomplete="off" placeholder="未配置则留空"><button class="btn" id="apply-token">连接 / 重新读取故事</button></details>
+      <p id="connection-error" role="alert"></p>
+      <div class="side-sec"><b>数据口径</b><br>SQLite 只读快照，不修改配置。<br>计划 ≠ 事实 · 指导 ≠ 设定<br>请勿通过隧道暴露公网。</div>
+      <p id="integration-status" class="muted"></p><div class="live-status"><span id="live-dot" class="live-dot"></span><span id="live-text" aria-live="polite">连接中…</span></div>
+    </div>
+  </aside>
+  <main class="main"><div class="foliage" aria-hidden="true"><div class="geo geo-near"></div><div class="geo geo-far"></div></div><div class="main-tools"><span id="timezone" class="muted" aria-live="polite">时间：浏览器本地时区</span><label><input type="checkbox" id="auto-refresh" checked> 自动更新</label><span id="updated-at" class="muted" aria-live="polite"></span><span id="changed" hidden>数据有更新，点击刷新读取新快照</span><button class="btn small" id="refresh">刷新快照 ↻</button></div><div id="view" class="view visible"></div></main>
+</div>
+<script type="module" src="/app.js"></script>
+</body>
+</html>
+
+
+

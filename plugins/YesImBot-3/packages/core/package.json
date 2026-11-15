@@ -1,0 +1,106 @@
+{
+  "name": "koishi-plugin-yesimbot",
+  "description": "Yes! I'm Bot! 机械壳，人类心",
+  "version": "3.0.4",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "homepage": "https://github.com/YesWeAreBot/YesImBot",
+  "files": [
+    "dist",
+    "lib",
+    "resources",
+    "src"
+  ],
+  "contributors": [
+    "HydroGest <2445691453@qq.com>",
+    "Dispure <3116716016@qq.com>",
+    "Miaowfish <1293865264@qq.com>",
+    "Touch-Night <1762918301@qq.com>"
+  ],
+  "engines": {
+    "node": ">=18.17.0"
+  },
+  "scripts": {
+    "build": "tsc -b && pkgroll --clean-dist --srcdist src:lib --sourcemap",
+    "clean": "rm -rf lib .turbo tsconfig.tsbuildinfo",
+    "lint": "eslint",
+    "lint:fix": "eslint --fix"
+  },
+  "license": "MIT",
+  "keywords": [
+    "chatbot",
+    "koishi",
+    "plugin",
+    "yesimbot",
+    "athena",
+    "ai"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/YesWeAreBot/YesImBot.git",
+    "directory": "packages/core"
+  },
+  "bugs": {
+    "url": "https://github.com/YesWeAreBot/YesImBot/issues"
+  },
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "require": "./lib/index.js"
+    },
+    "./package.json": "./package.json",
+    "./services": {
+      "types": "./lib/services/index.d.ts",
+      "require": "./lib/services/index.js"
+    },
+    "./services/model": {
+      "types": "./lib/services/model/index.d.ts",
+      "require": "./lib/services/model/index.js"
+    },
+    "./services/plugin": {
+      "types": "./lib/services/plugin/index.d.ts",
+      "require": "./lib/services/plugin/index.js"
+    },
+    "./services/horizon": {
+      "types": "./lib/services/horizon/index.d.ts",
+      "require": "./lib/services/horizon/index.js"
+    },
+    "./shared": {
+      "types": "./lib/shared/index.d.ts",
+      "require": "./lib/shared/index.js"
+    }
+  },
+  "dependencies": {
+    "@yesimbot/shared-model": "^0.0.1",
+    "gifwrap": "^0.10.1",
+    "gray-matter": "^4.0.3",
+    "jimp": "^1.6.0",
+    "jsonrepair": "^3.12.0",
+    "mustache": "^4.2.0",
+    "uuid": "^11.1.0"
+  },
+  "devDependencies": {
+    "@types/json-schema": "^7.0.15",
+    "@types/mustache": "^4.2.6",
+    "@xsai/shared-chat": "^0.4.4",
+    "koishi": "^4.18.7",
+    "koishi-plugin-adapter-onebot": "^6.8.0"
+  },
+  "peerDependencies": {
+    "koishi": "^4.18.7"
+  },
+  "koishi": {
+    "description": {
+      "zh": "让语言大模型机器人假装群友并和群友聊天！",
+      "en": "A Koishi plugin that allows LLM chat in your guild."
+    },
+    "service": {
+      "required": [
+        "database"
+      ],
+      "implements": [
+        "yesimbot"
+      ]
+    }
+  }
+}

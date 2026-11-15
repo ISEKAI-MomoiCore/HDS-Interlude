@@ -1,0 +1,56 @@
+/* Scope every override to HDSI; the Koishi shell owns viewport offsets. */
+.layout-container .layout-main.hdsi-layout { overflow-y: auto; overflow-x: hidden; scrollbar-gutter: stable; }
+.hdsi-host-title { display: inline-flex; gap: 12px; align-items: baseline; font-weight: 650; }
+.hdsi-host-title small { font-size: 12px; font-weight: 400; color: var(--k-text-light); }
+.hdsi-layout .hdsi-shell { --hdsi-accent: var(--k-color-primary, #3b82f6); color: var(--k-text-active, inherit); line-height: 1.6; }
+.hdsi-layout .hdsi-shell *, .hdsi-layout .hdsi-shell *::before, .hdsi-layout .hdsi-shell *::after { box-sizing: border-box; }
+.hdsi-layout .hdsi-shell .pg-head { gap: 16px; flex-wrap: wrap; margin-bottom: 20px; }
+.hdsi-layout .hdsi-shell .pg-head h2 { margin: 0 0 6px; font-size: 22px; line-height: 1.4; }
+.hdsi-layout .hdsi-shell .sub { opacity: .8; line-height: 1.7; padding-left: 0; }
+.hdsi-layout .hdsi-shell .card { background: var(--k-card-bg, rgba(128,128,128,.05)); border: 1px solid var(--k-color-divider, rgba(128,128,128,.2)); border-radius: 10px; padding: 20px; min-width: 0; }
+.hdsi-layout .hdsi-shell .card h3 { opacity: .85; font-size: 13px; margin-top: 0; letter-spacing: .4px; text-transform: none; }
+.hdsi-layout .hdsi-shell .grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 330px), 1fr)); gap: 18px; align-items: start; }
+.hdsi-layout .hdsi-shell .notice { border-radius: 7px; overflow-wrap: anywhere; line-height: 1.7; }
+.hdsi-layout .hdsi-shell button { font-family: inherit; border-radius: 6px; min-height: 32px; }
+.hdsi-layout .hdsi-shell button:focus-visible, .hdsi-layout .hdsi-shell a:focus-visible { outline: 2px solid var(--hdsi-accent); outline-offset: 3px; }
+.hdsi-layout .hdsi-shell .glyph { display: block; flex: 0 0 16px; width: 16px; height: 16px; }
+.hdsi-layout .hdsi-shell .tabs { gap: 4px; }
+.hdsi-layout .hdsi-shell .tab { min-height: 38px; font-size: 13px; }
+.hdsi-layout .hdsi-shell .hint { opacity: .8; line-height: 1.7; }
+.hdsi-layout .hdsi-shell .quote { overflow-wrap: anywhere; white-space: pre-wrap; }
+.hdsi-layout .hdsi-shell .ops { flex-wrap: wrap; }
+.hdsi-layout .hdsi-shell .k-schema-item { min-width: 0; }
+.hdsi-layout .hdsi-shell .k-schema-header { font-size: 16px; line-height: 1.6; white-space: normal; overflow-wrap: anywhere; }
+.hdsi-layout .hdsi-shell .k-schema-item .prefix { overflow-wrap: anywhere; }
+.hdsi-layout .hdsi-shell .k-schema-item .k-schema-desc { line-height: 1.7; }
+@media (max-width: 900px) {
+  .hdsi-layout .hdsi-shell { padding: 18px !important; }
+  .hdsi-layout .hdsi-shell .topbar { gap: 12px; }
+  .hdsi-layout .hdsi-shell .row-main { grid-template-columns: 76px minmax(70px, 1fr) minmax(90px, 1fr); gap: 8px; }
+  .hdsi-layout .hdsi-shell .row-main .head { grid-row: 2; grid-column: 1 / -1; white-space: normal; }
+  .hdsi-layout .hdsi-shell .row-main .time { grid-column: 1 / -1; text-align: left; }
+}
+@media (max-width: 540px) {
+  .hdsi-layout .hdsi-shell { padding: 12px !important; }
+  .hdsi-layout .hdsi-shell .card { padding: 16px; }
+  .hdsi-layout .hdsi-shell .tab { padding: 6px 8px; }
+  .hdsi-layout .hdsi-shell .brand { display: none; }
+}
+
+.hdsi-layout .hdsi-shell .pg-head h2 { color: var(--k-text-active); }
+.hdsi-layout .hdsi-shell .field-label { font-size: 13px; opacity: .9; text-transform: none; }
+.hdsi-layout .hdsi-shell .field { margin-bottom: 18px; }
+.hdsi-layout .hdsi-shell .input { border-radius: 6px; padding: 9px 12px; }
+.hdsi-layout .hdsi-shell .input.area { min-height: 100px; font-family: inherit; line-height: 1.7; }
+.hdsi-layout .hdsi-shell .toggle { min-height: 24px; height: 24px; border-radius: 12px; }
+.hdsi-layout .hdsi-shell .toggle-dot { top: 4px; border-radius: 50%; }
+.hdsi-layout .hdsi-shell .k-schema-table { max-width: 100%; overflow-x: auto; }
+.hdsi-layout .hdsi-shell .snapshot-actions { margin-top: -4px; }
+.hdsi-layout .hdsi-shell .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+@media (max-width: 850px) { .hdsi-layout .hdsi-shell .grid { grid-template-columns: minmax(0, 1fr); } }
+
+.hdsi-layout .hdsi-shell .k-schema-table-container { max-width: 100%; overflow-x: auto; }
+
+.hdsi-layout .hdsi-shell .save { background: var(--k-color-primary, #6754cf); border-color: var(--k-color-primary, #6754cf); color: #fff; }
+.hdsi-layout .hdsi-shell .save:hover:not(:disabled) { filter: brightness(1.08); background: var(--k-color-primary, #6754cf); }
+.hdsi-layout .hdsi-shell .item.on { border-left-color: var(--k-color-primary, #6754cf); }

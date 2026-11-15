@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HDSI Console 预览</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg:#f7f8fa; --sheet:#f7f8fa; --ink:#111827; --muted:#6b7280; --line:#e5e7eb;
+  --accent:#2563eb; --green:#14b8a6; --paper-2:#f3f4f6;
+  --code-bg:#111827; --code-text:#e5e7eb;
+  --info-bg:#eff6ff; --info-tx:#1d4ed8;
+  --warn-bg:#fffbeb; --warn-tx:#b45309;
+  --side-bg:#1f2937; --side-tx:#f9fafb; --side-muted:#9ca3af; --side-accent:#3b82f6;
+  --sel-bg:#2563eb; --sel-tx:#ffffff; --card:#ffffff;
+  --sun:-14px 17px 32px -16px rgba(15,23,42,.16);
+  --sun-sm:-6px 7px 16px -8px rgba(15,23,42,.08);
+  --edge:rgba(255,255,255,.9);
+  font-size:14px;
+}
+html[data-theme="dark"] {
+  --bg:#131110; --sheet:#1d1a15; --ink:#ece6d8; --muted:#9c9078; --line:#3b3527;
+  --accent:#ff5c33; --green:#7ba184; --paper-2:#272219; --code-bg:#12100c; --code-text:#e6ddc9;
+  --info-bg:#272a1a; --info-tx:#b9c48e; --warn-bg:#342a12; --warn-tx:#dfc084;
+  --side-bg:#0f0d0a; --side-tx:#f0eadd; --side-muted:#9a8f7a; --side-accent:#ff8a58;
+  --sel-bg:#ff5c33; --sel-tx:#1d1a15; --card:#272219;
+  --sun:-14px 17px 32px -16px rgba(0,0,0,.55);
+  --sun-sm:-6px 7px 16px -8px rgba(0,0,0,.35);
+  --edge:rgba(255,215,170,.05);
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family:'Outfit',system-ui,sans-serif; background:var(--bg); color:var(--ink); display:flex; min-height:100vh; }
+svg { display:block; }
+.glyph { width:16px; height:16px; fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
+
+/* ─── Koishi Console 外壳（模拟） ─── */
+.kx-shell { display:flex; width:100%; }
+.kx-rail { width:52px; background:#1f2937; display:flex; flex-direction:column; align-items:center; padding:10px 0; gap:4px; flex-shrink:0; }
+html[data-theme="dark"] .kx-rail { background:#0a0908; }
+.kx-rail .kx-logo { margin-bottom:10px; width:26px; height:26px; border:2px solid #34d399; position:relative; }
+.kx-rail .kx-logo::after { content:""; position:absolute; inset:4px; background:#34d399; }
+.kx-rail a { width:34px; height:34px; display:flex; align-items:center; justify-content:center; border-radius:8px; color:#9ca3af; transition:.15s; }
+.kx-rail a:hover { color:#f9fafb; background:rgba(255,255,255,.06); }
+.kx-rail a.on { color:#fff; background:var(--sel-bg); box-shadow:0 0 12px rgba(37,99,235,.4); }
+html[data-theme="dark"] .kx-rail a.on { box-shadow:0 0 12px rgba(255,92,51,.45); }
+.kx-rail .spacer { flex:1; }
+
+/* ─── HDSI 内部侧栏 ─── */
+.sidebar { width:204px; background:var(--side-bg); color:var(--side-tx); padding:18px 0; display:flex; flex-direction:column; flex-shrink:0; }
+.brand { padding:0 16px 14px; border-bottom:1px solid rgba(255,255,255,.07); margin-bottom:10px; display:flex; gap:10px; align-items:center; }
+.brand-mark { width:30px; height:30px; flex-shrink:0; position:relative; }
+.brand-mark::before { content:""; position:absolute; inset:0; border:2px solid var(--side-accent); transform:rotate(45deg); }
+.brand-mark::after { content:""; position:absolute; inset:9px; background:var(--side-accent); transform:rotate(45deg); }
+.brand h1 { font-size:14.5px; letter-spacing:.5px; line-height:1.2; }
+.brand small { color:var(--side-muted); font-size:10.5px; }
+.group { padding:10px 16px 4px; color:var(--side-muted); font-size:10.5px; letter-spacing:1.5px; text-transform:uppercase; }
+.nav-item { display:flex; align-items:center; gap:10px; padding:7.5px 16px; cursor:pointer; color:var(--side-muted); font-size:13.5px; border-left:2.5px solid transparent; transition:.15s; }
+.nav-item:hover { color:var(--side-tx); }
+.nav-item.on { color:var(--side-tx); border-left-color:var(--side-accent); background:rgba(255,255,255,.04); }
+.nav-item.on .glyph { color:var(--side-accent); }
+.nav-item .glyph { width:15px; height:15px; flex-shrink:0; }
+.nav-item .badge { margin-left:auto; font-size:10px; background:var(--sel-bg); color:var(--sel-tx); border-radius:0; padding:1px 7px; letter-spacing:.5px; }
+
+/* ─── 主区 ─── */
+.main { flex:1; padding:22px 26px; overflow-y:auto; max-height:100vh; }
+.pg-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:16px; }
+.pg-head h2 { font-size:19px; font-weight:700; display:flex; align-items:center; gap:10px; }
+.pg-head h2::before { content:""; width:10px; height:10px; background:var(--accent); transform:rotate(45deg); flex-shrink:0; }
+.pg-head .sub { color:var(--muted); font-size:12.5px; margin-top:2px; padding-left:20px; }
+.theme-btn { border:1.5px solid var(--line); background:var(--card); color:var(--ink); padding:5px 13px; border-radius:0; cursor:pointer; font-size:12.5px; font-family:inherit; box-shadow:var(--sun-sm); display:flex; align-items:center; gap:7px; }
+.theme-btn:hover { border-color:var(--accent); color:var(--accent); }
+
+.grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(310px,1fr)); gap:12px; }
+.card { background:var(--card); border:1px solid var(--line); border-radius:0; padding:14px 16px; box-shadow:var(--sun); }
+.card h3 { font-size:11.5px; color:var(--muted); font-weight:700; letter-spacing:1px; text-transform:uppercase; margin-bottom:10px; display:flex; align-items:center; gap:8px; }
+.card h3 .sq { width:8px; height:8px; background:var(--green); flex-shrink:0; transition:transform .25s ease; }
+.card:hover h3 .sq { transform:rotate(45deg) scale(1.15); }
+.card h3 .sq.acc { background:var(--accent); }
+.row { display:flex; justify-content:space-between; align-items:center; padding:4px 0; font-size:13px; }
+.row .k { color:var(--muted); }
+.row .v { font-weight:600; }
+.v.ok { color:var(--green); }
+.v.warn { color:var(--warn-tx); }
+.v.acc { color:var(--accent); }
+
+.bar { height:7px; background:var(--bg); overflow:hidden; margin-top:5px; display:flex; }
+.bar i { height:100%; }
+.tier-tag { display:inline-block; font-size:11px; padding:2px 10px; background:var(--info-bg); color:var(--info-tx); font-weight:600; border-left:2.5px solid var(--info-tx); }
+
+.timeline { display:flex; flex-direction:column; }
+.t-entry { display:grid; grid-template-columns:74px 16px 1fr; gap:0 10px; position:relative; padding-bottom:14px; }
+.t-entry .t { font-size:11px; color:var(--muted); padding-top:2px; text-align:right; font-variant-numeric:tabular-nums; }
+.t-entry .rail { display:flex; flex-direction:column; align-items:center; }
+.t-entry .rail i { width:9px; height:9px; border:2px solid var(--accent); background:var(--card); z-index:1; transform:rotate(45deg); }
+.t-entry .rail::before { content:""; flex:1; width:1.5px; background:var(--line); margin-top:2px; }
+.t-entry:last-child .rail::before { display:none; }
+.t-entry .body b { font-size:12.5px; display:block; margin-bottom:2px; }
+.t-entry .body p { font-size:12px; color:var(--muted); line-height:1.5; }
+.t-entry .kind { font-size:10px; padding:1px 7px; margin-left:6px; vertical-align:1px; border-left:2px solid currentColor; }
+.kind.user { color:var(--info-tx); }
+.kind.char { color:var(--green); }
+.kind.life { color:var(--warn-tx); }
+
+.desk-item { display:flex; gap:10px; padding:9px 0; border-bottom:1px dashed var(--line); font-size:12.5px; align-items:flex-start; }
+.desk-item:last-child { border-bottom:none; }
+.desk-item .star { flex-shrink:0; width:9px; height:9px; margin-top:4px; transform:rotate(45deg); }
+.desk-item .star.hard { background:var(--warn-tx); }
+.desk-item .star.soft { border:1.5px solid var(--muted); }
+.desk-item .src { font-size:10.5px; color:var(--muted); margin-top:2px; word-break:break-all; }
+.desk-item .conf { font-size:10px; background:var(--bg); border-left:2px solid var(--muted); padding:1px 7px; margin-left:auto; flex-shrink:0; color:var(--muted); }
+
+.notice { border-radius:0; border-left:3px solid var(--info-tx); padding:11px 14px; font-size:12.5px; margin-bottom:12px; line-height:1.6; }
+.notice.info { background:var(--info-bg); color:var(--info-tx); }
+.notice.warn { background:var(--warn-bg); color:var(--warn-tx); border-left-color:var(--warn-tx); }
+code { background:var(--code-bg); color:var(--code-text); padding:1px 6px; border-radius:0; font-size:.9em; font-family:'Cascadia Code',monospace; }
+
+.meter { display:grid; grid-template-columns:repeat(4,1fr); gap:8px; text-align:center; }
+.meter b { font-size:20px; display:block; }
+.meter span { font-size:10.5px; color:var(--muted); }
+.page { display:none; }
+.page.on { display:block; }
+</style>
+</head>
+<body>
+<!-- 内联 SVG 图标集（描边风格，继承 currentColor 自动随主题） -->
+<svg width="0" height="0" style="position:absolute">
+  <symbol id="i-home" viewBox="0 0 24 24"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h5v-6h4v6h5V9.5"/></symbol>
+  <symbol id="i-plug" viewBox="0 0 24 24"><path d="M9 7V3M15 7V3"/><path d="M7 7h10v4a5 5 0 0 1-10 0V7z"/><path d="M12 16v5"/></symbol>
+  <symbol id="i-market" viewBox="0 0 24 24"><path d="M4 8h16l-1.5 12h-13L4 8z"/><path d="M8.5 8a3.5 3.5 0 0 1 7 0"/></symbol>
+  <symbol id="i-log" viewBox="0 0 24 24"><path d="M5 4h14v16H5z"/><path d="M8 9h8M8 13h8M8 17h5"/></symbol>
+  <symbol id="i-hdsi" viewBox="0 0 24 24"><rect x="4" y="4" width="10" height="10" transform="rotate(45 9 9) translate(0 0)"/><path d="M20 11v9h-9"/><circle cx="20" cy="8" r="2"/></symbol>
+  <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.8v3M12 18.2v3M2.8 12h3M18.2 12h3M5.5 5.5l2.1 2.1M16.4 16.4l2.1 2.1M18.5 5.5l-2.1 2.1M7.6 16.4l-2.1 2.1"/></symbol>
+  <symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.5"/><path d="M5 20a7 7 0 0 1 14 0"/></symbol>
+  <symbol id="i-overview" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="2.5" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-script" viewBox="0 0 24 24"><path d="M6 3h12v18l-3-2-3 2-3-2-3 2V3z"/><path d="M9 8h6M9 12h6"/></symbol>
+  <symbol id="i-memory" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h10"/><circle cx="18.5" cy="17" r="2" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-desk" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5 21 21"/><path d="M7.5 10.5h6M10.5 7.5v6"/></symbol>
+  <symbol id="i-density" viewBox="0 0 24 24"><path d="M4 20V14M9.3 20V9M14.6 20V4M20 20v-9"/></symbol>
+  <symbol id="i-overlay" viewBox="0 0 24 24"><rect x="4" y="4" width="12" height="12"/><rect x="8" y="8" width="12" height="12"/></symbol>
+  <symbol id="i-theme" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 3.5a8.5 8.5 0 0 0 0 17V3.5z" fill="currentColor" stroke="none"/></symbol>
+</svg>
+
+<div class="kx-shell">
+
+  <!-- Koishi Console 图标栏（模拟） -->
+  <nav class="kx-rail">
+    <div class="kx-logo"></div>
+    <a href="javascript:void(0)" title="概览"><svg class="glyph"><use href="#i-home"/></svg></a>
+    <a href="javascript:void(0)" title="插件"><svg class="glyph"><use href="#i-plug"/></svg></a>
+    <a href="javascript:void(0)" title="插件市场"><svg class="glyph"><use href="#i-market"/></svg></a>
+    <a href="javascript:void(0)" title="日志"><svg class="glyph"><use href="#i-log"/></svg></a>
+    <a href="javascript:void(0)" class="on" title="HDS Interlude"><svg class="glyph"><use href="#i-hdsi"/></svg></a>
+    <div class="spacer"></div>
+    <a href="javascript:void(0)" title="设置"><svg class="glyph"><use href="#i-gear"/></svg></a>
+    <a href="javascript:void(0)" title="用户"><svg class="glyph"><use href="#i-user"/></svg></a>
+  </nav>
+
+  <!-- HDSI 内部侧栏 -->
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-mark"></div>
+      <div><h1>HDS Interlude</h1><small>幕间系统 · rc58-cev.1</small></div>
+    </div>
+    <div class="group">运行</div>
+    <div class="nav-item on" data-pg="overview"><svg class="glyph"><use href="#i-overview"/></svg>概览</div>
+    <div class="nav-item" data-pg="script"><svg class="glyph"><use href="#i-script"/></svg>剧本流<span class="badge">live</span></div>
+    <div class="nav-item" data-pg="memory"><svg class="glyph"><use href="#i-memory"/></svg>记忆与事实</div>
+    <div class="group">观测</div>
+    <div class="nav-item" data-pg="desk"><svg class="glyph"><use href="#i-desk"/></svg>考据案头<span class="badge">3</span></div>
+    <div class="nav-item" data-pg="density"><svg class="glyph"><use href="#i-density"/></svg>密度与预算</div>
+    <div class="group">维护</div>
+    <div class="nav-item" data-pg="overlay"><svg class="glyph"><use href="#i-overlay"/></svg>Overlay 演化</div>
+    <div class="nav-item" data-pg="settings"><svg class="glyph"><use href="#i-gear"/></svg>故事配置</div>
+  </aside>
+
+  <main class="main">
+
+  <!-- ═══ 概览页 ═══ -->
+  <section class="page on" id="pg-overview">
+    <div class="pg-head">
+      <div><h2>概览</h2><div class="sub">主角状态 · 健康指标 · 各系统开关一览</div></div>
+      <button class="theme-btn" onclick="toggleTheme()"><svg class="glyph" style="width:13px;height:13px"><use href="#i-theme"/></svg>切换主题</button>
+    </div>
+    <div class="notice info"><b>水濑</b> 正在活动——<code>phone-focused</code>（正在使用手机）。故事游标已写到 <code>14:32</code>，下一轮自动推进预计 <b>6 分钟后</b>。</div>
+    <div class="grid">
+      <div class="card">
+        <h3><span class="sq"></span>故事状态</h3>
+        <div class="row"><span class="k">主角</span><span class="v">水濑</span></div>
+        <div class="row"><span class="k">关系人数</span><span class="v">3</span></div>
+        <div class="row"><span class="k">剧本条目</span><span class="v">2,847</span></div>
+        <div class="row"><span class="k">故事状态</span><span class="v ok">active</span></div>
+        <div class="row"><span class="k">已写到</span><span class="v acc">14:32:08</span></div>
+      </div>
+      <div class="card">
+        <h3><span class="sq"></span>模型连接</h3>
+        <div class="row"><span class="k">主叙事</span><span class="v ok">ruoli · glm-5.3-flash</span></div>
+        <div class="row"><span class="k">压缩</span><span class="v ok">dmxapi · deepseek-v4</span></div>
+        <div class="row"><span class="k">考据</span><span class="v ok">ruoli · glm-5.3-flash</span></div>
+        <div class="row"><span class="k">累计输入</span><span class="v">2.41M tokens</span></div>
+        <div class="row"><span class="k">累计输出</span><span class="v">184K tokens</span></div>
+      </div>
+      <div class="card">
+        <h3><span class="sq"></span>系统开关</h3>
+        <div class="row"><span class="k">主动可见消息</span><span class="v ok">开启</span></div>
+        <div class="row"><span class="k">Agency 窗口</span><span class="v">natural</span></div>
+        <div class="row"><span class="k">Urge 弹性推进</span><span class="v ok">开启</span></div>
+        <div class="row"><span class="k">考据 Agent</span><span class="v ok">开启</span></div>
+        <div class="row"><span class="k">Jev 门控</span><span class="v warn">未配置 Key</span></div>
+      </div>
+      <div class="card">
+        <h3><span class="sq"></span>健康指标（近 1h）</h3>
+        <div class="meter">
+          <div><b style="color:var(--green)">17</b><span>成功回合</span></div>
+          <div><b style="color:var(--accent)">1</b><span>重试</span></div>
+          <div><b style="color:var(--green)">0</b><span>失败</span></div>
+          <div><b style="color:var(--warn-tx)">19s</b><span>均延迟</span></div>
+        </div>
+        <div class="bar" style="margin-top:12px">
+          <i style="width:88%;background:var(--green)"></i><i style="width:6%;background:var(--accent)"></i><i style="width:6%;background:#ef4444"></i>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ 剧本流页 ═══ -->
+  <section class="page" id="pg-script">
+    <div class="pg-head">
+      <div><h2>剧本流</h2><div class="sub">原始剧本条目 · 实时推送（broadcast: script.appended）</div></div>
+    </div>
+    <div class="grid" style="grid-template-columns:1fr 320px">
+      <div class="card" style="overflow-y:auto;max-height:calc(100vh - 130px)">
+        <h3><span class="sq acc"></span>今天 · 10 月 27 日</h3>
+        <div class="timeline">
+          <div class="t-entry">
+            <div class="t">14:28</div><div class="rail"><i></i></div>
+            <div class="body"><b>阿川 <span class="kind user">用户消息</span></b><p>"晚上去看流浪地球2不"</p></div>
+          </div>
+          <div class="t-entry">
+            <div class="t">14:31</div><div class="rail"><i></i></div>
+            <div class="body"><b>她 <span class="kind char">角色消息</span></b><p>"那你去查一下《流浪地球2》多长，我看看晚上来不来得及。"</p></div>
+          </div>
+          <div class="t-entry">
+            <div class="t">14:32</div><div class="rail"><i></i></div>
+            <div class="body"><b>旁白 <span class="kind life">自动推进</span></b><p>她把手机搁在膝盖上，搜索框里敲了几个字又停下来——外头垃圾车的声音碾过巷口，她起身把阳台的衬衫收了进来。</p></div>
+          </div>
+          <div class="t-entry">
+            <div class="t">14:32</div><div class="rail"><i></i></div>
+            <div class="body"><b>考据 <span class="kind life">research</span></b><p>主题「流浪地球2 片长」→ 入案 2 条 · 耗时 7.4s · 2 次模型调用</p></div>
+          </div>
+          <div class="t-entry">
+            <div class="t">14:33</div><div class="rail"><i></i></div>
+            <div class="body"><b>她 <span class="kind char">角色消息</span></b><p>"查到了，173 分钟……今晚有点赶，明天下午行不行"<span style="color:var(--muted)">（案头 ★173 分钟 · 豆瓣）</span></p></div>
+          </div>
+        </div>
+      </div>
+      <div>
+        <div class="card" style="margin-bottom:12px">
+          <h3><span class="sq"></span>当前场景</h3>
+          <div class="row"><span class="k">地点</span><span class="v">出租屋 · 客厅</span></div>
+          <div class="row"><span class="k">活动</span><span class="v">刷手机</span></div>
+          <div class="row"><span class="k">在场</span><span class="v">独自</span></div>
+          <div class="row"><span class="k">节奏</span><span class="v acc">phone-focused ×1.4</span></div>
+        </div>
+        <div class="card">
+          <h3><span class="sq"></span>密度档位（auto）</h3>
+          <div class="row"><span class="k">当前档</span><span class="tier-tag">高密度 → 15 条</span></div>
+          <div class="bar"><i style="width:58%;background:var(--accent)"></i><i style="width:42%;background:var(--line)"></i></div>
+          <div class="row" style="margin-top:6px"><span class="k">近 5 分钟</span><span class="v">3 条消息</span></div>
+          <div class="row"><span class="k">近 15 分钟</span><span class="v">7 条消息</span></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ 考据案头页 ═══ -->
+  <section class="page" id="pg-desk">
+    <div class="pg-head">
+      <div><h2>考据案头</h2><div class="sub">author-facing 参考资料——主角是否记得由作者裁决</div></div>
+    </div>
+    <div class="grid">
+      <div class="card">
+        <h3><span class="sq"></span>在架条目（3）</h3>
+        <div class="desk-item"><span class="star hard"></span>
+          <div><div>《流浪地球2》片长 173 分钟（含映前广告约 10 分钟）</div>
+          <div class="src">movie.douban.com · 置信 0.92 · 稳定事实 · 7 天</div></div>
+          <span class="conf">硬约束</span>
+        </div>
+        <div class="desk-item"><span class="star hard"></span>
+          <div><div>环东湖绿道全程骑行约 20 公里，普通配速 2-3 小时</div>
+          <div class="src">donghu.wh.gov.cn · 置信 0.85 · 稳定事实 · 7 天</div></div>
+          <span class="conf">硬约束</span>
+        </div>
+        <div class="desk-item"><span class="star soft"></span>
+          <div><div>武大梅园食堂窗口 7 点半后排队明显</div>
+          <div class="src">zhihu.com/question/… · 置信 0.61 · 易变事实 · 12h</div></div>
+          <span class="conf">软材料</span>
+        </div>
+      </div>
+      <div class="card">
+        <h3><span class="sq"></span>统计（重载后）</h3>
+        <div class="row"><span class="k">写入 / 复用</span><span class="v">23 / 11</span></div>
+        <div class="row"><span class="k">查询缓存</span><span class="v">命中 9 · 未命中 14</span></div>
+        <div class="row"><span class="k">Jev 判定 / 触发</span><span class="v warn">门控未启用</span></div>
+        <div class="row"><span class="k">搜索后端</span><span class="v acc">duckduckgo-html</span></div>
+        <div class="notice warn" style="margin-top:10px">国内直连 DuckDuckGo 不稳定，建议在 Console 配置 Tavily/博查 Key 或代理。</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ 密度与预算页 ═══ -->
+  <section class="page" id="pg-density">
+    <div class="pg-head">
+      <div><h2>密度与预算</h2><div class="sub">原始剧本条目自适应（contextEntryMode=auto）</div></div>
+    </div>
+    <div class="grid">
+      <div class="card">
+        <h3><span class="sq"></span>档位轨迹（今日）</h3>
+        <div class="bar" style="height:14px;margin:8px 0 14px">
+          <i style="width:18%;background:var(--warn-tx)" title="低密度"></i>
+          <i style="width:30%;background:var(--muted)" title="日常"></i>
+          <i style="width:34%;background:var(--accent)" title="高密度"></i>
+          <i style="width:12%;background:#ef4444" title="极高"></i>
+          <i style="width:6%;background:var(--green)" title="推进"></i>
+        </div>
+        <div class="row"><span class="k">极高密度（12 条）</span><span class="v">12% 时长</span></div>
+        <div class="row"><span class="k">高密度（15 条）</span><span class="v">34%</span></div>
+        <div class="row"><span class="k">日常（18 条）</span><span class="v">30%</span></div>
+        <div class="row"><span class="k">低密度（22 条）</span><span class="v">18%</span></div>
+        <div class="row"><span class="k">自动推进（25 条）</span><span class="v">6%</span></div>
+      </div>
+      <div class="card">
+        <h3><span class="sq"></span>私聊 / 群聊分轨</h3>
+        <div class="row"><span class="k">私聊模式</span><span class="v acc">auto（档位 12/15/18/22/25）</span></div>
+        <div class="row"><span class="k">群聊模式</span><span class="v">inherit → auto</span></div>
+        <div class="row"><span class="k">时间窗</span><span class="v">5 分钟（auto 下硬上限）</span></div>
+        <div class="row" style="margin-top:8px"><span class="k">本故事密度轨迹</span><span class="v">5min:3 · 15min:7 · 30min:12</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ 记忆页（简） ═══ -->
+  <section class="page" id="pg-memory">
+    <div class="pg-head"><div><h2>记忆与事实</h2><div class="sub">长期事实 · 活跃场景摘要 · 承诺回访</div></div></div>
+    <div class="grid">
+      <div class="card">
+        <h3><span class="sq"></span>长期事实（节选 5/41）</h3>
+        <div class="row"><span class="k">#1201 承诺</span><span class="v" style="font-weight:400">周六陪阿川去东湖骑行</span></div>
+        <div class="row"><span class="k">#1187 事件</span><span class="v" style="font-weight:400">与室友约定本月轮流做饭</span></div>
+        <div class="row"><span class="k">#1145 世界</span><span class="v" style="font-weight:400">小区门口早餐店周三休息</span></div>
+        <div class="row"><span class="k">#1098 关系</span><span class="v" style="font-weight:400">阿川＝大学室友，直呼其名</span></div>
+        <div class="row"><span class="k">#1032 事件</span><span class="v" style="font-weight:400">上周三加班到十一点</span></div>
+      </div>
+      <div class="card">
+        <h3><span class="sq"></span>等待中的意图</h3>
+        <div class="row"><span class="k">research-lookup</span><span class="v acc">「武大宿舍楼数量」· 3 分钟后到期</span></div>
+        <div class="row"><span class="k">follow-up</span><span class="v">「想想再答复买不买」· 明天 09:00</span></div>
+        <div class="row"><span class="k">split-message</span><span class="v">2 段 · 14:36 起</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ Overlay 页（简） ═══ -->
+  <section class="page" id="pg-overlay">
+    <div class="pg-head"><div><h2>Overlay 演化</h2><div class="sub">证据门槛后的稳定人格/关系/世界变化</div></div></div>
+    <div class="grid">
+      <div class="card">
+        <h3><span class="sq"></span>已应用（2）</h3>
+        <div class="row"><span class="k">character</span><span class="v" style="font-weight:400">对亲近的人会用反问代替直接拒绝</span></div>
+        <div class="row"><span class="k">relationship</span><span class="v" style="font-weight:400">与阿川的玩笑里开始带自嘲</span></div>
+      </div>
+      <div class="card">
+        <h3><span class="sq"></span>待积累提案（1）</h3>
+        <div class="row"><span class="k">world</span><span class="v" style="font-weight:400">公司项目进入验收期（3 回合 / 需 5 回合）</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ 配置页（简） ═══ -->
+  <section class="page" id="pg-settings">
+    <div class="pg-head"><div><h2>故事配置</h2><div class="sub">storyDefaults 快捷编辑（写入走 Koishi 配置持久化）</div></div></div>
+    <div class="notice info">此页为 P2 读写功能预览——当前静态原型仅展示字段形状。</div>
+    <div class="grid">
+      <div class="card">
+        <h3><span class="sq"></span>角色</h3>
+        <div class="row"><span class="k">姓名</span><span class="v">水濑</span></div>
+        <div class="row"><span class="k">时区</span><span class="v">Asia/Shanghai</span></div>
+        <div class="row"><span class="k">地点</span><span class="v">武汉 · 洪山区</span></div>
+      </div>
+      <div class="card">
+        <h3><span class="sq"></span>世界与风格</h3>
+        <div class="row"><span class="k">世界观</span><span class="v" style="font-weight:400">现代日常 · 单机程序员</span></div>
+        <div class="row"><span class="k">文风</span><span class="v" style="font-weight:400">克制、生活流、少量内心戏</span></div>
+      </div>
+    </div>
+  </section>
+
+  </main>
+</div>
+<script>
+function toggleTheme() {
+  const html = document.documentElement
+  html.dataset.theme = html.dataset.theme === 'dark' ? 'light' : 'dark'
+}
+document.querySelectorAll('.nav-item').forEach(el => {
+  el.addEventListener('click', () => {
+    document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('on'))
+    el.classList.add('on')
+    document.querySelectorAll('.page').forEach(p => p.classList.remove('on'))
+    document.getElementById('pg-' + el.dataset.pg).classList.add('on')
+  })
+})
+</script>
+</body>
+</html>

@@ -1,0 +1,14 @@
+# Development-only material; keep the published package limited to the
+# explicit `files` allowlist in package.json and the runtime bundle.
+src/
+test/
+scripts/
+dustbin/
+release/
+release-local/
+tsconfig.json
+tsconfig.tsbuildinfo
+*.html
+*.txt
+gitee-commit.md
+.old-guard.cjs

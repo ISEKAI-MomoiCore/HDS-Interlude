@@ -1,0 +1,7 @@
+- name: yakumo
+- name: yakumo/list
+- name: yakumo/prepare
+- name: yakumo/publish
+- name: yakumo/test
+- name: yakumo/upgrade
+- name: yakumo/version

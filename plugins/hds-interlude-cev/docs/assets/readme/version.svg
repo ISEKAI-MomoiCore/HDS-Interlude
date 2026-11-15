@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="176" height="30" viewBox="0 0 176 30" role="img" aria-label="当前发行版本 1.0.1-rc50">
+  <title>当前发行版本 1.0.1-rc50</title>
+  <rect width="176" height="30" fill="#f7f8fa"/>
+  <rect x="0.5" y="0.5" width="175" height="29" fill="none" stroke="#d9dfe7"/>
+  <path d="M75 1V29" stroke="#d9dfe7"/>
+  <rect width="3" height="30" fill="#2563eb"/>
+  <g font-family="Segoe UI, Arial, sans-serif" dominant-baseline="central">
+    <text x="39.0" y="15" text-anchor="middle" font-size="9" font-weight="600" letter-spacing="1" fill="#6b7280">RELEASE</text>
+    <text x="125.5" y="15" text-anchor="middle" font-size="11" font-weight="600" fill="#2563eb">1.0.1-rc50</text>
+  </g>
+</svg>

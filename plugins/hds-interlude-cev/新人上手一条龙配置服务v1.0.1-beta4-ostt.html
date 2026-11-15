@@ -1,0 +1,2089 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HDS Interlude 一键部署向导</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  /* ═══ 白天模式（默认） ═══ */
+  :root {
+    --bg: #f7f8fa;
+    --sheet: #f7f8fa;
+    --paper-2: #f3f4f6;
+    --ink: #111827;
+    --muted: #6b7280;
+    --line: #e5e7eb;
+    --accent: #2563eb;
+    --accent-2: #14b8a6;
+    --green: #14b8a6;
+    --code-bg: #111827;
+    --code-text: #e5e7eb;
+    --input-bg: #ffffff;
+    --input-line: #e5e7eb;
+    --info-bg: #eff6ff;
+    --info-tx: #1d4ed8;
+    --warn-bg: #fffbeb;
+    --warn-tx: #b45309;
+    --danger-bg: #fef2f2;
+    --danger-tx: #991b1b;
+    --miss-tx: #d97706;
+    --side-bg: #1f2937;
+    --side-tx: #f9fafb;
+    --side-muted: #9ca3af;
+    --side-accent: #3b82f6;
+    --sel-bg: #2563eb;
+    --sel-tx: #ffffff;
+    /* 侧光投影：冷调，自右上照向左下 */
+    --sun: rgba(15, 23, 42, 0.16);
+    --sun-soft: rgba(15, 23, 42, 0.08);
+    --sun-long: -26px 30px 52px -22px var(--sun), -8px 10px 22px -12px var(--sun-soft);
+    --sun-mid: -14px 17px 32px -16px var(--sun);
+    --sun-sm: -6px 7px 16px -8px var(--sun-soft);
+    --edge: rgba(255, 255, 255, 0.9);
+    --tint-a: rgba(37, 99, 235, 0.07);
+    --tint-b: rgba(37, 99, 235, 0.045);
+    --side-glow: rgba(96, 165, 250, 0.10);
+    --geo-tile: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='110' height='110'%3E%3Crect x='0' y='0' width='90' height='90' fill='%239db0c9'/%3E%3C/svg%3E");
+    --geo-far-c: #9db0c9;
+    --beam: linear-gradient(112deg,
+      transparent 26%,
+      rgba(148, 187, 255, 0.05) 34%,
+      rgba(160, 195, 255, 0.09) 41%,
+      rgba(170, 200, 255, 0.11) 45%,
+      rgba(148, 187, 255, 0.06) 50%,
+      transparent 58%,
+      rgba(160, 195, 255, 0.05) 66%,
+      transparent 73%);
+    --noise: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='260' height='260'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='260' height='260' filter='url(%23n)' opacity='0.05'/%3E%3C/svg%3E");
+    font-size: 15px;
+  }
+  /* ═══ 午后纸面 · 暗色 ═══ */
+  html[data-theme="dark"] {
+    --bg: #131110;
+    --sheet: #1d1a15;
+    --paper-2: #272219;
+    --ink: #ece6d8;
+    --muted: #9c9078;
+    --line: #3b3527;
+    --accent: #ff5c33;
+    --green: #7ba184;
+    --code-bg: #12100c;
+    --code-text: #e6ddc9;
+    --input-bg: #241f17;
+    --input-line: #47402f;
+    --info-bg: #272a1a;
+    --info-tx: #b9c48e;
+    --warn-bg: #342a12;
+    --warn-tx: #dfc084;
+    --danger-bg: #3c241b;
+    --danger-tx: #e8a184;
+    --miss-tx: #ef9a63;
+    --side-bg: #0f0d0a;
+    --side-tx: #f0eadd;
+    --side-muted: #9a8f7a;
+    --side-accent: #ff8a58;
+    --sel-bg: #ff5c33;
+    --sel-tx: #1d1a15;
+    --sun: rgba(0, 0, 0, 0.55);
+    --sun-soft: rgba(0, 0, 0, 0.35);
+    --edge: rgba(255, 215, 170, 0.05);
+    --tint-a: rgba(255, 160, 90, 0.16);
+    --tint-b: rgba(255, 180, 110, 0.10);
+    --side-glow: rgba(255, 150, 90, 0.08);
+    --geo-far-c: #964326;
+    --beam: linear-gradient(112deg,
+      transparent 26%,
+      rgba(255, 216, 150, 0.05) 34%,
+      rgba(255, 220, 158, 0.11) 41%,
+      rgba(255, 224, 170, 0.14) 45%,
+      rgba(255, 216, 150, 0.08) 50%,
+      transparent 58%,
+      rgba(255, 220, 158, 0.06) 66%,
+      transparent 73%);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+  body {
+    background:
+      radial-gradient(1100px 720px at 84% -10%, var(--tint-a), transparent 62%),
+      linear-gradient(212deg, var(--tint-b), transparent 42%),
+      var(--bg);
+    color: var(--ink);
+    font-family: "Outfit", "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei", "PingFang SC", sans-serif;
+    line-height: 1.75;
+    transition: background-color .35s ease, color .35s ease;
+  }
+  /* 午后光束：斜铺整个画面的暖光带，极缓慢地移动 */
+  body::before {
+    content: ""; position: fixed; inset: -25%;
+    z-index: 60; pointer-events: none;
+    background: var(--beam);
+    animation: sunShift 18s ease-in-out infinite alternate;
+  }
+  @keyframes sunShift {
+    from { transform: translate3d(-1.6%, -0.6%, 0) rotate(0.4deg); opacity: .8; }
+    to   { transform: translate3d(1.6%, 0.6%, 0) rotate(-0.4deg); opacity: 1; }
+  }
+  ::selection { background: var(--sel-bg); color: var(--sel-tx); }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--line); }
+  ::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+
+  a { color: var(--accent); text-decoration: none; font-weight: 600; }
+  a:hover { text-decoration: underline; text-underline-offset: 4px; }
+
+  .layout { display: flex; min-height: 100vh; }
+
+  /* ── 侧边栏：深炭面板，带纸纹 ── */
+  .sidebar {
+    width: 276px; flex-shrink: 0;
+    background-color: var(--side-bg);
+    background-image: var(--noise), radial-gradient(520px 340px at 88% -6%, var(--side-glow), transparent 62%);
+    color: var(--side-tx);
+    padding: 40px 34px 28px; position: sticky; top: 0; height: 100vh;
+    display: flex; flex-direction: column;
+    transition: background-color .35s ease;
+  }
+  .brand { margin-bottom: 52px; }
+  .brand-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+  .brand h1 {
+    font-size: 24px; font-weight: 800; line-height: 1.12; letter-spacing: .2px;
+    color: var(--side-tx);
+  }
+  .brand h1 span { display: block; }
+  .theme-toggle {
+    width: 34px; height: 34px; flex-shrink: 0;
+    background: none; color: var(--side-muted);
+    border: 1.5px solid var(--side-muted); border-radius: 50%;
+    cursor: pointer; font-size: 14px; line-height: 1;
+    transition: all .2s ease;
+  }
+  .theme-toggle:hover { color: var(--side-tx); border-color: var(--side-tx); transform: rotate(20deg); }
+  .brand p { display: none; }
+
+  .steps { display: flex; flex-direction: column; gap: 2px; }
+  .step-nav {
+    display: flex; align-items: center; gap: 14px; padding: 9px 2px;
+    border: none; cursor: pointer; color: var(--side-muted);
+    font-size: 13.5px; letter-spacing: 2.5px; font-weight: 600;
+    text-align: left; background: none; width: 100%; transition: color .18s ease, padding-left .18s ease;
+  }
+  .step-nav:hover { color: var(--side-tx); padding-left: 8px; }
+  .step-nav.active { color: var(--side-tx); }
+  .step-nav.active .title { color: var(--side-accent); }
+  .step-nav .num {
+    width: 10px; height: 10px; flex-shrink: 0;
+    border: 1.5px solid var(--side-muted); background: transparent;
+    font-size: 0; line-height: 0; transition: all .2s ease;
+  }
+  .step-nav:hover .num { border-color: var(--side-tx); }
+  .step-nav.active .num { background: var(--side-accent); border-color: var(--side-accent); box-shadow: 0 0 10px rgba(59, 130, 246, .45); }
+  html[data-theme="dark"] .step-nav.active .num { box-shadow: 0 0 10px rgba(255, 138, 88, .5); }
+  .step-nav.done .num { background: var(--green); border-color: var(--green); }
+  .step-nav.active.done .num { background: var(--accent); border-color: var(--accent); }
+  .step-nav .title { flex: 1; text-align: left; }
+
+  .progress-wrap { margin-top: auto; padding-top: 26px; }
+  .progress-bar { height: 3px; background: rgba(156,163,175,.30); overflow: hidden; }
+  .progress-bar > div { height: 100%; background: var(--accent); transition: width .45s cubic-bezier(.22,.68,.4,1); }
+  .progress-text { font-size: 11px; color: var(--side-muted); margin-top: 10px; letter-spacing: 2px; font-weight: 600; }
+  .sidebar > div:last-of-type { padding: 18px 0 0; }
+  .sidebar .btn { border-color: var(--side-muted); color: var(--side-muted); background: none; box-shadow: none; }
+  .sidebar .btn:hover { border-color: var(--side-tx); color: var(--side-tx); background: none; }
+  .sidebar::after {
+    content: "HDS INTERLUDE — SETUP GUIDE"; display: block;
+    font-size: 9px; letter-spacing: 2px; color: var(--side-muted);
+    white-space: nowrap;
+    margin-top: auto; padding-top: 30px; opacity: .8;
+  }
+  .sidebar { justify-content: flex-start; }
+
+  /* ── 主内容：大画布 + 顶部冷调光晕 ── */
+  .main {
+    flex: 1; min-width: 0; position: relative;
+    overflow: hidden;
+    background-color: var(--sheet);
+    background-image:
+      var(--noise),
+      linear-gradient(118deg, var(--tint-b) 0%, transparent 50%),
+      radial-gradient(1400px 900px at 82% -14%, var(--tint-a), transparent 68%);
+    padding: 64px 64px 110px;
+    box-shadow: -18px 0 60px -30px var(--sun);
+    transition: background-color .35s ease;
+  }
+  /* 大几何装饰：右上斜切色块——向边缘外出血，视差移动时角落始终被盖住 */
+  .main::before {
+    content: ""; position: absolute; top: -14px; right: -18px;
+    width: calc(min(430px, 42vw) + 20px); height: 348px;
+    background: linear-gradient(204deg, #4f8ef7 0%, var(--accent) 42%, #1e4fbb 100%);
+    clip-path: polygon(18% 0, 100% 0, 100% 100%);
+    filter: drop-shadow(-30px 36px 44px rgba(15, 23, 42, 0.22));
+    pointer-events: none;
+    transform: translate3d(calc(var(--mx, 0) * -14px), calc(var(--my, 0) * -10px), 0);
+    will-change: transform;
+  }
+  html[data-theme="dark"] .main::before {
+    background: linear-gradient(204deg, #ff8a58 0%, var(--accent) 48%, #a83a1c 100%);
+    filter: drop-shadow(-30px 36px 44px rgba(0, 0, 0, 0.5));
+  }
+
+  /* ── 几何影板：阳光透过冲孔板洒下的规则光斑；随鼠标轻微视差 ── */
+  .foliage {
+    position: absolute; inset: 0; overflow: hidden; pointer-events: none; z-index: 0;
+    transform: translate3d(calc(var(--mx, 0) * -7px), calc(var(--my, 0) * -5px), 0);
+    will-change: transform;
+    -webkit-mask-image: radial-gradient(1250px 880px at 80% -4%, #000 30%, transparent 75%);
+    mask-image: radial-gradient(1250px 880px at 80% -4%, #000 30%, transparent 75%);
+  }
+  html[data-theme="dark"] .foliage {
+    --geo-tile: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='110' height='110'%3E%3Crect x='0' y='0' width='90' height='90' fill='%23964326'/%3E%3C/svg%3E");
+  }
+  .geo { position: absolute; inset: -22%; mix-blend-mode: multiply; }
+  .geo-near {
+    background-image: var(--geo-tile);
+    background-size: 110px 110px;
+    filter: blur(0.5px);
+    opacity: .32;
+    animation: geoDriftA 16s ease-in-out infinite alternate;
+  }
+  .geo-far {
+    inset: auto;
+    right: -70px; bottom: -2%;
+    width: 640px; height: 640px;
+    background: radial-gradient(circle at 50% 50%, var(--geo-far-c) 0%, var(--geo-far-c) 40%, transparent 70%);
+    filter: blur(12px);
+    opacity: .22;
+    animation: geoDriftB 23s ease-in-out infinite alternate;
+  }
+  @keyframes geoDriftA {
+    from { transform: translate(0, 0); }
+    to   { transform: translate(-30px, 24px); }
+  }
+  @keyframes geoDriftB {
+    from { transform: translate(0, 0); }
+    to   { transform: translate(34px, 28px); }
+  }
+  .step-page { display: none; max-width: 860px; position: relative; z-index: 1; }
+  .step-page.visible { display: block; }
+  @keyframes riseIn { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: none; } }
+  .step-page.visible h2 { animation: riseIn .45s cubic-bezier(.22,.68,.4,1) both; }
+  .step-page.visible .subtitle { animation: riseIn .5s cubic-bezier(.22,.68,.4,1) .06s both; }
+  .step-page.visible .card { animation: riseIn .5s cubic-bezier(.22,.68,.4,1) both; }
+  .step-page.visible .card:nth-of-type(1) { animation-delay: .1s; }
+  .step-page.visible .card:nth-of-type(2) { animation-delay: .16s; }
+  .step-page.visible .card:nth-of-type(3) { animation-delay: .22s; }
+  .step-page.visible .card:nth-of-type(4) { animation-delay: .28s; }
+  .step-page.visible .card:nth-of-type(n+5) { animation-delay: .34s; }
+  .step-page h2 {
+    font-size: 40px; font-weight: 800; letter-spacing: -.5px; line-height: 1.15;
+    margin-bottom: 10px; max-width: 640px;
+  }
+  .step-page .subtitle {
+    color: var(--muted); margin: 0 0 44px; font-size: 12.5px;
+    letter-spacing: 2.5px; font-weight: 600; max-width: 600px;
+  }
+
+  /* ── 区块：白色卡片 ── */
+  .card {
+    background: var(--input-bg);
+    border: 1px solid var(--line);
+    border-radius: 0;
+    padding: 22px 24px; margin-bottom: 22px;
+    box-shadow: var(--sun-sm);
+    transition: box-shadow .2s ease, border-color .2s ease;
+  }
+  .card:hover { border-color: #d3d9e2; box-shadow: var(--sun-mid); }
+  .card h3 {
+    font-size: 13px; font-weight: 700; letter-spacing: 2.5px;
+    margin-bottom: 18px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    color: var(--ink);
+  }
+  .card h3::before {
+    content: ""; width: 10px; height: 10px; flex-shrink: 0;
+    background: var(--accent);
+    transition: transform .25s ease;
+  }
+  .card:hover h3::before { transform: rotate(45deg) scale(1.15); }
+  .card h3 .tag {
+    font-size: 10.5px; padding: 1px 10px; border-radius: 0;
+    border: 1.5px solid var(--accent); color: var(--accent); font-weight: 700; letter-spacing: 1px;
+  }
+  .card p { margin-bottom: 10px; }
+  .card ul, .card ol { padding-left: 20px; margin-bottom: 10px; }
+  .card li { margin-bottom: 5px; }
+  .card code {
+    background: var(--paper-2); border: none;
+    padding: 1px 7px; font-size: .9em; font-weight: 600;
+  }
+  .muted { color: var(--muted); font-size: 13.5px; }
+
+  /* ── 命令块：墨黑大块，长投影 ── */
+  .cmd-block {
+    position: relative; background-color: var(--code-bg);
+    background-image: var(--noise);
+    border: none; margin: 18px 0;
+    box-shadow: inset 0 1.5px 0 var(--edge), var(--sun-long);
+    transition: box-shadow .25s ease, transform .25s ease;
+  }
+  .cmd-block:hover { transform: translate(2px, -2px); box-shadow: var(--sun-mid); }
+  .cmd-block pre {
+    padding: 20px 22px; overflow-x: auto; font-family: "Cascadia Code", Consolas, monospace;
+    font-size: 13px; line-height: 1.7; color: var(--code-text); white-space: pre;
+  }
+  .copy-btn {
+    position: absolute; top: 10px; right: 10px; padding: 4px 14px; font-size: 11px;
+    background: none; color: var(--code-text); border: 1.5px solid var(--side-muted);
+    cursor: pointer; transition: all .18s ease; letter-spacing: 1.5px; font-weight: 700;
+  }
+  .copy-btn:hover { color: #fff; border-color: #fff; background: rgba(255,255,255,.08); }
+  .copy-btn.ok { color: var(--accent); border-color: var(--accent); }
+
+  /* ── 表单 ── */
+  .field { margin-bottom: 18px; }
+  .field label { display: block; font-size: 12px; color: var(--ink); margin-bottom: 7px; font-weight: 700; letter-spacing: 1.5px; }
+  .field .hint { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+  .field input, .field select, .field textarea {
+    width: 100%; background: var(--input-bg); border: 1.5px solid var(--input-line);
+    border-radius: 0; color: var(--ink); padding: 11px 14px; font-size: 14px;
+    font-family: inherit; outline: none;
+    transition: border-color .18s ease, box-shadow .18s ease;
+  }
+  .field select { cursor: pointer; }
+  .field select option { background: var(--sheet); color: var(--ink); }
+  .field textarea { resize: vertical; min-height: 70px; line-height: 1.6; }
+  .field input:focus, .field select:focus, .field textarea:focus {
+    border-color: var(--ink);
+    box-shadow: -5px 6px 14px -8px var(--sun);
+  }
+  .field input::placeholder, .field textarea::placeholder { color: var(--muted); opacity: .7; }
+  .field.inline { display: flex; gap: 18px; }
+  .field.inline > div { flex: 1; }
+  .field .with-btn { display: flex; gap: 10px; }
+  .field .with-btn input { flex: 1; }
+
+  .btn {
+    padding: 10px 22px; border-radius: 0; border: 1.5px solid var(--ink);
+    background: none; color: var(--ink); cursor: pointer; font-size: 12.5px;
+    font-weight: 700; letter-spacing: 2px; white-space: nowrap;
+    transition: all .18s ease;
+  }
+  .btn:hover { background: var(--ink); color: var(--sheet); transform: translateY(-2px); box-shadow: var(--sun-sm); }
+  .btn:active { transform: translateY(0); box-shadow: none; }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; box-shadow: var(--sun-sm); }
+  .btn.primary:hover { background: var(--ink); border-color: var(--ink); transform: translateY(-2px); box-shadow: var(--sun-mid); }
+  .btn.small { padding: 5px 13px; font-size: 11.5px; }
+
+  /* ── 提示 ── */
+  .notice {
+    border-radius: 0; padding: 13px 18px; font-size: 13.5px; margin: 16px 0;
+    border: none; border-left: 4px solid var(--ink);
+    box-shadow: inset 0 1px 0 var(--edge), var(--sun-sm);
+    transition: transform .2s ease, box-shadow .2s ease;
+  }
+  .notice:hover { transform: translate(2px, -1px); }
+  .notice.info { background: var(--info-bg); color: var(--info-tx); border-left-color: var(--green); }
+  .notice.warn { background: var(--warn-bg); color: var(--warn-tx); border-left-color: var(--miss-tx); }
+  .notice.danger { background: var(--danger-bg); color: var(--danger-tx); border-left-color: var(--accent); }
+
+  /* ── 架构流 ── */
+  .flow { display: flex; align-items: stretch; gap: 12px; flex-wrap: wrap; margin: 18px 0; }
+  .flow .node {
+    flex: 1; min-width: 118px; text-align: center;
+    background: var(--input-bg); border: none; padding: 18px 10px; font-size: 13px;
+    box-shadow: inset 0 1px 0 var(--edge), var(--sun-sm);
+    transition: transform .22s ease, box-shadow .22s ease;
+  }
+  .flow .node:hover { transform: translateY(-4px); box-shadow: var(--sun-mid); }
+  .flow .node b { display: block; font-size: 14.5px; font-weight: 800; }
+  .flow .node .muted { font-size: 11px; letter-spacing: .5px; }
+  .flow .arrow { display: flex; align-items: center; color: var(--accent); font-size: 17px; font-weight: 800; }
+
+  .kbd {
+    background: var(--paper-2); border: none;
+    padding: 2px 9px; font-family: Consolas, monospace; font-size: 12.5px;
+    box-shadow: -2px 2px 6px -3px var(--sun-soft);
+  }
+
+  .bottom-bar {
+    display: flex; justify-content: space-between; align-items: center;
+    max-width: 860px; position: relative; z-index: 1;
+    margin-top: 40px; padding-top: 26px; border-top: 1.5px solid var(--ink); gap: 12px; flex-wrap: wrap;
+  }
+  .done-btn { font-size: 12.5px; }
+
+  .checklist { list-style: none; padding: 0; }
+  .checklist li { padding-left: 30px; position: relative; margin-bottom: 9px; }
+  .checklist li::before {
+    content: ""; position: absolute; left: 2px; top: 7px; width: 13px; height: 13px;
+    border: 1.5px solid var(--ink); background: none;
+    transition: background .15s, transform .15s;
+  }
+  .checklist li:hover::before { background: var(--paper-2); transform: rotate(8deg); }
+
+  .yaml-preview { max-height: 460px; overflow: auto; }
+
+  .missing-list { font-size: 13px; color: var(--miss-tx); list-style: none; padding-left: 4px; font-weight: 600; }
+  .missing-list li { margin-bottom: 3px; }
+
+  details {
+    background: none; border: none; border-top: 1.5px solid var(--line);
+    padding: 12px 2px; margin: 12px 0;
+  }
+  details summary { cursor: pointer; font-size: 12.5px; color: var(--muted); font-weight: 700; letter-spacing: 1px; transition: color .15s; }
+  details summary:hover { color: var(--accent); }
+  details[open] summary { color: var(--ink); margin-bottom: 8px; }
+
+  .recap { display: flex; gap: 10px; flex-wrap: wrap; margin: 10px 0; }
+  .recap .chip {
+    background: var(--input-bg); border: 1.5px solid var(--input-line);
+    border-radius: 0; padding: 4px 17px; font-size: 12.5px;
+    box-shadow: inset 0 1px 0 var(--edge), var(--sun-sm);
+    transition: transform .2s ease, box-shadow .2s ease;
+  }
+  .recap .chip:hover { transform: translateY(-2px); box-shadow: var(--sun-mid); }
+  .recap .chip b { color: var(--accent); }
+
+  /* ── SnowLuma 配置对照 ── */
+  .mock-dialog {
+    background: var(--input-bg); border: 1.5px solid var(--ink);
+    margin: 18px 0; overflow: hidden; max-width: 500px;
+    box-shadow: inset 0 1px 0 var(--edge), var(--sun-mid);
+    transition: transform .25s ease, box-shadow .25s ease;
+  }
+  .mock-dialog:hover { transform: translate(2px, -2px); }
+  .mock-title {
+    padding: 11px 18px; font-size: 13px; font-weight: 700; letter-spacing: 1.5px;
+    border-bottom: 1.5px solid var(--ink); background: var(--code-bg); color: var(--code-text);
+  }
+  .mock-table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  .mock-table td { padding: 9px 18px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  .mock-table tr:last-child td { border-bottom: none; }
+  .mock-table td:first-child { color: var(--muted); width: 112px; white-space: nowrap; font-weight: 600; }
+  .mock-table td b { color: var(--accent); font-weight: 700; word-break: break-all; }
+
+  /* ── 供应商卡片 ── */
+  .provider-card {
+    background: var(--input-bg); border: 1.5px solid var(--input-line);
+    padding: 18px 20px; margin-bottom: 20px;
+    box-shadow: inset 0 1px 0 var(--edge), var(--sun-sm);
+    transition: transform .22s ease, box-shadow .22s ease;
+  }
+  .provider-empty { padding: 22px 18px; border: 1.5px dashed var(--input-line); }
+  .provider-card:hover { transform: translate(2px, -3px); box-shadow: var(--sun-mid); }
+  .provider-head {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 14px; gap: 10px;
+  }
+  .provider-head b { font-size: 14.5px; font-weight: 800; letter-spacing: .5px; }
+  .provider-head .badge {
+    font-size: 10.5px; padding: 2px 11px; border-radius: 0;
+    background: none; color: var(--accent); border: 1.5px solid var(--accent); font-weight: 700; letter-spacing: 1px;
+  }
+  .use-flags {
+    display: flex; flex-wrap: wrap; gap: 9px 20px; margin-top: 14px;
+    padding-top: 14px; border-top: 1px solid var(--line);
+  }
+  .use-flags label, .check-line {
+    display: flex; align-items: center; gap: 7px; font-size: 13.5px; cursor: pointer;
+  }
+
+  /* 世界预设卡片 */
+  .radio-group { display: flex; flex-wrap: wrap; gap: 14px; margin: 12px 0 6px; }
+  .radio-card {
+    display: block; flex: 1; min-width: 210px;
+    background: var(--input-bg); border: 1.5px solid var(--input-line);
+    padding: 14px 16px; cursor: pointer; transition: border-color .15s, box-shadow .15s;
+  }
+  .radio-card:hover { border-color: var(--accent); }
+  .radio-card:has(input:checked) { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+  .radio-card input { margin-right: 8px; accent-color: var(--accent); }
+  .radio-card b { font-size: 14.5px; font-weight: 800; margin-right: 6px; }
+  .radio-card .muted { display: block; margin-top: 4px; font-size: 12.5px; }
+
+  /* 发言节奏滑杆 */
+  .slider-field { margin-bottom: 22px; }
+  .slider-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; }
+  .slider-head label { font-size: 12px; font-weight: 700; letter-spacing: 1.5px; }
+  .slider-val { font-size: 13.5px; color: var(--accent); font-weight: 700; }
+  .slider-row { display: flex; align-items: center; gap: 12px; }
+  .slider-cap { font-size: 11px; color: var(--muted); letter-spacing: 1px; flex-shrink: 0; }
+  .slider-row input[type="range"] { flex: 1; accent-color: var(--accent); height: 4px; cursor: pointer; }
+  .check-col { display: flex; flex-direction: column; gap: 12px; margin-top: 12px; }
+  .check-col .check-line b { margin-right: 2px; }
+  .use-flags input, .check-line input { width: auto; accent-color: var(--accent); cursor: pointer; }
+  .check-line { line-height: 1.5; }
+
+  /* ── 用途推荐表 ── */
+  .usage-table {
+    width: 100%; border-collapse: collapse; font-size: 13px; margin: 10px 0 16px;
+    border-top: 1.5px solid var(--ink); border-bottom: 1.5px solid var(--ink);
+  }
+  .usage-table th, .usage-table td { padding: 11px 14px; vertical-align: top; text-align: left; border-bottom: 1px solid var(--line); }
+  .usage-table tr:last-child td { border-bottom: none; }
+  .usage-table th { color: var(--muted); font-weight: 700; white-space: nowrap; letter-spacing: 2px; font-size: 11.5px; }
+  .usage-table td { color: var(--muted); }
+  .usage-table tbody tr { transition: background-color .18s ease; }
+  .usage-table tbody tr:hover { background: var(--paper-2); }
+  .usage-table td:first-child { white-space: nowrap; }
+  .usage-table td:first-child b { color: var(--accent); }
+  .usage-table td b { color: var(--miss-tx); }
+  .usage-table td:nth-child(2) { color: var(--ink); }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation: none !important; transition: none !important; }
+  }
+
+  @media (max-width: 860px) {
+    .layout { flex-direction: column; }
+    .sidebar { width: 100%; height: auto; position: static; padding: 26px 22px; }
+    .brand { margin-bottom: 20px; }
+    .progress-wrap { padding-top: 16px; }
+    .steps { flex-direction: row; overflow-x: auto; padding-bottom: 6px; gap: 14px; }
+    .step-nav { width: auto; white-space: nowrap; }
+    .main { padding: 36px 22px 80px; }
+    .main::before { width: 52vw; height: 200px; }
+  }
+</style>
+</head>
+<body>
+<div class="layout">
+
+<!-- ══════════ 侧边栏 ══════════ -->
+<nav class="sidebar">
+  <div class="brand">
+    <div class="brand-row">
+      <h1><span>HDS</span> Interlude</h1>
+      <button class="theme-toggle" id="themeToggle" type="button" title="切换亮暗配色">☾</button>
+    </div>
+<p>从零到能聊天 · 1.0.1-beta4-ostt 配置向导</p>
+  </div>
+  <div class="steps" id="stepNav"></div>
+  <div class="progress-wrap">
+    <div class="progress-bar"><div id="progressFill" style="width:0%"></div></div>
+    <div class="progress-text" id="progressText">已完成 0 / 9 步</div>
+  </div>
+  <div style="padding:14px 10px 0;">
+    <button class="btn small" id="resetBtn" title="清除所有填写内容和进度">重置向导</button>
+  </div>
+</nav>
+
+<!-- ══════════ 主内容 ══════════ -->
+<main class="main">
+<div class="foliage" aria-hidden="true">
+  <div class="geo geo-near"></div>
+  <div class="geo geo-far"></div>
+</div>
+
+<!-- ── Step 0 概览 ── -->
+<section class="step-page" data-step="0">
+  <h2>概览：你要搭起什么？</h2>
+  <p class="subtitle">整个流程大约 20–40 分钟。每一步都有可直接复制的命令，跟着做即可。</p>
+
+  <div class="card">
+    <h3>整体架构</h3>
+    <div class="flow">
+      <div class="node"><b>你</b><span class="muted">手机 / 电脑 QQ</span></div>
+      <div class="arrow">⇄</div>
+      <div class="node"><b>QQ 客户端</b><span class="muted">运行机器人账号</span></div>
+      <div class="arrow">⇄</div>
+      <div class="node"><b>SnowLuma</b><span class="muted">QQ ↔ OneBot 协议桥</span></div>
+      <div class="arrow">⇄</div>
+      <div class="node"><b>Koishi</b><span class="muted">机器人框架</span></div>
+      <div class="arrow">⇄</div>
+      <div class="node"><b>HDSI 插件</b><span class="muted">持续叙事角色</span></div>
+      <div class="arrow">→</div>
+      <div class="node"><b>大模型 API</b><span class="muted">支持的官方预设或 OpenAI 兼容接口</span></div>
+    </div>
+    <p class="muted">HDSI（HDS Interlude）让机器人扮演一个"有自己生活"的角色：它会决定何时看到消息、立即回复、延迟回复还是沉默，并在无对话时继续推进自己的日常。</p>
+  </div>
+
+  <div class="card">
+    <h3>开始前请准备好</h3>
+    <ul class="checklist">
+      <li>一台能长期开机的 Windows 电脑（普通家用配置即可）</li>
+      <li>一个用作机器人的 QQ 账号（建议单独注册小号）</li>
+      <li>一个大模型 API Key——支持智谱、OpenAI、DeepSeek、Kimi、阿里百炼、硅基流动、OpenRouter、Gemini，或 OpenAI 兼容接口</li>
+      <li>你的个人 QQ 号（用来和角色聊天测试）</li>
+    </ul>
+    <div class="notice warn">⚠ 机器人账号建议使用小号。协议桥接属于第三方实现，理论上存在账号风险，请勿使用存有重要资料的主号。</div>
+  </div>
+
+  <div class="card">
+    <h3>10 个操作步骤 + 1 页概览</h3>
+    <ol>
+      <li>安装 Node.js（一切的地基）</li>
+      <li>安装 SnowLuma（把 QQ 变成机器人接口）</li>
+      <li>配置 SnowLuma（界面里直接注入 QQ 进程 + 建立通信通道）</li>
+      <li>安装 Koishi（npm 官方脚手架，一条命令）</li>
+      <li>安装插件（命令行 npm，或直接在插件市场下载）</li>
+      <li>填写连接参数（机器人 QQ、端口、Token）</li>
+      <li>配置模型中心（多供应商、多模型协作）</li>
+      <li>填写角色设定（人设 + 白名单）</li>
+      <li>世界与发言设定（世界预设 + 发言节奏）</li>
+      <li>生成 koishi.yml 并启动，开始第一句对话</li>
+    </ol>
+    <p class="muted">本向导面向全新 Koishi 项目，生成的配置会覆盖脚手架默认 koishi.yml。左侧边栏可以随时跳转；你填写的内容会自动保存在浏览器里。</p>
+  </div>
+</section>
+
+<!-- ── Step 1 Node.js ── -->
+<section class="step-page" data-step="1">
+  <h2>第 1 步 · 安装 Node.js</h2>
+  <p class="subtitle">Koishi 和 HDSI 都跑在 Node.js 上。推荐安装 22.x LTS 版本。</p>
+
+  <div class="card">
+    <h3>方式 A：命令行安装 <span class="tag">推荐 · 需 Win10+</span></h3>
+    <p>按 <span class="kbd">Win</span> 键，输入 <span class="kbd">powershell</span>，以普通身份打开 PowerShell，粘贴运行：</p>
+    <div class="cmd-block"><button class="copy-btn">复制</button><pre>winget install -e --id OpenJS.NodeJS.LTS</pre></div>
+    <p class="muted">装完后<strong>关闭并重新打开</strong> PowerShell 窗口（让环境变量生效）。</p>
+  </div>
+
+  <div class="card">
+    <h3>方式 B：官网安装包</h3>
+    <p>打开 <a href="https://nodejs.org/zh-cn" target="_blank">nodejs.org/zh-cn</a>，下载 <strong>LTS 长期支持版</strong>（≥ 22.x），双击安装，一路"下一步"即可，全部选项保持默认。</p>
+  </div>
+
+  <div class="card">
+    <h3>验证安装</h3>
+    <p>重新打开一个 PowerShell，运行：</p>
+    <div class="cmd-block"><button class="copy-btn">复制</button><pre>node -v ; npm -v</pre></div>
+    <p>看到两个版本号（例如 <code>v22.x.x</code> 和 <code>10.x.x</code>）就说明成功了。</p>
+    <div class="notice info">💡 如果提示"无法将 node 识别为 cmdlet"，说明环境变量没生效——重启一下电脑再试。</div>
+  </div>
+</section>
+
+<!-- ── Step 2 SnowLuma 安装 ── -->
+<section class="step-page" data-step="2">
+  <h2>第 2 步 · 安装 SnowLuma</h2>
+  <p class="subtitle">SnowLuma 把电脑 QQ 的会话桥接成标准 OneBot 协议，是 Koishi 和 QQ 之间的翻译官。</p>
+
+  <div class="card">
+    <h3>前置：安装电脑 QQ</h3>
+    <p>如果还没装，去 <a href="https://im.qq.com/pc" target="_blank">im.qq.com/pc</a> 下载最新版 QQ（NT 内核）并安装。安装好即可，下一步 SnowLuma 会直接注入它的进程。</p>
+  </div>
+
+  <div class="card">
+    <h3>下载 SnowLuma</h3>
+    <ol>
+      <li>打开 <a href="https://github.com/SnowLuma/SnowLuma/releases" target="_blank">github.com/SnowLuma/SnowLuma/releases</a></li>
+      <li>在最新版本的 Assets 里，选择 <strong>Windows 完整发行包</strong>（文件名通常含 <code>win</code> 和 <code>full</code>；完整包自带运行环境，不需要再装别的）</li>
+      <li>下载后解压到一个<strong>不含中文和空格</strong>的路径，例如 <code>C:\SnowLuma</code></li>
+    </ol>
+    <div class="notice info">💡 GitHub 访问慢的话，可以多刷新几次，或使用镜像加速工具下载。</div>
+  </div>
+
+  <div class="card">
+    <h3>启动</h3>
+    <p>双击解压目录里的 <span class="kbd">launcher.bat</span>。首次启动会初始化，看到日志滚动即成功。</p>
+    <p class="muted">启动日志里会出现 <strong>WebUI 初始密码</strong>，把它记下来（也可以直接复制窗口里的文字）。</p>
+    <div class="notice warn">⚠ 每次使用机器人都需要保持 SnowLuma 在后台运行。不要关闭 launcher 窗口。</div>
+  </div>
+</section>
+
+<!-- ── Step 3 SnowLuma 配置 ── -->
+<section class="step-page" data-step="3">
+  <h2>第 3 步 · 配置 SnowLuma</h2>
+  <p class="subtitle">注入 QQ 进程，并建立一条给 Koishi 用的 WebSocket 通道。</p>
+
+  <div class="card">
+    <h3>① 登录 WebUI</h3>
+    <p>浏览器打开 <a href="http://localhost:5099" target="_blank">http://localhost:5099</a>，用启动日志里的初始密码登录。首次进入会有引导向导，按提示完成（同意协议等）。</p>
+  </div>
+
+  <div class="card">
+    <h3>② 注入 QQ 进程</h3>
+    <p>在 WebUI 中进入<strong>「进程注入」</strong>页面，选择 QQ 进程并点击注入。SnowLuma 会直接接管 QQ 会话并开始监听登录状态——<strong>无需在 SnowLuma 里再次扫码或输入密码</strong>，QQ 客户端里正常登录的机器人账号会自动接入。</p>
+    <p class="muted">此后每次开机使用流程：启动 QQ → 启动 SnowLuma（launcher.bat）→ 启动 Koishi。</p>
+  </div>
+
+  <div class="card">
+    <h3>③ 生成你的连接参数</h3>
+    <p>下面两个值将用于 SnowLuma 和 Koishi 的对接，<strong>两边必须完全一致</strong>。点"随机生成"可获得一个安全的 Token：</p>
+    <div class="field">
+      <label>WebSocket 端口</label>
+      <div class="hint">SnowLuma 将监听的本地端口，保持默认 3001 即可（除非被占用）</div>
+      <input id="f_wsPort" placeholder="3001" inputmode="numeric">
+    </div>
+    <div class="field">
+      <label>连接 Token</label>
+      <div class="hint">一串随机密码，防止本机其他程序误连；两边填同一个</div>
+      <div class="with-btn">
+        <input id="f_wsToken" placeholder="点右侧按钮生成">
+        <button class="btn" id="genTokenBtn" type="button">🎲 随机生成</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>④ 新建 WS 服务端节点</h3>
+    <p>注入完成后，点击 WebUI <strong>左侧导航的「节点配置」</strong>，选择<strong>「WS 服务端」</strong>类型新建节点，会弹出「编辑 WebSocket 服务」窗口（本地监听 WebSocket 端口，客户端建立持久连接）。按下表逐项填写：</p>
+    <div class="mock-dialog">
+      <div class="mock-title">编辑 WebSocket 服务</div>
+      <table class="mock-table">
+        <tr><td>启用</td><td><b>开启</b></td></tr>
+        <tr><td>名称</td><td><b>ws-default</b>（默认即可）</td></tr>
+        <tr><td>主机</td><td><b>127.0.0.1</b></td></tr>
+        <tr><td>端口</td><td><b id="cfgPort">3001</b>（上面生成的端口）</td></tr>
+        <tr><td>路径</td><td><b>/</b>（默认即可）</td></tr>
+        <tr><td>授权 Token</td><td><b id="cfgToken">上面生成的 Token</b></td></tr>
+        <tr><td>消息格式</td><td><b>数组</b>（标准 OneBot 段）</td></tr>
+        <tr><td>角色</td><td><b>Universal</b>（收发合一）</td></tr>
+        <tr><td>上报自身消息</td><td><b>关闭</b></td></tr>
+      </table>
+    </div>
+    <div class="recap" id="snowlumaRecap"></div>
+    <p>填完点<strong>「保存修改」</strong>，SnowLuma 就会开始监听这个端口。</p>
+    <div class="notice info">💡 Token 两边要一致：既可以把你在这里生成的 Token 粘贴进 SnowLuma，也可以直接用 SnowLuma 授权 Token 一栏自带的「重新生成」+「复制」按钮，把生成的值粘贴回本页第 ③ 步的 Token 输入框——效果一样。</div>
+  </div>
+
+  <details>
+    <summary>为什么要用 WebSocket 服务器模式？</summary>
+    <p class="muted">Koishi 的 OneBot 适配器将作为客户端主动连过来（协议选 <code>ws</code>），这是最简单稳定的连接方式：SnowLuma 当服务器等在那儿，Koishi 启动时自动接入，断线自动重连。</p>
+  </details>
+</section>
+
+<!-- ── Step 4 Koishi 安装 ── -->
+<section class="step-page" data-step="4">
+  <h2>第 4 步 · 安装 Koishi</h2>
+  <p class="subtitle">Koishi 是机器人框架本体，HDSI 是它的一个插件。官方脚手架一条命令搞定。</p>
+
+  <div class="card">
+    <h3>创建 Koishi 项目</h3>
+    <p>打开 PowerShell，进入你想安装的目录（示例用 <code>C:\</code>），运行官方脚手架：</p>
+    <div class="cmd-block"><button class="copy-btn">复制</button><pre>cd C:\
+npm create koishi@latest</pre></div>
+    <p>脚手架会提问几个问题，推荐这样选：</p>
+    <ul>
+      <li>项目目录名：填一个英文名，例如 <code>hds-bot</code>（路径避免中文和空格）</li>
+      <li>其余选项直接回车用默认值即可</li>
+    </ul>
+    <p>完成后进入目录并安装依赖：</p>
+    <div class="cmd-block"><button class="copy-btn">复制</button><pre>cd C:\hds-bot
+npm install</pre></div>
+    <div class="notice info">💡 脚手架通常会自动执行依赖安装，第二条命令跑一下确认没漏即可，很快。</div>
+  </div>
+
+  <div class="card">
+    <h3>先启动一次看看</h3>
+    <div class="cmd-block"><button class="copy-btn">复制</button><pre>npm run start</pre></div>
+    <p>看到 Koishi 欢迎信息和日志滚动即成功。浏览器打开 <a href="http://localhost:5140" target="_blank">http://localhost:5140</a> 能看到控制台界面。</p>
+    <p class="muted">确认正常后在 PowerShell 里按 <span class="kbd">Ctrl + C</span> 停掉，继续下一步装插件（现在还没装插件，先不用保持运行）。</p>
+    <div class="notice warn">⚠ 如果端口 5140 被占用报错，先关掉电脑上其他 Koishi / Node 服务再试。</div>
+  </div>
+</section>
+
+<!-- ── Step 5 插件安装 ── -->
+<section class="step-page" data-step="5">
+  <h2>第 5 步 · 安装插件</h2>
+<p class="subtitle">安装完整 Koishi Console 基线、OneBot 适配器，并使用随部署材料提供的 HDSI 1.0.1-beta4-ostt 安装包。</p>
+
+  <div class="card">
+<h3>下载并安装 1.0.1-beta4-ostt <span class="tag">本向导适用版本</span></h3>
+<p>先从本次发布页的 Assets 下载 <code>koishi-plugin-hds-interlude-1.0.1-beta4-ostt.tgz</code>，放到固定位置，例如 <code>C:\Downloads</code>。随后确认 PowerShell 位于<strong>含 package.json 的 Koishi 项目根目录</strong>（例如 <code>C:\hds-bot</code>），运行：</p>
+    <div class="cmd-block"><button class="copy-btn">复制</button><pre>cd C:\hds-bot
+npm install @koishijs/plugin-actions @koishijs/plugin-analytics @koishijs/plugin-commands @koishijs/plugin-config @koishijs/plugin-console @koishijs/plugin-explorer @koishijs/plugin-help @koishijs/plugin-http @koishijs/plugin-insight @koishijs/plugin-locales @koishijs/plugin-logger @koishijs/plugin-market @koishijs/plugin-notifier @koishijs/plugin-oobe @koishijs/plugin-proxy-agent @koishijs/plugin-sandbox @koishijs/plugin-status koishi-plugin-dataview koishi-plugin-rate-limit koishi-plugin-telemetry koishi-plugin-theme-vanilla
+npm install koishi-plugin-adapter-onebot
+npm install --save-exact "C:\Downloads\koishi-plugin-hds-interlude-1.0.1-beta4-ostt.tgz"</pre></div>
+    <ul>
+      <li>第一条命令补齐 Koishi 的配置、插件市场、资源浏览、数据查看、通知、状态与主题模块；无论脚手架初始选项如何，Console 都会保留完整管理页面</li>
+      <li><code>koishi-plugin-adapter-onebot</code>：让 Koishi 通过 SnowLuma 收发 QQ 消息</li>
+<li><code>koishi-plugin-hds-interlude-1.0.1-beta4-ostt.tgz</code>：HDSI 安装包；本向导中的表情包、侧端识图、时间线与聊天动作配置以此版本为准</li>
+    </ul>
+    <div class="notice warn">⚠ 请勿在 <code>C:\Users\你的用户名</code> 等非项目目录运行安装命令，否则包装到了错误位置，Koishi 不会加载它。</div>
+    <p class="muted">最后确认数据库插件：脚手架一般自带；没有的话运行 <code>npm install @koishijs/plugin-database-sqlite</code>，已装会很快完成。</p>
+  </div>
+
+  <div class="card">
+    <h3>为什么不使用插件市场？</h3>
+<p class="muted">插件市场的公开版本可能落后于本向导。为了让生成的配置与插件能力完全一致，请固定安装上面的 <code>1.0.1-beta4-ostt</code> 安装包。</p>
+  </div>
+</section>
+
+<!-- ── Step 6 OneBot 适配器配置 ── -->
+<section class="step-page" data-step="6">
+  <h2>第 6 步 · 连接参数</h2>
+  <p class="subtitle">这些信息会写进最终配置，把 Koishi 和 SnowLuma 缝在一起。</p>
+
+  <div class="card">
+    <h3>填写机器人 QQ 号</h3>
+    <div class="field">
+      <label>机器人 QQ 号（selfId）</label>
+      <div class="hint">就是登录在电脑 QQ 上、被 SnowLuma 注入的那个机器人账号的号码</div>
+      <input id="f_botQQ" placeholder="例如 123456789" inputmode="numeric">
+    </div>
+    <p>第 3 步生成的通道参数将自动带入：</p>
+    <div class="recap" id="adapterRecap"></div>
+    <p class="muted">要修改端口或 Token 就回第 3 步改，这里会同步更新。</p>
+  </div>
+
+  <div class="card">
+    <h3>生成的 OneBot 适配器配置 <span class="tag">预览 · 会并入最终 koishi.yml</span></h3>
+    <div class="cmd-block"><pre class="yaml-snippet" id="adapterPreview"></pre></div>
+    <ul class="missing-list" id="adapterMissing"></ul>
+  </div>
+
+  <details>
+    <summary>这些参数分别在说什么？</summary>
+    <ul class="muted">
+      <li><code>selfId</code>：机器人的 QQ 号，Koishi 用它识别"我是谁"</li>
+      <li><code>protocol: ws</code>：以 WebSocket 客户端身份连接 SnowLuma 的服务器</li>
+      <li><code>endpoint</code>：SnowLuma 监听的地址 = 本机 IP + 第 3 步的端口</li>
+      <li><code>token</code>：第 3 步生成的连接密码，两边一致才能握手成功</li>
+    </ul>
+  </details>
+</section>
+
+<!-- ── Step 7 模型中心 ── -->
+<section class="step-page" data-step="7">
+  <h2>第 7 步 · 模型中心</h2>
+  <p class="subtitle">一行模型连接就是一个实际可调用的模型；勾选它承担什么用途。可以添加多条，让不同任务用不同的模型协作。</p>
+
+  <div class="card">
+    <h3>五个用途分别用什么模型</h3>
+    <table class="usage-table">
+      <tr><th>用途</th><th>模型要求</th><th>推荐</th></tr>
+      <tr><td><b>主叙事</b></td><td>能力要强，决定剧本质量；最好支持 JSON 输出（json-object），不支持时选 prompt-only 也能跑，解析成功率略降</td><td><b>gemini-3-flash</b>（多模态强，可顺带看图）、GLM-5.3、DeepSeek-chat、Kimi K2.5、GPT-5-mini</td></tr>
+      <tr><td><b>后台压缩</b></td><td>纯文本输出即可（prompt-only 也行），低频调用，越便宜越好</td><td>GLM-5.3-Flash、硅基流动 Qwen3-8B（有免费额度）</td></tr>
+      <tr><td><b>Alter 分析</b></td><td>纯文本输出即可；只在情绪累计触发时调用一次，低频</td><td>同上，用便宜模型</td></tr>
+      <tr><td><b>Embedding</b></td><td><b>必须支持 /embeddings 接口</b>，普通聊天模型不能勾</td><td>text-embedding-3-small 等向量模型</td></tr>
+      <tr><td><b>表情包描述</b></td><td><b>必须能识图</b>的视觉模型</td><td>各家多模态模型</td></tr>
+      <tr><td><b>侧端识图</b></td><td>主叙事是纯文本模型时，用视觉模型把当前图片转成临时观察</td><td>Gemini、Qwen-VL、GLM-V 等视觉模型</td></tr>
+    </table>
+    <div class="notice info">💡 一条勾选“主叙事”的模型即可开始；建议再配置后台压缩。Alter、Embedding 和表情包都可以以后按需开启。Embedding 只能单独占一条连接，勾选后其它用途会自动取消。</div>
+  </div>
+
+  <div class="card">
+    <h3>模型连接列表</h3>
+    <p class="muted">HDSI 的模型行既是连接配置，也是用途分配中心：主叙事、后台压缩、Alter 情绪分析、Embedding 检索、表情包描述都由各行勾选决定，无需填写任何 providerId / modelId。</p>
+    <div id="providerList"></div>
+    <p><button class="btn" id="addProviderBtn" type="button">＋ 添加供应商</button></p>
+    <div class="notice info">💡 典型用法：第一条用能力强的模型勾选"主叙事"；再添加一条便宜模型只勾"后台压缩 + Alter 分析"，省钱又不影响写作质量。勾选多条主叙事时，failover 会在失败时自动切换。</div>
+  </div>
+
+  <div class="card">
+    <h3>图片理解（可选）</h3>
+    <label class="check-line"><input type="checkbox" id="f_vision"> 开启图片理解（vision）</label>
+    <div class="field inline" style="margin-top:12px;">
+      <div><label>图片理解方式</label><select id="f_visionMode"><option value="native">native：主叙事模型直接识图</option><option value="sidecar">sidecar：独立视觉模型描述图片</option></select></div>
+      <div><label>图片细节</label><select id="f_visionDetail"><option value="auto">auto</option><option value="low">low（更省 token）</option><option value="high">high（适合细小文字）</option></select></div>
+    </div>
+    <p class="muted">主叙事模型支持视觉时选 native；纯文本主模型选 sidecar，并在下方模型用途中勾选一条“侧端识图”视觉模型。图片与识别结果都不会写入记忆。</p>
+  </div>
+
+  <div class="card">
+    <h3>主叙事输出格式</h3>
+    <div class="field">
+      <label>主叙事输出格式</label>
+      <select id="f_mainResponseFormat">
+        <option value="json-object">json-object（推荐，模型支持 JSON 输出）</option>
+        <option value="prompt-only">prompt-only（模型不支持 JSON mode 时使用）</option>
+      </select>
+      <div class="hint">这是唯一影响主叙事的输出格式；模型卡片中的格式仅供压缩、Alter 等后台任务使用。</div>
+    </div>
+    <div class="field">
+      <label>实验性流式首条回复</label>
+      <select id="f_mainStreamingMode">
+        <option value="off">关闭（默认）</option>
+        <option value="experimental">experimental（仅确认 SSE JSON 兼容后开启）</option>
+      </select>
+      <div class="hint">仅私聊、仅 json-object。未知中转站请先关闭；开启后可更早投递首条回复，但流式收尾失败时不会自动重发可见消息。</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>生成的模型配置 <span class="tag">预览 · 会并入最终 koishi.yml</span></h3>
+    <div class="cmd-block"><pre class="yaml-snippet" id="modelPreview" style="max-height:340px; overflow:auto;"></pre></div>
+    <ul class="missing-list" id="modelMissing"></ul>
+  </div>
+
+</section>
+
+<!-- ── Step 8 角色设定 ── -->
+<section class="step-page" data-step="8">
+  <h2>第 8 步 · 角色设定</h2>
+  <p class="subtitle">人设和聊天白名单——你的角色由这里诞生。模型连接在上一步已完成。</p>
+
+  <div class="card">
+    <h3>① 角色人设（剧本起点）</h3>
+    <div class="field inline">
+      <div>
+        <label>角色名</label>
+        <input id="f_charName" placeholder="例如 小雪">
+      </div>
+      <div>
+        <label>时区</label>
+        <select id="f_timezone">
+          <option>Asia/Shanghai</option>
+          <option>Asia/Tokyo</option>
+          <option>Asia/Hong_Kong</option>
+          <option>Asia/Singapore</option>
+        </select>
+      </div>
+    </div>
+    <div class="field">
+      <label>角色设定</label>
+      <div class="hint">年龄、身份、性格、说话习惯……写得越具体，角色越鲜活。已填入示例可修改</div>
+      <textarea id="f_charProfile" rows="4"></textarea>
+    </div>
+    <div class="field">
+      <label>世界背景</label>
+      <input id="f_world" placeholder="现实社会，主角平常生活在中国">
+    </div>
+    <div class="field">
+      <label>主要活动地点（可选）</label>
+      <input id="f_location" placeholder="例如：主角家所在的城市、学校或常去的街区">
+    </div>
+    <div class="field">
+      <label>重要配角（可选）</label>
+      <div class="hint">主角生活里的其他人：家人、朋友等，让角色有真实的人际关系</div>
+      <textarea id="f_cast" rows="2" placeholder="例如：主角的室友，性格大大咧咧；一位高中好友，在外地读大学，常 online 聊天"></textarea>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>② 聊天白名单</h3>
+    <p class="muted">HDSI 采用白名单制：只有列出的 QQ 号能和角色私聊。建议先只加你自己。</p>
+    <div class="field inline">
+      <div>
+        <label>你的 QQ 号</label>
+        <input id="f_userQQ" placeholder="允许聊天的 QQ 号" inputmode="numeric">
+      </div>
+      <div>
+        <label>备注名（可选）</label>
+        <input id="f_userLabel" placeholder="例如 小明">
+      </div>
+    </div>
+    <div class="field">
+      <label>你在角色眼中的身份（可选）</label>
+      <div class="hint">角色怎么认识你、怎么看待你——写得越具体，关系越自然</div>
+      <textarea id="f_userProfile" rows="2" placeholder="例如：主角的网友，平时喜欢打游戏、听音乐，作息和主角差不多"></textarea>
+    </div>
+    <div class="field">
+      <label>初始关系（可选）</label>
+      <textarea id="f_userRelationship" rows="2" placeholder="例如：网上认识不久的朋友，比较聊得来"></textarea>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>生成的 HDSI 配置 <span class="tag">预览 · 会并入最终 koishi.yml</span></h3>
+    <div class="cmd-block"><pre class="yaml-snippet" id="hdsiPreview" style="max-height:340px; overflow:auto;"></pre></div>
+    <ul class="missing-list" id="hdsiMissing"></ul>
+  </div>
+
+  <details>
+    <summary>之后想改人设 / 加用户怎么办？</summary>
+    <p class="muted">启动 Koishi 后打开 <a href="http://localhost:5140" target="_blank">http://localhost:5140</a> 控制台，在插件配置里可以随时修改一切；也可以直接编辑 koishi.yml 后重启。本页只负责一次性生成初始配置。</p>
+  </details>
+</section>
+
+<!-- ── Step 9 世界与发言设定 ── -->
+<section class="step-page" data-step="9">
+  <h2>第 9 步 · 世界与发言设定</h2>
+  <p class="subtitle">选择角色生活的世界类型，调整她的发言节奏与生活方式。</p>
+
+  <div class="card">
+    <h3>① 世界预设</h3>
+    <p class="muted">选一个世界类型，会自动填入世界背景；之后也可以在"角色设定"里继续手动修改。</p>
+    <div class="radio-group" id="worldPresets">
+      <label class="radio-card" data-world="现实社会，主角平常生活在中国">
+        <input type="radio" name="worldPreset" value="real" checked>
+        <b>现实世界</b>
+        <span class="muted">当代现实社会——上学、工作、日常琐事与真实的人际往来</span>
+      </label>
+      <label class="radio-card" data-world="经典异世界——剑与魔法的幻想大陆。主角生活在有冒险者公会、魔法学院与王国的世界中，日常围绕修炼、委托与同行的伙伴展开。">
+        <input type="radio" name="worldPreset" value="isekai">
+        <b>经典异世界</b>
+        <span class="muted">剑与魔法的幻想大陆——公会、魔法学院、冒险与同行伙伴</span>
+      </label>
+      <label class="radio-card" data-world="近未来科技社会。主角生活在智能设备、飞行器与人工智能普及的都市中，日常与技术、数据和快节奏的城市生活交织。">
+        <input type="radio" name="worldPreset" value="future">
+        <b>未来世界</b>
+        <span class="muted">近未来科技社会——智能设备、飞行器与 AI 都市</span>
+      </label>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>② 发言节奏</h3>
+    <div class="field slider-field">
+      <div class="slider-head"><label>连续消息合并</label><span class="slider-val" id="v_debounce">2 秒</span></div>
+      <div class="slider-row"><span class="slider-cap">短</span><input type="range" id="f_debounce" min="0" max="15" step="0.5" value="2"><span class="slider-cap">长</span></div>
+      <div class="hint" style="margin-top:6px;">连续发送的多条消息在此时间内合并为一轮写作，0 为关闭</div>
+    </div>
+    <div class="field slider-field">
+      <div class="slider-head"><label>打字速度</label><span class="slider-val" id="v_typing">8 字/秒</span></div>
+      <div class="slider-row"><span class="slider-cap">慢</span><input type="range" id="f_typing" min="1" max="60" step="1" value="8"><span class="slider-cap">快</span></div>
+      <div class="hint" style="margin-top:6px;">角色消息按此速度模拟打字延迟</div>
+    </div>
+    <div class="field slider-field">
+      <div class="slider-head"><label>自动推进间隔</label><span class="slider-val" id="v_autoMin">40 分钟</span></div>
+      <div class="slider-row"><span class="slider-cap">密</span><input type="range" id="f_autoMin" min="5" max="240" step="5" value="40"><span class="slider-cap">疏</span></div>
+      <div class="hint" style="margin-top:6px;">无对话时每隔这段时间推进一次角色的生活</div>
+    </div>
+    <p class="muted" style="margin-top:16px;">分段回复、自动推进、主动联系与夜间休息均已按推荐值默认开启，无需手动设置。</p>
+  </div>
+
+  <div class="card">
+    <h3>③ 聊天互动</h3>
+    <p class="muted">让角色像真人一样使用 QQ 的各种互动方式。</p>
+    <div class="check-col">
+      <label class="check-line"><input type="checkbox" id="f_quoteReply" checked> <span><b>引用回复</b>——在 QQ 群聊中引用当前上下文里可映射的消息；私聊仍以普通消息回复</span></label>
+      <label class="check-line"><input type="checkbox" id="f_messageReactions" checked> <span><b>贴表情回应</b>——给消息贴一个表情反应（QQ 群聊）</span></label>
+      <label class="check-line"><input type="checkbox" id="f_nativeFaces" checked> <span><b>原生小表情</b>——聊天中发送 QQ 自带的小黄脸表情</span></label>
+      <label class="check-line"><input type="checkbox" id="f_stickers"> <span><b>本地表情包库</b>——从表情包目录里挑图发送（同时需要在模型中心勾选一条能识图的“表情包”模型；素材放入 data/hds-interlude/stickers）</span></label>
+      <div class="field" style="margin:10px 0 0 28px;"><label>表情包描述返回格式</label><select id="f_stickerFormat"><option value="json-object">json-object（默认）</option><option value="prompt-only">prompt-only（模型 JSON mode 不稳定时）</option></select><div class="hint">prompt-only 不发送 API JSON mode，但仍会要求模型输出可解析的描述 JSON。</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ── Step 10 生成 ── -->
+<section class="step-page" data-step="10">
+  <h2>第 10 步 · 生成并启动</h2>
+  <p class="subtitle">把前面所有内容合成一个可直接使用的 koishi.yml，并保留完整的 Koishi Console 与插件管理基线。</p>
+
+  <div class="card">
+    <h3>① 你的 koishi.yml</h3>
+    <ul class="missing-list" id="finalMissing"></ul>
+    <div class="cmd-block"><button class="copy-btn" id="copyYamlBtn">复制全部</button><pre class="yaml-preview" id="yamlFinal"></pre></div>
+    <p>
+      <button class="btn primary" id="downloadYamlBtn">⬇ 下载 koishi.yml</button>
+    </p>
+    <ol>
+      <li>确认 SnowLuma 已启动、QQ 进程已注入</li>
+      <li>把下载的 <code>koishi.yml</code> 放进 Koishi 项目根目录（例如 <code>C:\hds-bot\koishi.yml</code>），<strong>覆盖脚手架自带的 koishi.yml</strong>。本向导仅面向全新项目，仍建议保留 <code>koishi.yml.bak</code> 备份；生成文件已包含插件市场、配置、资源管理、通知、状态等 Console 基础模块，并预设 Koishi 官方插件索引。</li>
+      <li>启动：</li>
+    </ol>
+    <div class="cmd-block"><button class="copy-btn">复制</button><pre>cd C:\hds-bot
+npm run start</pre></div>
+    <p class="muted">日志里出现 SnowLuma 连接成功、adapter-onebot 与 hds-interlude 加载成功即大功告成。</p>
+    <div class="notice info">💡 beta7 的自动推进会先由“时间导演”生成当前时间窗口内的事件账本，再交给主叙事渲染。新项目无需额外配置；如果你从旧版本升级且曾出现自动剧情写到未来，安装后可用管理员私聊执行 <code>interlude.timeline.rebase</code> 重建短期时间状态。</div>
+  </div>
+
+  <div class="card">
+    <h3>② 第一句对话</h3>
+    <p>用<strong>白名单里你自己的 QQ</strong> 给机器人发私聊消息，按顺序发送这两条命令做体检和开局：</p>
+    <div class="cmd-block"><button class="copy-btn">复制</button><pre>interlude.doctor
+interlude.story.start</pre></div>
+    <p><code>doctor</code> 会检查模型、白名单、时区是否就绪；<code>story.start</code> 会创建第一份主剧本。之后正常发一句话，角色就会回你了——她可能秒回、可能隔一会儿才回，也可能正在忙。</p>
+    <div class="notice info">💡 想随时查看角色状态：发 <code>interlude.status</code>；手动推进一步生活：<code>interlude.advance</code>；查看近期日程：<code>interlude.schedule</code>。完整指令表见 HDSI 文档 command.md。</div>
+  </div>
+
+  <div class="card">
+    <h3>备选：一键部署脚本</h3>
+<p class="muted">把下面脚本保存为 <code>setup.ps1</code>（或直接下载），并把 <code>koishi-plugin-hds-interlude-1.0.1-beta4-ostt.tgz</code> 放到同一文件夹；在<strong>完成第 1、2、3 步之后</strong>运行。脚本会自动完成创建 Koishi 项目、安装插件、写入配置。</p>
+    <div class="cmd-block"><button class="copy-btn" id="copyPsBtn">复制脚本</button><pre class="yaml-preview" id="psScript"></pre></div>
+    <p><button class="btn primary" id="downloadPsBtn">⬇ 下载 setup.ps1</button></p>
+    <p class="muted">运行方式：在脚本所在目录打开 PowerShell，执行 <code>powershell -ExecutionPolicy Bypass -File .\setup.ps1</code>，按提示输入安装目录和项目文件夹名即可。</p>
+  </div>
+
+  <div class="notice danger">🔒 koishi.yml 里含有你的 API Key 和连接 Token：不要截图发群里、不要上传到公开仓库。</div>
+
+  <div class="card">
+    <h3>常见问题速查</h3>
+    <ul>
+      <li><strong>连不上 SnowLuma</strong> → 检查 SnowLuma 是否在跑、端口/Token 两边是否一致、防火墙是否拦截了本地端口</li>
+      <li><strong>机器人不回消息</strong> → 依次确认：机器人 QQ 在 botAccounts、你的 QQ 在 userAccounts、模型 Key 有效、日志里模型调用成功</li>
+      <li><strong>模型报 429 / 超时</strong> → 免费额度用尽或网络问题；换模型或稍后重试</li>
+      <li><strong>指令没反应</strong> → 确认消息是私聊发送的，且 Koishi 日志里没有加载失败的插件</li>
+    </ul>
+    <p class="muted">更详细的排障见 HDSI 的 DEPLOYMENT_GUIDE.md 第八节和 BEGINNER_GUIDE.md。</p>
+  </div>
+</section>
+
+<!-- ── 底部导航 ── -->
+<div class="bottom-bar" id="bottomBar">
+  <button class="btn" id="prevBtn">← 上一步</button>
+  <div style="display:flex; gap:10px; align-items:center;">
+    <button class="btn done-btn" id="doneBtn">✓ 标记本步完成</button>
+    <button class="btn primary" id="nextBtn">下一步 →</button>
+  </div>
+</div>
+
+</main>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  /* ══════════ 状态管理 ══════════ */
+  var LS_DATA = 'hdsiWizardData';
+  var LS_DONE = 'hdsiWizardDone';
+  var LS_STEP = 'hdsiWizardStep';
+
+  /* 各服务商预设：显示名、默认模型、注册入口 */
+  var MODES = {
+    'openai-compatible':  { label: 'OpenAI 兼容接口（中转站 / 自建）', model: '',                 reg: '任意 OpenAI 兼容服务商（中转站、自建网关等），地址以 /v1/chat/completions 结尾' },
+    'zhipu-official':     { label: '智谱 GLM 官方',   model: 'glm-5.3-flash',     reg: '到 open.bigmodel.cn 注册并创建 API Key，GLM 系列新用户有免费额度' },
+    'openai-official':    { label: 'OpenAI 官方',     model: 'gpt-5-mini',        reg: '到 platform.openai.com 创建 API Key' },
+    'deepseek-official':  { label: 'DeepSeek 官方',   model: 'deepseek-chat',     reg: '到 platform.deepseek.com 创建 API Key' },
+    'moonshot-official':  { label: 'Kimi / Moonshot 官方', model: 'kimi-k2.5',    reg: '到 platform.moonshot.cn 创建 API Key' },
+    'dashscope-official': { label: '阿里云百炼官方（通义千问）', model: 'qwen-plus', reg: '到 bailian.console.aliyun.com 创建 API Key（百炼 / 通义千问）' },
+    'siliconflow-official':{ label: '硅基流动官方',   model: 'Qwen/Qwen3-8B',     reg: '到 siliconflow.cn 注册并创建 API Key' },
+    'openrouter':         { label: 'OpenRouter',      model: 'openai/gpt-5-mini', reg: '到 openrouter.ai 创建 API Key，一个 Key 调用各家模型' },
+    'gemini-openai':      { label: 'Google Gemini（OpenAI 兼容）', model: 'gemini-3-flash', reg: '到 aistudio.google.com 创建 API Key' }
+  };
+
+  function newProvider(isFirst) {
+    return {
+      label: '',
+      mode: 'openai-compatible',
+      apiKey: '',
+      model: '',
+      endpoint: '',
+      reasoning: 'high',
+      deepseekThinking: 'disabled',
+      deepseekReasoning: 'low',
+      region: 'beijing',
+      temperature: '0.75',
+      topP: '0.88',
+      compTemperature: '0.3',
+      compTopP: '1.0',
+      alterTemperature: '0.3',
+      alterTopP: '1.0',
+      responseFormat: 'json-object',
+      useMain: !!isFirst,
+      useCompaction: !!isFirst,
+      useAlter: !!isFirst,
+      useEmbedding: false,
+      useStickers: false,
+      useVision: false
+    };
+  }
+
+  var DEFAULTS = {
+    wsPort: '3001',
+    wsToken: '',
+    botQQ: '',
+    vision: false,
+    visionMode: 'native',
+    visionDetail: 'auto',
+    charName: '',
+    charProfile: '18岁的女孩，刚刚高考结束，正准备开始大学生活。平时喜欢熬夜，有点内向，容易胆怯，但心态平和；生活比较丰富，喜欢尝试一些能力范围内没试过的东西，对想干的事情非常有行动力。线上聊天话很少、发言简洁、有点喜欢吐槽，打字不习惯加标点。',
+    world: '现实社会，主角平常生活在中国',
+    location: '',
+    cast: '',
+    timezone: 'Asia/Shanghai',
+    userQQ: '',
+    userLabel: '',
+    userProfile: '',
+    userRelationship: '',
+    debounce: '2',
+    typing: '8',
+    autoMin: '40',
+    mainResponseFormat: 'json-object',
+    mainStreamingMode: 'off',
+    quoteReply: true,
+    messageReactions: true,
+    nativeFaces: true,
+    stickers: false,
+    stickerFormat: 'json-object'
+  };
+
+  function loadData() {
+    var d = Object.assign({}, DEFAULTS);
+    d.providers = [];
+    try {
+      var raw = localStorage.getItem(LS_DATA);
+      if (raw) {
+        var parsed = JSON.parse(raw);
+        Object.keys(DEFAULTS).forEach(function (k) {
+          if (parsed[k] !== undefined) d[k] = parsed[k];
+        });
+        d.vision = !!parsed.vision;
+        if (Array.isArray(parsed.providers)) {
+          d.providers = parsed.providers.map(function (pv) {
+            return Object.assign(newProvider(true), pv, { responseFormat: pv.responseFormat || 'json-object' });
+          });
+        } else if (parsed.provMode) {
+          // 旧版单供应商字段迁移为 providers[0]
+          d.providers = [{
+            label: '',
+            mode: parsed.provMode || 'openai-compatible',
+            apiKey: parsed.apiKey || '',
+            model: parsed.model || '',
+            endpoint: parsed.endpoint || '',
+            reasoning: parsed.reasoning || 'high',
+            region: parsed.region || 'beijing',
+            responseFormat: 'json-object',
+            useMain: true, useCompaction: true, useAlter: true,
+            useEmbedding: false, useStickers: false, useVision: false
+          }];
+        }
+      }
+    } catch (e) {}
+    return d;
+  }
+  function saveData() { localStorage.setItem(LS_DATA, JSON.stringify(data)); }
+
+  function loadDone() {
+    try { return JSON.parse(localStorage.getItem(LS_DONE) || '[]'); } catch (e) { return []; }
+  }
+  function saveDone() { localStorage.setItem(LS_DONE, JSON.stringify(doneSet)); }
+
+  var data = loadData();
+  var doneSet = loadDone();
+  var currentStep = parseInt(localStorage.getItem(LS_STEP) || '0', 10);
+  if (isNaN(currentStep) || currentStep < 0 || currentStep > 10) currentStep = 0;
+
+  var STEP_TITLES = [
+    '概览与准备',
+    '安装 Node.js',
+    '安装 SnowLuma',
+    '配置 SnowLuma',
+    '安装 Koishi',
+    '安装插件',
+    '连接参数',
+    '模型中心',
+    '角色设定',
+    '世界与发言',
+    '生成与启动'
+  ];
+
+  /* ══════════ 工具 ══════════ */
+  function y(v) { return JSON.stringify(String(v == null ? '' : v)); }
+
+  function generateToken() {
+    var bytes = new Uint8Array(32);
+    crypto.getRandomValues(bytes);
+    var s = btoa(String.fromCharCode.apply(null, bytes));
+    return s.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  }
+
+  /* ══════════ YAML 生成 ══════════ */
+  function providerYaml(indent) {
+    var p = indent;
+    var lines = [p + 'providers:'];
+    data.providers.forEach(function (pv, i) {
+      var n = i + 1;
+      var mode = pv.mode || 'openai-compatible';
+      lines.push(p + '  - id: ' + y('p' + n));
+      lines.push(p + '    label: ' + y(pv.label || ('模型连接 ' + n)));
+      lines.push(p + '    enabled: true');
+      lines.push(p + '    mode: ' + y(mode));
+      if (mode === 'openai-compatible') {
+        lines.push(p + '    endpoint: ' + y(pv.endpoint || '<在此填入接口地址>'));
+        lines.push(p + '    apiKey: ' + y(pv.apiKey || '<在此填入APIKey>'));
+        lines.push(p + '    model: ' + y(pv.model || '<模型名>'));
+        if (pv.useMain) {
+          lines.push(p + '    temperature: ' + (parseFloat(pv.temperature) || 0.75));
+          lines.push(p + '    topP: ' + (parseFloat(pv.topP) || 0.88));
+        }
+      } else {
+        lines.push(p + '    apiKey: ' + y(pv.apiKey || '<在此填入APIKey>'));
+        lines.push(p + '    model: ' + y(pv.model || MODES[mode].model));
+        if (mode === 'zhipu-official') {
+          lines.push(p + '    reasoningEffort: ' + y(pv.reasoning || 'high'));
+        }
+        if (mode === 'deepseek-official') {
+          lines.push(p + '    deepseekThinking: ' + y(pv.deepseekThinking === 'enabled' ? 'enabled' : 'disabled'));
+          if (pv.deepseekThinking === 'enabled') lines.push(p + '    deepseekReasoningEffort: ' + y(pv.deepseekReasoning || 'low'));
+        }
+        if (mode === 'dashscope-official') {
+          lines.push(p + '    dashscopeRegion: ' + y(pv.region || 'beijing'));
+        }
+      }
+      lines.push(p + '    responseFormat: ' + y(pv.responseFormat || 'json-object'));
+      lines.push(p + '    useForMain: ' + (pv.useMain ? 'true' : 'false'));
+      lines.push(p + '    useForCompaction: ' + (pv.useCompaction ? 'true' : 'false'));
+      lines.push(p + '    useForAlter: ' + (pv.useAlter ? 'true' : 'false'));
+      lines.push(p + '    useForEmbedding: ' + (pv.useEmbedding ? 'true' : 'false'));
+      lines.push(p + '    useForStickers: ' + (pv.useStickers ? 'true' : 'false'));
+      lines.push(p + '    useForVision: ' + (pv.useVision ? 'true' : 'false'));
+    });
+    return lines.join('\n');
+  }
+
+  function modelYaml(indent) {
+    var p = indent;
+    var L = [p + 'model:'];
+    L.push(providerYaml(p + '  '));
+    L.push(p + '  mainResponseFormat: ' + y(data.mainResponseFormat === 'prompt-only' ? 'prompt-only' : 'json-object'));
+    L.push(p + '  mainStreamingMode: ' + y(data.mainStreamingMode === 'experimental' ? 'experimental' : 'off'));
+    L.push(p + '  failover:');
+    L.push(p + '    enabled: true');
+    L.push(p + '    strategy: "priority"');
+    L.push(p + '    maxAttemptsPerProvider: 2');
+    L.push(p + '    cooldownMinutes: 5');
+    if (data.vision) {
+      L.push(p + '  vision:');
+      L.push(p + '    enabled: true');
+      L.push(p + '    mode: ' + y(data.visionMode === 'sidecar' ? 'sidecar' : 'native'));
+      L.push(p + '    detail: ' + y(['low', 'high', 'auto'].indexOf(data.visionDetail) >= 0 ? data.visionDetail : 'auto'));
+    }
+    // 勾选了 Embedding 用途才开启；否则保持默认关闭
+    if (data.providers.some(function (pv) { return pv.useEmbedding; })) {
+      L.push(p + '  embedding:');
+      L.push(p + '    enabled: true');
+    }
+    // 后台压缩：取第一条压缩连接的采样参数；没有则显式关闭
+    var compPv = data.providers.filter(function (pv) { return pv.useCompaction; })[0];
+    L.push(p + '  compaction:');
+    if (compPv) {
+      L.push(p + '    enabled: true');
+      L.push(p + '    temperature: ' + (parseFloat(compPv.compTemperature) || 0.3));
+      L.push(p + '    topP: ' + (parseFloat(compPv.compTopP) || 1.0));
+    } else {
+      L.push(p + '    enabled: false');
+    }
+    return L.join('\n');
+  }
+
+  function adapterYaml(indent) {
+    var p = indent;
+    var port = data.wsPort || '3001';
+    return [
+      p + 'adapter-onebot:',
+      p + '  selfId: ' + y(data.botQQ || '<机器人QQ号>'),
+      p + '  protocol: "ws"',
+      p + '  endpoint: ' + y('ws://127.0.0.1:' + port),
+      p + '  token: ' + y(data.wsToken || '<第3步生成的Token>')
+    ].join('\n');
+  }
+
+  function hdsiYaml(indent) {
+    var p = indent;
+    var L = [];
+    L.push(p + 'hds-interlude:');
+    L.push(modelYaml(p + '  '));
+    L.push(p + '  storyDefaults:');
+    L.push(p + '    characterName: ' + y(data.charName || '<角色名>'));
+    L.push(p + '    characterProfile: ' + y(data.charProfile || '<角色设定>'));
+    L.push(p + '    world: ' + y(data.world || '现实社会，主角平常生活在中国'));
+    L.push(p + '    location: ' + y(data.location || ''));
+    L.push(p + '    style: ' + y('当代现实主义生活剧。主角拥有丰富、具体且持续变化的个人生活；配角也有各自的节奏、立场与情绪。关系在日常互动和小事件中缓慢发展，生活常常留下未完成但真实感的余波。'));
+    L.push(p + '    supportingCast: ' + y(data.cast || ''));
+    L.push(p + '    userProfile: ' + y('一位普通网友'));
+    L.push(p + '    relationship: ' + y('该用户与主角不经常联系'));
+    L.push(p + '    timezone: ' + y(data.timezone || 'Asia/Shanghai'));
+    L.push(p + '  onebot:');
+    L.push(p + '    enabled: true');
+    L.push(p + '    ignoreSelfMessages: true');
+    L.push(p + '    botAccounts:');
+    L.push(p + '      - qq: ' + y(data.botQQ || '<机器人QQ号>'));
+    L.push(p + '        enabled: true');
+    L.push(p + '    userAccounts:');
+    L.push(p + '      - qq: ' + y(data.userQQ || '<你的QQ号>'));
+    L.push(p + '        label: ' + y(data.userLabel || '用户1'));
+    L.push(p + '        enabled: true');
+    L.push(p + '        profile: ' + y(data.userProfile || '一位普通网友'));
+    L.push(p + '        relationship: ' + y(data.userRelationship || '该用户与主角不经常联系'));
+    L.push(p + '  runtime:');
+    L.push(p + '    autoCreate: true');
+    L.push(p + '    contextEntryLimit: 50');
+    L.push(p + '    contextTimeWindowMinutes: 60');
+    L.push(p + '    userMessageDebounceSeconds: ' + (parseFloat(data.debounce) || 0));
+    L.push(p + '    typingCharactersPerSecond: ' + (parseInt(data.typing, 10) || 8));
+    L.push(p + '    typingJitterRatio: 0.3');
+    L.push(p + '    splitReplyMessages: true');
+    L.push(p + '    autoAdvanceEnabled: true');
+    L.push(p + '    autoAdvanceIntervalMinutes: ' + (parseFloat(data.autoMin) || 40));
+    L.push(p + '    allowProactiveMessages: true');
+    L.push(p + '    restWindows:');
+    L.push(p + '      - label: "night sleep"');
+    L.push(p + '        start: "23:00"');
+    L.push(p + '        end: "07:00"');
+    L.push(p + '        enabled: true');
+    L.push(p + '        minIntervalMinutes: 120');
+    L.push(p + '        maxIntervalMinutes: 240');
+    L.push(p + '  schedulePreplan:');
+    L.push(p + '    enabled: true');
+    L.push(p + '    horizonDays: 14');
+    L.push(p + '    reviewAfterLocalHour: 3');
+    L.push(p + '    anchorAutoAdvance: true');
+    // 聊天互动（引用回复 / 贴表情 / 原生小表情）
+    var anyChat = data.quoteReply || data.messageReactions || data.nativeFaces;
+    L.push(p + '  chatActions:');
+    L.push(p + '    enabled: ' + (anyChat ? 'true' : 'false'));
+    L.push(p + '    platforms: ["qq"]');
+    L.push(p + '    quoteReply: ' + (data.quoteReply ? 'true' : 'false'));
+    L.push(p + '    messageReactions: ' + (data.messageReactions ? 'true' : 'false'));
+    L.push(p + '    nativeFaces: ' + (data.nativeFaces ? 'true' : 'false'));
+    L.push(p + '  sharedStory:');
+    L.push(p + '    autoEnrollParticipants: true');
+    // Alter System：取第一条 Alter 连接的采样参数；没有则显式关闭（其默认为开启）
+    var alterPv = data.providers.filter(function (pv) { return pv.useAlter; })[0];
+    L.push(p + '  alterSystem:');
+    if (alterPv) {
+      L.push(p + '    enabled: true');
+      L.push(p + '    temperature: ' + (parseFloat(alterPv.alterTemperature) || 0.3));
+      L.push(p + '    topP: ' + (parseFloat(alterPv.alterTopP) || 1.0));
+    } else {
+      L.push(p + '    enabled: false');
+    }
+    // 本地表情包库需要用户开关与视觉描述模型同时满足
+    if (data.stickers && data.providers.some(function (pv) { return pv.useStickers; })) {
+      L.push(p + '  stickers:');
+      L.push(p + '    enabled: true');
+      L.push(p + '    descriptionResponseFormat: ' + y(data.stickerFormat === 'prompt-only' ? 'prompt-only' : 'json-object'));
+    }
+    L.push(p + '  logging:');
+    L.push(p + '    level: "info"');
+    L.push(p + '    verbosity: "standard"');
+    return L.join('\n');
+  }
+
+  function fullYaml() {
+    return [
+'# Koishi 配置文件 —— 由 HDS Interlude 1.0.1-beta4-ostt 部署向导生成',
+      '# 放置位置：Koishi 项目根目录（与 package.json 同级），覆盖前请备份原文件',
+      '# ⚠ 内含 API Key 与 Token，请勿分享或上传到公开仓库',
+      '',
+      'plugins:',
+      '  group:server:',
+      '    server:',
+      '      port: 5140',
+      '      maxPort: 5149',
+      '  group:basic:',
+      '    commands: {}',
+      '    help: {}',
+      '    http: {}',
+      '    locales: {}',
+      '    proxy-agent: {}',
+      '    rate-limit: {}',
+      '    telemetry: {}',
+      '  group:console:',
+      '    actions: {}',
+      '    analytics: {}',
+      '    config: {}',
+      '    console:',
+      '      open: true',
+      '    dataview: {}',
+      '    explorer: {}',
+      '    insight: {}',
+      '    market:',
+      '      search:',
+      '        endpoint: "https://registry.koishi.chat/index.json"',
+      '      registry:',
+      '        endpoint: ""',
+      '    logger: {}',
+      '    notifier: {}',
+      '    oobe: {}',
+      '    sandbox: {}',
+      '    status: {}',
+      '    theme-vanilla: {}',
+      '  group:storage:',
+      '    database-sqlite:',
+      '      path: data/koishi.db',
+      '  group:adapter:',
+      adapterYaml('    '),
+      '  group:hdsi:',
+      hdsiYaml('    '),
+      ''
+    ].join('\n');
+  }
+
+  function psScript() {
+    var yaml = fullYaml().split('\n').map(function (line) {
+      return line.replace(/'/g, "''");
+    }).join('\n');
+    return [
+'# HDS Interlude 1.0.1-beta4-ostt 一键部署脚本（由部署向导生成）',
+      '# 使用前提：已安装 Node.js；SnowLuma 已启动并注入 QQ 进程',
+      '# 运行：powershell -ExecutionPolicy Bypass -File .\\setup.ps1',
+      '',
+      '$ErrorActionPreference = "Stop"',
+      '',
+      '# HDSI beta 安装包：默认与 setup.ps1 放在同一文件夹；缺失时可手动输入完整路径',
+'$betaPackage = Join-Path $PSScriptRoot "koishi-plugin-hds-interlude-1.0.1-beta4-ostt.tgz"',
+      'if (-not (Test-Path -LiteralPath $betaPackage)) {',
+'  $betaPackage = Read-Host "请输入 koishi-plugin-hds-interlude-1.0.1-beta4-ostt.tgz 的完整路径"',
+      '}',
+'if (-not (Test-Path -LiteralPath $betaPackage)) { throw "未找到 HDSI 1.0.1-beta4-ostt 安装包，脚本已停止。" }',
+      '$betaPackage = (Resolve-Path -LiteralPath $betaPackage).Path',
+      '',
+      '# 1. 检查 Node.js',
+      'try { $v = node -v } catch {',
+      '  Write-Host "[x] 未检测到 Node.js，请先完成第 1 步安装" -ForegroundColor Red',
+      '  exit 1',
+      '}',
+      'Write-Host "[ok] Node.js $v" -ForegroundColor Green',
+      '',
+      '# 2. 选择安装目录',
+      '$base = Read-Host "请输入安装目录（直接回车使用 C:\\hds-bot）"',
+      'if ([string]::IsNullOrWhiteSpace($base)) { $base = "C:\\hds-bot" }',
+      'New-Item -ItemType Directory -Force -Path $base | Out-Null',
+      'Set-Location $base',
+      '',
+      '# 3. 创建 Koishi 项目（脚手架提问：目录名填英文如 hds-bot，其余回车默认）',
+      'npm create koishi@latest',
+      '$projName = Read-Host "请输入刚才创建的项目文件夹名"',
+      'Set-Location (Join-Path $base $projName)',
+      'if (-not (Test-Path -LiteralPath "package.json")) { throw "当前目录不是 Koishi 项目根目录：$PWD" }',
+      '',
+      '# 4. 安装完整 Console 基线和 HDSI 所需插件',
+      'Write-Host "[..] 正在安装 Console 基线与机器人插件，取决于网速可能需要几分钟" -ForegroundColor Yellow',
+      'npm install @koishijs/plugin-actions @koishijs/plugin-analytics @koishijs/plugin-commands @koishijs/plugin-config @koishijs/plugin-console @koishijs/plugin-explorer @koishijs/plugin-help @koishijs/plugin-http @koishijs/plugin-insight @koishijs/plugin-locales @koishijs/plugin-logger @koishijs/plugin-market @koishijs/plugin-notifier @koishijs/plugin-oobe @koishijs/plugin-proxy-agent @koishijs/plugin-sandbox @koishijs/plugin-status koishi-plugin-dataview koishi-plugin-rate-limit koishi-plugin-telemetry koishi-plugin-theme-vanilla',
+      'npm install koishi-plugin-adapter-onebot',
+      'npm install --save-exact $betaPackage',
+      'npm install @koishijs/plugin-database-sqlite',
+      '',
+      '# 5. 写入 koishi.yml（先备份原文件）',
+      'if (Test-Path koishi.yml) {',
+      '  Copy-Item koishi.yml koishi.yml.bak -Force',
+      '  Write-Host "[ok] 原配置已备份为 koishi.yml.bak" -ForegroundColor Green',
+      '}',
+      "$yaml = @'",
+      yaml,
+      "'@",
+      '[IO.File]::WriteAllText("$PWD\\koishi.yml", $yaml, (New-Object System.Text.UTF8Encoding($false)))',
+      'Write-Host "[ok] koishi.yml 已写入" -ForegroundColor Green',
+      '',
+      '# 6. 启动',
+      'Write-Host ""',
+      'Write-Host "全部完成！正在启动 Koishi……（之后可用 Ctrl+C 停止，再手动 npm run start 启动）" -ForegroundColor Cyan',
+      'npm run start',
+      ''
+    ].join('\n');
+  }
+
+  /* ══════════ 渲染 ══════════ */
+  var $ = function (id) { return document.getElementById(id); };
+
+  function esc(s) {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  function renderRecap() {
+    var port = data.wsPort || '3001';
+    var token = data.wsToken || '（未生成）';
+    var snow = [
+      '<div class="chip">监听端口 <b>' + esc(port) + '</b></div>',
+      '<div class="chip">accessToken <b>' + esc(token.length > 24 ? token.slice(0, 24) + '…' : token) + '</b></div>'
+    ].join('');
+    if ($('snowlumaRecap')) $('snowlumaRecap').innerHTML = snow;
+    if ($('adapterRecap')) {
+      $('adapterRecap').innerHTML =
+        '<div class="chip">端口 <b>' + esc(port) + '</b></div>' +
+        '<div class="chip">Token <b>' + esc(token.length > 24 ? token.slice(0, 24) + '…' : token) + '</b></div>';
+    }
+    if ($('cfgPort')) $('cfgPort').textContent = port;
+    if ($('cfgToken')) $('cfgToken').textContent = data.wsToken ? token : '上面生成的 Token（未生成）';
+  }
+
+  function missingList(items, elId) {
+    var el = $(elId);
+    if (!el) return;
+    if (!items.length) {
+      el.innerHTML = '<li style="color:var(--accent-2)">✓ 本步必填项已完整</li>';
+    } else {
+      el.innerHTML = items.map(function (m) { return '<li>⚠ ' + esc(m) + '</li>'; }).join('');
+    }
+  }
+
+  function providerIssues() {
+    var issues = [];
+    if (!data.providers.length) {
+      issues.push('至少需要一条模型连接');
+      return issues;
+    }
+    var hasMain = data.providers.some(function (pv) { return pv.useMain; });
+    if (!hasMain) issues.push('没有任何连接勾选"主叙事"用途；至少需要一条');
+    if (data.stickers && !data.providers.some(function (pv) { return pv.useStickers; })) {
+      issues.push('已开启本地表情包库，但没有任何模型勾选“表情包”用途');
+    }
+    if (data.vision && data.visionMode === 'sidecar' && !data.providers.some(function (pv) { return pv.useVision; })) {
+      issues.push('已选择 sidecar 图片理解，但没有任何模型勾选“侧端识图”用途');
+    }
+    data.providers.forEach(function (pv, i) {
+      var n = i + 1;
+      var name = pv.label || ('模型连接 ' + n);
+      if (!pv.apiKey) issues.push(name + '：还没填 API Key');
+      if (pv.mode === 'openai-compatible' && !pv.endpoint) issues.push(name + '：还没填接口地址');
+      if (pv.mode === 'openai-compatible' && !pv.model) issues.push(name + '：还没填模型名');
+    });
+    return issues;
+  }
+
+  function renderPreviews() {
+    if ($('adapterPreview')) {
+      $('adapterPreview').textContent = adapterYaml('') + '\n# ↑ 位于 plugins: group:adapter: 之下';
+      missingList([
+        !data.botQQ ? '还没填机器人 QQ 号（上方输入框）' : '',
+        !data.wsToken ? '还没生成连接 Token（回第 3 步点"随机生成"）' : ''
+      ].filter(Boolean), 'adapterMissing');
+    }
+    if ($('modelPreview')) {
+      $('modelPreview').textContent = modelYaml('');
+      missingList(providerIssues(), 'modelMissing');
+    }
+    if ($('hdsiPreview')) {
+      $('hdsiPreview').textContent = hdsiYaml('');
+      missingList([
+        !data.userQQ ? '还没填你的 QQ 号（白名单）' : '',
+        !data.charName ? '还没填角色名' : ''
+      ].filter(Boolean), 'hdsiMissing');
+    }
+    if ($('yamlFinal')) {
+      $('yamlFinal').textContent = fullYaml();
+      var missing = [];
+      if (!data.botQQ) missing.push('机器人 QQ 号（第 6 步）');
+      if (!data.wsToken) missing.push('连接 Token（第 3 步）');
+      var mainProvs = data.providers.filter(function (pv) { return pv.useMain; });
+      if (!mainProvs.length) {
+        missing.push('主叙事模型（第 7 步：添加连接并勾选"主叙事"）');
+      } else {
+        if (mainProvs.some(function (pv) { return !pv.apiKey; })) missing.push('API Key（第 7 步）');
+        if (mainProvs.some(function (pv) { return pv.mode === 'openai-compatible' && !pv.endpoint; })) missing.push('接口地址（第 7 步）');
+        if (mainProvs.some(function (pv) { return pv.mode === 'openai-compatible' && !pv.model; })) missing.push('模型名（第 7 步）');
+      }
+      if (!data.userQQ) missing.push('你的 QQ 号（第 8 步）');
+      if (!data.charName) missing.push('角色名（第 8 步）');
+      if (data.stickers && !data.providers.some(function (pv) { return pv.useStickers; })) {
+        missing.push('表情包描述模型（第 7 步至少勾选一条能识图的“表情包”用途）');
+      }
+      missingList(missing, 'finalMissing');
+      if (missing.length) {
+        $('finalMissing').insertAdjacentHTML('beforeend',
+          '<li style="color:var(--muted)">带 &lt;尖括号&gt; 的占位符所在位置需要你回到对应步骤补全后再下载，或下载后手动编辑。</li>');
+      }
+    }
+    if ($('psScript')) $('psScript').textContent = psScript();
+  }
+
+  function renderNav() {
+    var nav = $('stepNav');
+    nav.innerHTML = '';
+    STEP_TITLES.forEach(function (title, i) {
+      var btn = document.createElement('button');
+      btn.className = 'step-nav' + (i === currentStep ? ' active' : '') + (doneSet.indexOf(i) >= 0 ? ' done' : '');
+      btn.innerHTML = '<span class="num">' + (doneSet.indexOf(i) >= 0 ? '✓' : (i === 0 ? '★' : i)) + '</span><span class="title">' + title + '</span>';
+      btn.addEventListener('click', function () { goTo(i); });
+      nav.appendChild(btn);
+    });
+    var pct = Math.round(doneSet.length / STEP_TITLES.length * 100);
+    $('progressFill').style.width = pct + '%';
+    $('progressText').textContent = '已完成 ' + doneSet.length + ' / ' + STEP_TITLES.length + ' 步';
+  }
+
+  function renderPages() {
+    var pages = document.querySelectorAll('.step-page');
+    pages.forEach(function (p) {
+      p.classList.toggle('visible', parseInt(p.getAttribute('data-step'), 10) === currentStep);
+    });
+    $('prevBtn').style.visibility = currentStep === 0 ? 'hidden' : 'visible';
+    $('nextBtn').textContent = currentStep === STEP_TITLES.length - 1 ? '完成 ✓' : '下一步 →';
+    var done = doneSet.indexOf(currentStep) >= 0;
+    $('doneBtn').textContent = done ? '✓ 已标记完成（点击取消）' : '✓ 标记本步完成';
+  }
+
+  function goTo(i) {
+    var prev = currentStep;
+    currentStep = i;
+    localStorage.setItem(LS_STEP, String(i));
+    renderNav();
+    renderPages();
+    renderRecap();
+    renderProviders();
+    renderPreviews();
+    if (prev !== i) window.scrollTo(0, 0);
+  }
+
+  /* ══════════ 表单绑定 ══════════ */
+  var BIND = [
+    ['f_wsPort', 'wsPort'],
+    ['f_wsToken', 'wsToken'],
+    ['f_botQQ', 'botQQ'],
+    ['f_charName', 'charName'],
+    ['f_charProfile', 'charProfile'],
+    ['f_world', 'world'],
+    ['f_location', 'location'],
+    ['f_cast', 'cast'],
+    ['f_timezone', 'timezone'],
+    ['f_userQQ', 'userQQ'],
+    ['f_userLabel', 'userLabel'],
+    ['f_userProfile', 'userProfile'],
+    ['f_userRelationship', 'userRelationship'],
+    ['f_mainResponseFormat', 'mainResponseFormat'],
+    ['f_mainStreamingMode', 'mainStreamingMode'],
+    ['f_visionMode', 'visionMode'],
+    ['f_visionDetail', 'visionDetail'],
+    ['f_stickerFormat', 'stickerFormat']
+  ];
+
+  /* 发言节奏滑杆：id / 数据键 / 数值显示元素 / 格式化 */
+  var SLIDERS = [
+    ['f_debounce', 'debounce', 'v_debounce', function (v) { return (parseFloat(v) || 0) + ' 秒'; }],
+    ['f_typing', 'typing', 'v_typing', function (v) { return (parseInt(v, 10) || 8) + ' 字/秒'; }],
+    ['f_autoMin', 'autoMin', 'v_autoMin', function (v) { return (parseFloat(v) || 40) + ' 分钟'; }]
+  ];
+
+  /* 勾选框字段：读写 .checked */
+  var CHK = [
+    ['f_quoteReply', 'quoteReply'],
+    ['f_messageReactions', 'messageReactions'],
+    ['f_nativeFaces', 'nativeFaces'],
+    ['f_stickers', 'stickers']
+  ];
+
+  /* ══════════ 供应商卡片 ══════════ */
+  /* 按用途分别生成采样参数行：勾了哪个用途，就显示哪组的温度/TopP */
+  function samplingRows(pv) {
+    var rows = '';
+    function row(title, tKey, pKey, tDef, pDef, hint) {
+      return '<div class="field inline">' +
+        '  <div><label>' + title + ' · 温度</label><div class="hint">' + hint + '</div><input data-f="' + tKey + '" inputmode="decimal" placeholder="' + tDef + '" value="' + esc(pv[tKey] || tDef) + '"></div>' +
+        '  <div><label>' + title + ' · Top P</label><div class="hint">默认 ' + pDef + '</div><input data-f="' + pKey + '" inputmode="decimal" placeholder="' + pDef + '" value="' + esc(pv[pKey] || pDef) + '"></div>' +
+        '</div>';
+    }
+    if (pv.useMain && pv.mode === 'openai-compatible') {
+      rows += row('主叙事', 'temperature', 'topP', '0.75', '0.88', '越高越有创造性，越低越稳定；默认 0.75');
+    }
+    if (pv.useCompaction) {
+      rows += row('后台压缩', 'compTemperature', 'compTopP', '0.3', '1.0', '压缩建议低温高稳定；默认 0.3');
+    }
+    if (pv.useAlter) {
+      rows += row('Alter 分析', 'alterTemperature', 'alterTopP', '0.3', '1.0', '低频分析任务，低温即可；默认 0.3');
+    }
+    return rows;
+  }
+
+  function buildProviderCard(pv, index) {
+    var card = document.createElement('div');
+    card.className = 'provider-card';
+
+    var uses = ['useMain', 'useCompaction', 'useAlter', 'useEmbedding', 'useStickers', 'useVision']
+      .filter(function (k) { return pv[k]; })
+      .map(function (k) {
+        return { useMain: '主叙事', useCompaction: '压缩', useAlter: 'Alter', useEmbedding: 'Embedding', useStickers: '表情包', useVision: '侧端识图' }[k];
+      });
+
+    var html = '' +
+      '<div class="provider-head">' +
+      '  <b>模型连接 ' + (index + 1) + (pv.label ? '：' + esc(pv.label) : '') + '</b>' +
+      '  <span>' + (uses.length ? '<span class="badge">' + uses.join(' · ') + '</span> ' : '') +
+      '  <button class="btn small" data-act="del" type="button">删除</button></span>' +
+      '</div>' +
+      '<div class="field inline">' +
+      '  <div><label>显示名称（可选）</label><input data-f="label" placeholder="例如 主力模型 / 压缩模型" value="' + esc(pv.label || '') + '"></div>' +
+      '  <div><label>服务商</label><select data-f="mode">' +
+      Object.keys(MODES).map(function (m) {
+        return '<option value="' + m + '"' + (pv.mode === m ? ' selected' : '') + '>' + MODES[m].label + '</option>';
+      }).join('') +
+      '  </select></div>' +
+      '</div>' +
+      (pv.mode === 'openai-compatible'
+        ? '<div class="field"><label>接口地址（endpoint）</label><div class="hint">完整的 Chat Completions 地址，以 /v1/chat/completions 结尾</div><input data-f="endpoint" placeholder="https://你的服务商/v1/chat/completions" value="' + esc(pv.endpoint || '') + '"></div>'
+        : '') +
+      '<div class="field"><label>API Key</label><div class="hint">' + esc(MODES[pv.mode].reg) + '</div><input data-f="apiKey" placeholder="粘贴你的 API Key" value="' + esc(pv.apiKey || '') + '"></div>' +
+      '<div class="field inline">' +
+      '  <div><label>模型名</label><div class="hint">已按所选平台预填默认模型，可修改</div><input data-f="model" placeholder="模型名" value="' + esc(pv.model || '') + '"></div>' +
+      '<div><label>后台任务输出格式</label><select data-f="responseFormat">' +
+      '<option value="json-object"' + (pv.responseFormat !== 'prompt-only' ? ' selected' : '') + '>json-object（支持 JSON 输出）</option>' +
+      '<option value="prompt-only"' + (pv.responseFormat === 'prompt-only' ? ' selected' : '') + '>prompt-only（仅纯文本输出）</option>' +
+      '</select><div class="hint">用于压缩、Alter 等后台任务；主叙事格式在本页单独设置</div></div>' +
+      (pv.mode === 'zhipu-official'
+        ? '<div><label>推理强度</label><select data-f="reasoning">' +
+          '<option value="low"' + (pv.reasoning === 'low' ? ' selected' : '') + '>low（最快）</option>' +
+          '<option value="high"' + (pv.reasoning !== 'low' && pv.reasoning !== 'max' ? ' selected' : '') + '>high（平衡 · 推荐）</option>' +
+          '<option value="max"' + (pv.reasoning === 'max' ? ' selected' : '') + '>max（最强）</option>' +
+          '</select></div>'
+        : '') +
+      (pv.mode === 'deepseek-official'
+        ? '<div><label>思考模式</label><select data-f="deepseekThinking">' +
+          '<option value="disabled"' + (pv.deepseekThinking !== 'enabled' ? ' selected' : '') + '>关闭（推荐 · 更快更稳定）</option>' +
+          '<option value="enabled"' + (pv.deepseekThinking === 'enabled' ? ' selected' : '') + '>开启</option>' +
+          '</select><div class="hint">结构化叙事建议关闭；开启后会增加响应等待</div></div>' +
+          (pv.deepseekThinking === 'enabled'
+            ? '<div><label>思考强度</label><select data-f="deepseekReasoning">' +
+              '<option value="low"' + (pv.deepseekReasoning !== 'high' && pv.deepseekReasoning !== 'max' ? ' selected' : '') + '>low（最快）</option>' +
+              '<option value="high"' + (pv.deepseekReasoning === 'high' ? ' selected' : '') + '>high（平衡）</option>' +
+              '<option value="max"' + (pv.deepseekReasoning === 'max' ? ' selected' : '') + '>max（最强）</option>' +
+              '</select></div>'
+            : '')
+        : '') +
+      (pv.mode === 'dashscope-official'
+        ? '<div><label>服务地域</label><select data-f="region">' +
+          ['beijing', 'singapore', 'us'].map(function (r) {
+            return '<option value="' + r + '"' + (pv.region === r ? ' selected' : '') + '>' + { beijing: '北京', singapore: '新加坡', us: '美国' }[r] + '</option>';
+          }).join('') +
+          '</select></div>'
+        : '') +
+      '</div>' +
+      '<div class="use-flags">' +
+      '  <label><input type="checkbox" data-f="useMain"' + (pv.useMain ? ' checked' : '') + '>主叙事</label>' +
+      '  <label><input type="checkbox" data-f="useCompaction"' + (pv.useCompaction ? ' checked' : '') + '>后台压缩</label>' +
+      '  <label><input type="checkbox" data-f="useAlter"' + (pv.useAlter ? ' checked' : '') + '>Alter 分析</label>' +
+      '  <label><input type="checkbox" data-f="useEmbedding"' + (pv.useEmbedding ? ' checked' : '') + '>Embedding</label>' +
+      '  <label><input type="checkbox" data-f="useStickers"' + (pv.useStickers ? ' checked' : '') + '>表情包</label>' +
+      '  <label><input type="checkbox" data-f="useVision"' + (pv.useVision ? ' checked' : '') + '>侧端识图</label>' +
+      '</div>' +
+      '<div class="muted" style="font-size:12px; margin-top:8px;">Embedding 需单独一条连接，不能与其它用途同时勾选（向量接口无温度/TopP 参数）</div>' +
+      samplingRows(pv);
+    card.innerHTML = html;
+
+    // 文本/下拉字段：直接写入 data，不重建卡片（保持输入焦点）
+    card.querySelectorAll('[data-f]').forEach(function (el) {
+      var key = el.getAttribute('data-f');
+      var isText = el.tagName === 'INPUT' && el.type === 'text';
+      var evt = isText ? 'input' : 'change';
+      el.addEventListener(evt, function () {
+        pv[key] = isText ? el.value : (el.type === 'checkbox' ? el.checked : el.value);
+        if (el.type === 'checkbox') {
+          // Embedding 独占：与其它用途互斥
+          if (key === 'useEmbedding' && pv.useEmbedding) {
+            pv.useMain = false; pv.useCompaction = false; pv.useAlter = false; pv.useStickers = false; pv.useVision = false;
+          } else if (key !== 'useEmbedding' && pv[key]) {
+            pv.useEmbedding = false;
+          }
+          renderProviders(); // 勾选变化 → 更新徽标与互斥状态
+        }
+        if (key === 'mode') {
+          pv.model = MODES[pv.mode].model;
+          renderProviders(); // 切换平台需要重绘条件字段
+        }
+        if (key === 'deepseekThinking') renderProviders();
+        if (isText && key === 'label') renderProviders(); // 更新卡片标题徽标
+        saveData();
+        renderPreviews();
+      });
+    });
+
+    card.querySelector('[data-act="del"]').addEventListener('click', function () {
+      data.providers.splice(index, 1);
+      saveData();
+      renderProviders();
+      renderPreviews();
+    });
+
+    return card;
+  }
+
+  function renderProviders() {
+    var list = $('providerList');
+    if (!list) return;
+    list.innerHTML = '';
+    if (!data.providers.length) {
+      var empty = document.createElement('div');
+      empty.className = 'provider-empty muted';
+      empty.textContent = '还没有模型连接——点击下方"＋ 添加供应商"开始配置。至少添加一条勾选"主叙事"的连接。';
+      list.appendChild(empty);
+      return;
+    }
+    data.providers.forEach(function (pv, i) {
+      list.appendChild(buildProviderCard(pv, i));
+    });
+  }
+
+  function initForm() {
+    BIND.forEach(function (pair) {
+      var el = $(pair[0]);
+      if (!el) return;
+      el.value = data[pair[1]] || '';
+      el.addEventListener('input', function () {
+        data[pair[1]] = el.value;
+        saveData();
+        renderRecap();
+        renderPreviews();
+      });
+      el.addEventListener('change', function () {
+        data[pair[1]] = el.value;
+        saveData();
+        renderRecap();
+        renderPreviews();
+      });
+    });
+    // 发言节奏滑杆
+    SLIDERS.forEach(function (s) {
+      var el = $(s[0]);
+      if (!el) return;
+      el.value = data[s[1]] || el.value;
+      $(s[2]).textContent = s[3](el.value);
+      el.addEventListener('input', function () {
+        data[s[1]] = el.value;
+        $(s[2]).textContent = s[3](el.value);
+        saveData();
+        renderPreviews();
+      });
+    });
+    // 图片理解开关
+    var vision = $('f_vision');
+    if (vision) {
+      vision.checked = !!data.vision;
+      vision.addEventListener('change', function () {
+        data.vision = vision.checked;
+        saveData();
+        renderPreviews();
+      });
+    }
+    // 发言设定勾选框
+    CHK.forEach(function (pair) {
+      var el = $(pair[0]);
+      if (!el) return;
+      el.checked = data[pair[1]] !== false;
+      el.addEventListener('change', function () {
+        data[pair[1]] = el.checked;
+        saveData();
+        renderPreviews();
+      });
+    });
+    // 世界预设：写入世界背景并同步回角色设定的输入框
+    var presets = document.querySelectorAll('#worldPresets .radio-card');
+    presets.forEach(function (cardEl) {
+      var radio = cardEl.querySelector('input[type="radio"]');
+      radio.addEventListener('change', function () {
+        if (!radio.checked) return;
+        data.world = cardEl.getAttribute('data-world');
+        var w = $('f_world');
+        if (w) w.value = data.world;
+        saveData();
+        renderPreviews();
+      });
+      if (radio.checked && data.world === cardEl.getAttribute('data-world')) {
+        radio.checked = true;
+      } else if (radio.checked) {
+        radio.checked = false;
+      }
+    });
+    // 添加供应商
+    var addBtn = $('addProviderBtn');
+    if (addBtn) {
+      addBtn.addEventListener('click', function () {
+        // 列表为空时添加的首条默认承担主叙事职责
+        data.providers.push(newProvider(data.providers.length === 0));
+        saveData();
+        renderProviders();
+        renderPreviews();
+      });
+    }
+    // Token 生成
+    $('genTokenBtn').addEventListener('click', function () {
+      data.wsToken = generateToken();
+      $('f_wsToken').value = data.wsToken;
+      saveData();
+      renderRecap();
+      renderPreviews();
+    });
+  }
+
+  /* ══════════ 复制与下载 ══════════ */
+  function copyText(text, btn) {
+    function ok() {
+      if (btn) {
+        var old = btn.textContent;
+        btn.textContent = '✓ 已复制';
+        btn.classList.add('ok');
+        setTimeout(function () { btn.textContent = old; btn.classList.remove('ok'); }, 1500);
+      }
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(ok, function () { fallbackCopy(text); ok(); });
+    } else { fallbackCopy(text); ok(); }
+  }
+  function fallbackCopy(text) {
+    var ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand('copy'); } catch (e) {}
+    document.body.removeChild(ta);
+  }
+
+  function download(filename, content) {
+    var blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(function () {
+      URL.revokeObjectURL(a.href);
+      document.body.removeChild(a);
+    }, 100);
+  }
+
+  /* ══════════ 事件 ══════════ */
+  document.querySelectorAll('.cmd-block').forEach(function (block) {
+    var btn = block.querySelector('.copy-btn');
+    if (!btn) return;
+    if (btn.id === 'copyYamlBtn' || btn.id === 'copyPsBtn') return; // 单独绑定
+    btn.addEventListener('click', function () {
+      copyText(block.querySelector('pre').textContent, btn);
+    });
+  });
+  if ($('copyYamlBtn')) $('copyYamlBtn').addEventListener('click', function () { copyText(fullYaml(), $('copyYamlBtn')); });
+  if ($('copyPsBtn')) $('copyPsBtn').addEventListener('click', function () { copyText(psScript(), $('copyPsBtn')); });
+  if ($('downloadYamlBtn')) $('downloadYamlBtn').addEventListener('click', function () { download('koishi.yml', fullYaml()); });
+  if ($('downloadPsBtn')) $('downloadPsBtn').addEventListener('click', function () { download('setup.ps1', psScript()); });
+
+  $('prevBtn').addEventListener('click', function () { if (currentStep > 0) goTo(currentStep - 1); });
+  $('nextBtn').addEventListener('click', function () {
+    if (currentStep < STEP_TITLES.length - 1) {
+      if (doneSet.indexOf(currentStep) < 0) {
+        doneSet.push(currentStep); saveDone();
+      }
+      goTo(currentStep + 1);
+    } else {
+      if (doneSet.indexOf(currentStep) < 0) { doneSet.push(currentStep); saveDone(); renderNav(); renderPages(); }
+      alert('🎉 部署完成！如果角色已成功回复你，可以去 HDSI 文档里探索自动推进、主动联系、情绪追踪等更多玩法。');
+    }
+  });
+  $('doneBtn').addEventListener('click', function () {
+    var idx = doneSet.indexOf(currentStep);
+    if (idx >= 0) { doneSet.splice(idx, 1); } else { doneSet.push(currentStep); }
+    saveDone();
+    renderNav();
+    renderPages();
+  });
+  $('resetBtn').addEventListener('click', function () {
+    if (!confirm('确定要清除所有填写内容和进度记录吗？此操作不可恢复。')) return;
+    localStorage.removeItem(LS_DATA);
+    localStorage.removeItem(LS_DONE);
+    localStorage.removeItem(LS_STEP);
+    location.reload();
+  });
+
+  /* ══════════ 主题切换 ══════════ */
+  var themeBtn = $('themeToggle');
+  function applyTheme(t) {
+    document.documentElement.setAttribute('data-theme', t);
+    if (themeBtn) {
+      themeBtn.textContent = t === 'dark' ? '☀' : '☾';
+      themeBtn.title = t === 'dark' ? '切换到亮色' : '切换到暗色';
+    }
+  }
+  applyTheme(localStorage.getItem('hdsiWizardTheme') === 'dark' ? 'dark' : 'light');
+  if (themeBtn) {
+    themeBtn.addEventListener('click', function () {
+      var next = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+      localStorage.setItem('hdsiWizardTheme', next);
+      applyTheme(next);
+    });
+  }
+
+
+  /* ══════════ 鼠标视差：蓝色三角与几何影板轻微偏移 ══════════ */
+  (function parallax() {
+    if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    var tx = 0, ty = 0, cx = 0, cy = 0, raf = null;
+    function step() {
+      cx += (tx - cx) * 0.06;
+      cy += (ty - cy) * 0.06;
+      document.documentElement.style.setProperty('--mx', cx.toFixed(4));
+      document.documentElement.style.setProperty('--my', cy.toFixed(4));
+      if (Math.abs(tx - cx) > 0.001 || Math.abs(ty - cy) > 0.001) {
+        raf = requestAnimationFrame(step);
+      } else {
+        raf = null;
+      }
+    }
+    window.addEventListener('mousemove', function (e) {
+      tx = (e.clientX / window.innerWidth - 0.5) * 2;   // -1 .. 1
+      ty = (e.clientY / window.innerHeight - 0.5) * 2;
+      if (raf === null) raf = requestAnimationFrame(step);
+    }, { passive: true });
+  })();
+
+  /* ══════════ 启动 ══════════ */
+  initForm();
+  goTo(currentStep);
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,35 @@
+{
+  "name": "koishi-plugin-hds-interlude-webconsole",
+  "version": "0.1.0-beta2",
+  "description": "HDSI 本地观测站：剧本流时间线/原始日志/长期事实/Alter/推进预测/剧情弧/Overlay 的只读可视化(127.0.0.1)。",
+  "main": "lib/index.js",
+  "typings": "lib/index.d.ts",
+  "files": [
+    "lib",
+    "README.md",
+    "public"
+  ],
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit --incremental false --composite false",
+    "test": "node --import tsx --test test/*.test.ts",
+    "test:browser": "node --import tsx test/browser-smoke.ts"
+  },
+  "koishi": {
+    "description": {
+      "zh": "HDSI 本地观测站(只读)"
+    },
+    "service": {
+      "required": [
+        "database",
+        "interlude"
+      ]
+    }
+  },
+  "peerDependencies": {
+    "koishi": "^4.17.0",
+    "koishi-plugin-hds-interlude": ">=1.0.1-rc48 <2.0.0"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}

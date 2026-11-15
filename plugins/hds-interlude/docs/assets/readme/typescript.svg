@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="152" height="30" viewBox="0 0 152 30" role="img" aria-label="使用 TypeScript 编写">
+  <title>使用 TypeScript 编写</title>
+  <rect width="152" height="30" fill="#f7f8fa"/>
+  <rect x="0.5" y="0.5" width="151" height="29" fill="none" stroke="#d9dfe7"/>
+  <path d="M57 1V29" stroke="#d9dfe7"/>
+  <rect width="3" height="30" fill="#111827"/>
+  <g font-family="Segoe UI, Arial, sans-serif" dominant-baseline="central">
+    <text x="30.0" y="15" text-anchor="middle" font-size="9" font-weight="600" letter-spacing="1" fill="#6b7280">CODE</text>
+    <text x="104.5" y="15" text-anchor="middle" font-size="11" font-weight="600" fill="#111827">TypeScript</text>
+  </g>
+</svg>

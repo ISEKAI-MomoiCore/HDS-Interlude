@@ -1,0 +1,224 @@
+import type { DialogueBurstState, SceneFrame } from '../types'
+
+export interface CompiledNarrativeContext {
+  storyIdentity: Record<string, unknown>
+  relevantEstablishedEpisodes: Record<string, unknown>
+  currentSceneEvidence: Record<string, unknown>
+  ongoingThreads: Record<string, unknown>
+  availableNearFuture: Record<string, unknown>
+  /** 考据案头：author-facing 写作参考（researchDesk），与[世界事件]语义隔离。 */
+  writingReference: Record<string, unknown>
+  incomingEvent: Record<string, unknown>
+  authoringWindow: Record<string, unknown>
+}
+
+/**
+ * M4 bridge: compile beta10's proven fields into a positive continuation
+ * scaffold. Each prepared value is moved into one semantic group and is never
+ * recomputed or duplicated in the model-facing payload.
+ */
+export function compileNarrativeContext(
+  payload: Record<string, any>,
+  frame: SceneFrame | undefined,
+  _burst: DialogueBurstState | undefined,
+): CompiledNarrativeContext {
+  return {
+    storyIdentity: {
+      setting: payload.setting,
+    },
+    relevantEstablishedEpisodes: compactObject({
+      recentScript: payload.recentScript,
+      sceneContext: payload.sceneContext,
+      continuitySnapshot: payload.continuitySnapshot,
+      continuitySnapshotAgeMinutes: payload.continuitySnapshotAgeMinutes,
+      durableFacts: payload.durableFacts,
+      memories: payload.memories,
+      overlayEvolution: payload.overlayEvolution,
+      // M4.1: a recall hit points back to the original script neighbourhood.
+      // The model-facing name makes clear that this is prose evidence, not a
+      // second abstract memory summary.
+      recalledScript: payload.recalledHistory,
+      webContext: payload.webContext,
+      recentExchange: payload.recentExchange,
+      // I-6a 背景通道：advance 的有界群视图（概况 + 每群 K 条），历史背景
+      // 归既往事料段。此前 payload 有字段但编译器未映射，被静默丢弃。
+      groupBackground: payload.groupBackground,
+    }),
+    currentSceneEvidence: projectSceneEvidence(
+      frame,
+      new Set((payload.recentScript ?? []).map((entry: { id?: number }) => entry.id).filter(Number.isSafeInteger)),
+    ),
+    ongoingThreads: compactObject({
+      state: payload.state,
+      currentParticipant: payload.currentParticipant,
+      participants: payload.participants,
+      availableGroupTargets: payload.availableGroupTargets,
+      availableOutgoingEndpoints: payload.availableOutgoingEndpoints,
+      activeConsequences: payload.activeConsequences,
+      followUpCommitments: payload.followUpCommitments,
+      contactThreads: payload.contactThreads,
+      workingDetails: payload.workingDetails,
+      interruptedOutgoingDrafts: payload.interruptedOutgoingDrafts,
+      supersededDelayedReplies: payload.supersededDelayedReplies,
+      automaticDeliverySummaries: payload.automaticDeliverySummaries,
+      deliveryReality: payload.deliveryReality,
+      // II-1 交往节奏印象：投递派生的私聊节奏摘要（与 deliveryReality 同为
+      // 投递事实投影；仅私聊相位且证据充足时存在）。
+      interactionRhythm: payload.interactionRhythm,
+      developmentTendencies: payload.developmentTendencies,
+    }),
+    availableNearFuture: compactObject({
+      timelinePlan: payload.timelinePlan,
+      timelineCarry: payload.timelineCarry,
+      schedulePreplan: payload.schedulePreplan,
+      dueIntents: payload.dueIntents,
+      upcomingPlans: payload.upcomingPlans,
+    }),
+    // 审计修复 #7：案头为空时省略整个段（空对象是模型噪声）。
+    writingReference: payload.researchDesk?.length
+      ? compactObject({ researchDesk: payload.researchDesk })
+      : {},
+    incomingEvent: compactObject({
+      event: payload.currentEvent,
+      groupContext: payload.groupContext,
+      chatCapabilities: payload.chatCapabilities,
+      stickerCatalog: payload.stickerCatalog,
+      // M4 §十：确定性通道标注——命中五规则时注入 channelContext + 简短标记
+      channelContext: projectChannelContext(payload),
+    }),
+    authoringWindow: compactObject({
+      phase: payload.phase,
+      interval: payload.interval,
+      continuation: payload.continuation,
+      liveTimeBoundary: payload.liveTimeBoundary,
+      refreshContinuity: payload.refreshContinuity,
+      outputRecovery: payload.outputRecovery,
+      emotionalOffset: payload.emotionalOffset,
+      agencyWindow: payload.agencyWindow,
+    }),
+  }
+}
+
+export function compiledContextConflicts(payload: Record<string, any>, compiled: CompiledNarrativeContext) {
+  const pairs: Array<[unknown, unknown, string]> = [
+    [payload.setting, compiled.storyIdentity.setting, 'setting'],
+    [payload.state, compiled.ongoingThreads.state, 'state'],
+    [payload.recentScript, compiled.relevantEstablishedEpisodes.recentScript, 'recentScript'],
+    [payload.currentEvent, compiled.incomingEvent.event, 'currentEvent'],
+    [payload.interval, compiled.authoringWindow.interval, 'interval'],
+    [payload.timelinePlan, compiled.availableNearFuture.timelinePlan, 'timelinePlan'],
+  ]
+  return pairs.filter(([legacy, next]) => legacy !== next).map(([, , label]) => `${label} was recomputed`)
+}
+
+/** Scene state is a small sourced navigation aid. DialogueBurst is host-owned
+ * commit identity and prose-shaped fields are deliberately not serialised. */
+function projectSceneEvidence(frame: SceneFrame | undefined, recentEntryIds: Set<number>) {
+  if (!frame) return {}
+  const outsideSourceEntryIds = frame.sourceEntryIds.filter(id => !recentEntryIds.has(id))
+  return compactObject({
+    sceneId: frame.sceneId,
+    place: sourced(frame, 'place', recentEntryIds),
+    presentPeople: sourced(frame, 'presentPeople', recentEntryIds),
+    ongoingActivity: sourced(frame, 'ongoingActivity', recentEntryIds),
+    attention: sourced(frame, 'attention', recentEntryIds),
+    deviceAccess: sourced(frame, 'deviceAccess', recentEntryIds),
+    privacy: sourced(frame, 'privacy', recentEntryIds),
+    openLoops: sourced(frame, 'openMotions', recentEntryIds),
+    sourceEntryIds: outsideSourceEntryIds.length ? outsideSourceEntryIds : undefined,
+  })
+}
+
+function sourced(frame: SceneFrame, field: keyof SceneFrame['sources'], recentEntryIds: Set<number>) {
+  const value = frame[field]
+  const sourceEntryIds = frame.sources[field]
+  const populated = Array.isArray(value) ? value.length > 0 : typeof value === 'string' && !!value.trim()
+  return populated && sourceEntryIds?.length && sourceEntryIds.some(id => !recentEntryIds.has(id))
+    ? { value, sourceEntryIds }
+    : undefined
+}
+
+function compactObject(value: Record<string, unknown>) {
+  return Object.fromEntries(Object.entries(value).filter(([, item]) => item !== undefined))
+}
+/**
+ * M4 §十：确定性通道标注五规则——命中即标，格式为结构化 channel 上下文 +
+ * 简短标记（[微信·私]）。投递不依赖标注，漏标后果限质感层面。
+ *
+ * 规则（V3 §十原文）：
+ * 1. 回合内端点切换（turn.sources.length > 1）
+ * 2. 同批消息多端点（currentEvent 含多端点来源）
+ * 3. 私聊↔群聊切换（上一条目与当前 different conversationKind）
+ * 4. 同一参与者不同端点连续出现
+ * 5. 回复目标 ≠ 来源端点（transport 目标端点不同于最后入站端点）
+ */
+export interface ChannelAnnotation {
+  /** 简短标记：[QQ·私] / [微信·私] / [QQ·群] 等 */
+  tag: string
+  /** 触发的规则列表（供诊断/测试） */
+  rules: string[]
+  /** 当前回合涉及的端点（来自 turn.sources） */
+  sources: Array<{ endpointId: string, channelKind: string, receivedSeq: number }>
+}
+
+export function projectChannelContext(payload: Record<string, any>): ChannelAnnotation | undefined {
+  const rules: string[] = []
+  const sources: ChannelAnnotation['sources'] = []
+
+  // 从 payload 中提取通道信息（service 侧在构建 NarrativeRequest 时注入）
+  const turnSources = payload._channelTurnSources
+  const lastEntryChannel = payload._channelLastEntryChannel
+  const currentChannel = payload._channelCurrentChannel
+  const replyEndpoint = payload._channelReplyEndpoint
+  const participant = payload.currentParticipant
+
+  // 来源端点集是标注的证据，即使只命中规则 3/4/5 也应保留。
+  // 过滤无效值并按接收序号稳定排序，避免模型看到 NaN/空端点。
+  if (Array.isArray(turnSources)) {
+    const seen = new Set<string>()
+    for (const source of turnSources) {
+      const endpointId = String(source?.endpointId ?? '').trim()
+      if (!endpointId || seen.has(endpointId)) continue
+      const receivedSeq = Number(source?.receivedSeq)
+      sources.push({
+        endpointId,
+        channelKind: source?.channelKind === 'wechat' ? 'wechat' : 'qq',
+        receivedSeq: Number.isSafeInteger(receivedSeq) && receivedSeq >= 0 ? receivedSeq : 0,
+      })
+      seen.add(endpointId)
+    }
+    sources.sort((left, right) => left.receivedSeq - right.receivedSeq || left.endpointId.localeCompare(right.endpointId))
+    if (sources.length > 1) rules.push('multi-endpoint-turn')
+  }
+
+  // 规则 2：同批消息多端点（currentEvent 含 multiEndpoint 标记）
+  if (payload.currentEvent?.multiEndpoint === true || payload._channelBatchMultiEndpoint === true) rules.push('batch-multi-endpoint')
+
+  // 规则 3：私聊↔群聊切换
+  if (lastEntryChannel?.conversationKind && currentChannel?.conversationKind
+    && lastEntryChannel.conversationKind !== currentChannel.conversationKind) {
+    rules.push('conversation-kind-switch')
+  }
+
+  // 规则 4：同一参与者不同端点连续出现
+  if (lastEntryChannel?.endpointId && currentChannel?.endpointId
+    && lastEntryChannel.endpointId !== currentChannel.endpointId
+    && participant?.id) {
+    rules.push('participant-endpoint-switch')
+  }
+
+  // 规则 5：回复目标 ≠ 来源端点
+  if (replyEndpoint?.endpointId && currentChannel?.endpointId
+    && replyEndpoint.endpointId !== currentChannel.endpointId) {
+    rules.push('reply-target-differs')
+  }
+
+  if (!rules.length) return undefined
+
+  // 构建简短标记
+  const kind = currentChannel?.channelKind === 'wechat' ? '微信' : 'QQ'
+  const conv = currentChannel?.conversationKind === 'group' ? '群' : '私'
+  const tag = `[${kind}·${conv}]`
+
+  return { tag, rules, sources }
+}

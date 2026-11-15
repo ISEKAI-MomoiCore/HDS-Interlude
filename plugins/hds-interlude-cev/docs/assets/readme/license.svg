@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="170" height="30" viewBox="0 0 170 30" role="img" aria-label="许可证 AGPL-3.0">
+  <title>许可证 AGPL-3.0</title>
+  <rect width="170" height="30" fill="#f7f8fa"/>
+  <rect x="0.5" y="0.5" width="169" height="29" fill="none" stroke="#d9dfe7"/>
+  <path d="M76 1V29" stroke="#d9dfe7"/>
+  <rect width="3" height="30" fill="#0f766e"/>
+  <g font-family="Segoe UI, Arial, sans-serif" dominant-baseline="central">
+    <text x="39.5" y="15" text-anchor="middle" font-size="9" font-weight="600" letter-spacing="1" fill="#6b7280">LICENSE</text>
+    <text x="123.0" y="15" text-anchor="middle" font-size="11" font-weight="600" fill="#0f766e">AGPL-3.0</text>
+  </g>
+</svg>

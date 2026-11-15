@@ -1,0 +1,557 @@
+npm notice run koishi-plugin-hds-interlude@1.0.0-beta7-enhanced test
+npm notice run node --import tsx --test test/*.test.ts
+✔ Agency Window accepts only grounded, bounded practical state (10.9039ms)
+✔ capacity rules separate schedule, privacy and device access from emotion (4.7198ms)
+✔ ordinary proactive contact respects the minimum interval while promises bypass it (4.2708ms)
+✔ contact candidates require a permitted target and real source evidence (2.0786ms)
+✔ candidate identity ignores wording changes and recheck time stays bounded (2.6491ms)
+✔ proactive checks are isolated from ordinary due messages for the same participant (4.2483ms)
+✔ model Alter values are bounded integers and invalid values are ignored (24.943ms)
+✔ dynamic threshold moves gradually from ten to seven under dense narration (7.8077ms)
+✔ same-direction movement strengthens while opposite movement decays (0.8086ms)
+✔ a trigger is completed only after a valid side-model description (1.9316ms)
+✔ legacy persisted Alter state is normalized without exposing duplicate weight (1.2225ms)
+✔ Alter keeps relationship-local accumulation and analysis evidence in the same source bucket (1.1147ms)
+✔ authored reference supplies exact words before normalization, across repeated resolver calls (42.235ms)
+✔ bad explicit ids and duplicate authored ids never create guessed outgoing text (3.0074ms)
+✔ legacy, delayed and already-streamed delivery keep existing content and scheduling (6.5885ms)
+✔ group and cross-contact references preserve scope and multi-bubble delivery ledger (10.4148ms)
+✔ M10 20:18 phantom sending remains original prose but is explicitly unexecuted in both payload orders (258.8799ms)
+✔ new automatic original wins over its unexecuted plan without altering legacy projection (16.3482ms)
+✔ local handoff replaces obsolete occupancy and activity without resetting the plot arc (6.7392ms)
+✔ handoff quotes are grounded and committed immediately without copying prose into a summary (9.5648ms)
+✔ scene anchor no longer overwrites scene/arc summary with director prose (1.6654ms)
+✔ 19:39 feedback and subsequent response stay in one evidence chain without endorsing narrator interpretation (3.5669ms)
+✔ compactor receives no-action outcomes and interaction evidence, not a second confirmed timeline (23.5302ms)
+✔ main writing keeps unresolved contact and raw originals, without repeated real-time summaries (7.0143ms)
+✔ v4 source revisions survive reload and keep stale compaction from restoring local occupancy (11.8307ms)
+✔ delayed background review cannot reopen a completed working detail (14.6196ms)
+✔ new private life handoff still feeds Preplan without forwarding private prose or director guesses (3.6439ms)
+✔ 40 dense dialogue steps keep one original chain and preserve source-bound speech (198.2531ms)
+✔ Console sections follow the documented setup order (16.9165ms)
+✔ chat actions are opt-in and platform-scoped (1.9372ms)
+✔ local sticker library is opt-in and requires an explicitly assigned visual provider (0.754ms)
+✔ Blind Mode is the first Console section and defaults to a minimal ten-minute heartbeat (1.1666ms)
+✔ ignored compatibility switches stay out of the active Console (1.1356ms)
+✖ runtime and plugin exports share one version constant (20.3192ms)
+✔ layered colored logs are the Console default and remain optional (2.4741ms)
+✔ model Console centralizes connections and task assignment without exposing IDs (2.0672ms)
+✔ Zhipu official provider mode supplies its fixed endpoint and stream-capable task roles (2.2337ms)
+✔ official provider presets resolve independent Chat Completions endpoints (3.3393ms)
+✔ DeepSeek official provider exposes independent thinking controls (1.4691ms)
+✔ Agency Window exposes only the four bounded scheduling controls (1.1559ms)
+✔ Schedule Preplan is lightweight, enabled by default and reuses the compaction provider (1.0948ms)
+✔ real model turns require non-empty narrative prose before they can succeed (1.4873ms)
+✔ memory compaction defaults leave a slightly wider short-conversation buffer (0.9469ms)
+✔ recent context combines a fifty-entry floor with a one-hour raw-message window (0.7191ms)
+✔ Console exposes a separate, optional protagonist perspective layer (2.4711ms)
+✔ SnowLuma voice transcription remains an opt-in OneBot capability (0.5777ms)
+✔ group willingness is opt-in and remains scoped to each group rule (1.9217ms)
+✔ group transport accepts its explicit field and the legacy immediate interaction fallback (3.5764ms)
+✔ reply-mode logs distinguish missing live replies from normal background silence (3.6009ms)
+✔ context compiler creates one seven-part scaffold without recomputing shared facts (11.1747ms)
+✔ scene evidence already visible in recentScript is not injected twice (1.421ms)
+✔ bubble reconstruction keeps transport binding: "在吗<sep/>" split=true (31.2256ms)
+✔ bubble reconstruction keeps transport binding: "<sep/>在吗" split=true (3.6958ms)
+✔ bubble reconstruction keeps transport binding: " <sep/> 在吗 <sep/> " split=true (2.8913ms)
+✔ bubble reconstruction keeps transport binding: "在吗||想好了吗||" split=true (2.7862ms)
+✔ bubble reconstruction keeps transport binding: "在吗<sep/>" split=false (3.6899ms)
+✔ bubble reconstruction keeps transport binding: " 在吗 " split=true (2.375ms)
+✔ bookmark resolves original text, includes already delivered reply, excludes current incoming event (4.7482ms)
+✔ both payload orders retain clock evidence, open contact, source text and current event separately (148.9835ms)
+✔ 40 mixed fixture turns move the bookmark without turning silence into user input or rewriting originals (303.7582ms)
+✔ literal reuse observation never suppresses a new contact or modifies prose (5.2448ms)
+✔ positive continuation contract explicitly preserves renewed contact (3.5227ms)
+✔ retired rhythm state round-trips for rollback but never enters narrative context (6.8691ms)
+✔ incremental review exhausts an oversized backlog without skipping any original (17.8548ms)
+✔ empty or partial continuity output cannot acknowledge scene evidence (5.2813ms)
+✔ closing a reviewed scene retains the processed frontier despite later message arrival (19.8085ms)
+✔ failed arc persistence leaves the scene checkpoint untouched (9.3413ms)
+✔ image-only input remains an observed media event and never gains invented words (8.629ms)
+✔ scene presence accepts explicit arrival/departure evidence and rejects inferred departures (19.0152ms)
+✔ automatic delivery summaries stay on background turns only (143.4855ms)
+✔ an in-flight request stays replaceable until its first reply is committed (8.0848ms)
+✔ cancelled split segments become interrupted typing context, not delivered dialogue (139.8167ms)
+✔ existing installations extend raw script entries with persistent embeddings (7.5183ms)
+✔ knowledge evidence is an additive nullable field and reload does not rebuild it (1.1141ms)
+✔ all bubbles retain the script event identity across delivery intents and receipts (11.3771ms)
+✔ partial requires actual delivery, while unfinished attempts remain pending (8.2166ms)
+✔ ledger read and write failures do not interrupt confirmation or remaining bubble scheduling (23.2095ms)
+✔ M6 ledger groups text and platform segments under their script event identities (7.3897ms)
+✔ M6 ledger reports partial and terminal delivery without downgrading delivered speech (3.6758ms)
+✔ a successful retry clears an earlier transport failure reason (2.8343ms)
+✔ M6 persistence changes metadata only and delivery preserves exact bubble text and source row (4.347ms)
+✔ platform references resolve the exact action segment and reject absent actions (3.1784ms)
+✔ DialogueBurst identity follows scene identity rather than inactivity or message count (27.3374ms)
+✔ DialogueBurst changes on an explicit event boundary, scope change, or unrelated topic (5.3194ms)
+✔ episode navigation rebuilds identically and never groups separate relationships or scenes (10.8906ms)
+✔ long preceding prose cannot displace the recall hit and source ids reflect included text (2.7305ms)
+✔ delivery reality preserves prose and distinguishes unconfirmed receipt from cancellation (1.6663ms)
+✔ compiled writing context excludes legacy rhythm directives and carries execution evidence (2.4738ms)
+✔ checkpoint provenance groups legacy original entries without merging relationships (1.1278ms)
+✔ cross-relationship action text stays out of delivery reality unless sharing is enabled (1.2127ms)
+✔ a narrative imagining acceptance remains interpretation, not mutual confirmation (7.0374ms)
+✔ actual acceptance can be recorded while retaining the original condition and relationship (6.0981ms)
+✔ missing or forged quotations never acquire stronger authority and old facts are not rewritten (1.4729ms)
+✔ condition chains retain whole originals, adjacent responses and missing-source markers without leaking branches (24.3853ms)
+✔ working-detail evidence survives state encoding without modifying its prose (49.9549ms)
+✔ main user and automatic windows keep contact conditions in both payload orders (119.1738ms)
+✔ unclassified or imagined completion cannot close a promise, and repeated belief adds no confidence (4.8072ms)
+✔ 17:38 regression: a two-bubble terminal script block becomes one complete delivery event (14.5215ms)
+✔ tail repair respects non-actions, explicit action ids, custom separators and early-delivery idempotency (3.773ms)
+✔ follow-up commitment instructions are limited to live and due turns (7.3684ms)
+✔ only live and due prompt payloads carry the bounded commitment list (121.6368ms)
+✔ group speaker labels retain both display name and stable QQ identity (7.7461ms)
+✔ chat action validation accepts only advertised actions and supplied message references (17.1109ms)
+✔ reaction allowlist is semantic, deduplicated and bounded (24.4446ms)
+✔ native-face threshold is calibrated against reply meaning instead of a model-declared maximum (21.6224ms)
+✔ prompt payload hides message references until chat capabilities are active (114.7933ms)
+✔ quoted messages retain author ownership and bounded readable content (7.7547ms)
+✔ quoted context is conditional and remains separate from the new message (9.7542ms)
+✔ group delivery uses the bot from the live session before stale story transport metadata (2.6401ms)
+✔ stale OneBot transport repairs only when its configured account is no longer online (3.015ms)
+✔ a failed segment makes group delivery incomplete, even when an earlier segment arrived (2.5393ms)
+✔ private visible messages are confirmed only after transport, while failed drafts stay system-owned (4.6767ms)
+✔ group willingness accumulates locally, respects threshold, and uses a bounded probability (5.5922ms)
+✔ mentions bypass group willingness while a sent group reply consumes score (1.1628ms)
+✔ disabled group willingness preserves the existing always-trigger behavior (0.9951ms)
+✔ semantic history recall keeps private branches and group transcripts out of another participant prompt (10.132ms)
+✔ sticker filtering requests a live vector only for an active oversized library (1.1939ms)
+✔ raw history has a Chinese lexical recall lane without embeddings (8.1ms)
+✔ a lexical anchor returns its contiguous original-script neighborhood (72.8594ms)
+✔ user-message logs read as a compact task timeline (32.7873ms)
+✔ Alter and error records use stable semantic markers (2.6693ms)
+✔ colors can be enabled and kaomoji can be replaced by simple symbols (2.0858ms)
+✔ dark and light themes use separate high-contrast 256-color palettes (2.5934ms)
+✔ Agency decisions have a distinct subjectivity marker (2.8301ms)
+✔ user-message: event source and due task identity survive both prompt orders (116.8297ms)
+✔ conversation-follow-up: event source and due task identity survive both prompt orders (5.4506ms)
+✔ intent-due: event source and due task identity survive both prompt orders (3.2823ms)
+✔ advance: event source and due task identity survive both prompt orders (2.732ms)
+✔ live turns never consume pending promises or host-owned executor tasks (4.4028ms)
+✔ private follow-up summaries are relationship-local while independent life keeps compact contacts (6.7632ms)
+✔ writing affordances follow transport and browsing switches without a mandatory tool routine (2.1448ms)
+✔ promise settles after all bubbles are confirmed, never after first or failed delivery (19.3257ms)
+✔ interrupted last bubble and wrong-story callbacks leave the promise pending (5.68ms)
+✔ reschedule is idempotent even if the script settlement marker was lost (6.0905ms)
+✔ an unrelated immediate reply cannot silently fulfil an unresolved due promise (9.3356ms)
+✔ mixed due work does not starve committed typing or start background narration during a live turn (19.4184ms)
+✔ quiet-life development selection uses a bounded visible scene, not a new training sample (7.6239ms)
+✔ sidecar evidence does not conflict with zero native attachments (27.8147ms)
+✔ new spoken promise is registered only after full delivery and after old resolution (17.1987ms)
+✔ a completed promise cannot be recreated by replaying its original delivery callback (1.7814ms)
+✔ background summary waits for the complete delivery and projection failure is isolated (10.1881ms)
+✔ episode tags remain literal spans, and recalled inner narration never becomes user speech (12.5674ms)
+✔ ten turns in one scene remain one development observation; unknown provenance contributes none (4.6323ms)
+✔ short follow-up omits director, but long, cross-day and schedule-transition windows retain it (160.9359ms)
+✔ both prompt orders retain original automatic prose and separate timeline evidence (18.1515ms)
+✔ development requires an observation cycle and independent scenes, then counter-evidence retires projection (9.8357ms)
+✔ dense same-scene evidence and private evidence cannot promote global personality (2.7028ms)
+✔ development projection omits unrelated and other-relationship tendencies (7.869ms)
+✔ failed long-window director cannot fall through into free narrative after fuse (2.3199ms)
+✔ resolved working detail removes only the evidence-backed label (17.4114ms)
+✔ raw script persistence keeps a long original passage without truncation (14.9732ms)
+✔ legacy free-text continuity next is hidden and host-owned upcoming plans remain visible (90.3798ms)
+✔ raw messages inside the time window survive a large prose entry and the normal character budget (4.6391ms)
+✔ fact retrieval reserves lanes for recently resolved events and open promises (5.2079ms)
+✔ fact retrieval scans a broad bounded pool and lets literal old evidence outrank generic rows (14.526ms)
+✔ an explicit resolved fact can close the old unresolved row (3.6095ms)
+✔ legacy continuity dirty state does not restart an independent real-time summary (1.1653ms)
+✔ one routing table resolves explicit task assignments before legacy fallback (14.8179ms)
+✔ embedding-only providers never become an accidental chat fallback (1.3115ms)
+✔ model profiles select provider and task model through the same resolver (6.0072ms)
+✔ Alter scoring is requested only while the system is enabled (8.9045ms)
+✔ internal Alter accumulator and history never leak into the main prompt state (4.7207ms)
+✔ the fixed contract makes local endpoint time authoritative after long gaps (1.3321ms)
+✔ interrupted typing is context but never delivered speech (0.9954ms)
+✔ each request includes only its current phase strategy (2.1482ms)
+✔ a missing visible-reply structure triggers a fresh-output recovery instruction (3.7002ms)
+✔ recent script ownership makes narrative thoughts unambiguously protagonist-owned (1.4147ms)
+✔ Agency Window is available only on background action phases and stays separate from Alter (1.4754ms)
+✔ Perspective is a conditional individual-values layer, not a recurring story theme (1.435ms)
+✔ chat action fields enter the fixed prompt only for registered turn capabilities (1.6516ms)
+✔ native face expressions require semantic intent and an explicit threshold (1.313ms)
+✔ legacy bracket faces are projected as expression semantics for protagonist history (1.3678ms)
+✔ local sticker catalog is conditional and only permits exact listed assets (1.0893ms)
+✔ both payload modes use the seven-part script continuation scaffold (143.0615ms)
+✔ cache-first puts stable blocks first and per-turn fields beside the decision point (6.943ms)
+✔ recentExchange anchors only transport exchanges, excludes the live message and never repeats script prose (5.1066ms)
+✔ consecutive user turns keep append-only history at the cacheable front of the compiled context (18.6613ms)
+✔ group turns keep recentExchange empty because groupContext already ends near the decision point (8.9477ms)
+✔ compact tags collapse kind/actor triples and keep group and action distinctions (3.5752ms)
+✔ participantId survives only when the history actually spans several branches (4.1955ms)
+✔ the ownership legend matches the payload mode (4.1248ms)
+✔ workingDetails, recalledScript and previousScenes ride the payload in the right zones (6.5066ms)
+✔ the fixed contract documents the three memory blocks (4.9934ms)
+✔ the fixed contract explains recentExchange only for cache-first payloads (1.3074ms)
+✔ live writing is guided by event density instead of elapsed-time length quotas (7.9044ms)
+✔ the visible reply remains an event inside one causal script (0.8942ms)
+✔ continuity evolves positively without forced novelty templates (0.7746ms)
+✔ dense dialogue continues from changed beats without a fixed reply ceremony (0.7311ms)
+✔ M5 exposes only the transport channel available to the current phase (1.6035ms)
+✔ known QQ system faces are translated into stable incoming semantics (8.6945ms)
+✔ unknown QQ face IDs remain explicit rather than guessed (1.2226ms)
+✖ release-facing files share the runtime version (49.4022ms)
+✔ published documentation includes every README-linked design index and current setup wording (16.2759ms)
+✔ SceneFrame projects only sourced values and keeps one id across message densities (41.352ms)
+✔ a successful commit appends a SceneDelta without replacing the frame (12.1874ms)
+✔ Schedule Preplan expands recurring rules and applies dated exceptions deterministically (17.707ms)
+✔ life-stage boundaries switch from vacation to school without leaking the old weekly plan (1.3361ms)
+✔ main narration receives only the coming twelve hours, not the stored multi-day horizon (111.4995ms)
+✔ daily review is once per local day and unchanged reviews preserve revision (12.7417ms)
+✔ an evidence-free first review persists an explicit empty schedule instead of retrying forever (2.3675ms)
+✔ Chinese stable ids from a Chinese compaction model remain distinct (10.0488ms)
+✔ fixed blocks can anchor automatic advance while flexible hobbies cannot (6.2918ms)
+✔ granular tentative blocks use a stable activation and reveal only their vague availability early (4.4164ms)
+✔ stable and contextual reviews reject model-proposed tentative blocks (3.7528ms)
+✔ prompt payload exposes Schedule Preplan as planned structure separate from story state (11.4523ms)
+✔ script-first output becomes one deterministic host-owned commit with causal message events (27.2765ms)
+✔ an absent or ambiguous prose action is diagnostic and keeps compatibility delivery intact (2.0818ms)
+✔ sidecar observations remain in the current event and never become native image input (116.6902ms)
+✔ a dedicated vision provider receives OpenAI image_url content and returns bounded plain observations (7.6641ms)
+✔ sticker describer supports prompt-only transport while retaining its JSON text contract (5.0296ms)
+✔ rankStickerCatalog passes through when below the limit or without a query vector (5.9953ms)
+✔ rankStickerCatalog orders by cosine similarity and fills leftover slots with unvectorized assets (1.6889ms)
+✔ semantic sticker limit is twelve (0.5891ms)
+✔ shouldDownscaleImage gates mime types and small payloads (10.1143ms)
+✔ stableStickerAssetId keeps punctuation-colliding filenames globally distinct (1.4885ms)
+✔ legacy beta10 state upgrades without losing chat rhythm or unknown extensions (9.5426ms)
+✔ migration inspection is diagnostic and never injects configured perspective into canon (1.0323ms)
+✔ scene frame codec retains only fields backed by script entry provenance (2.2903ms)
+✔ stream parser emits only a complete private interaction before the script arrives (8.0193ms)
+✔ stream parser supports a complete groupReply field without requiring the later script (0.8446ms)
+✔ fixed contract asks for transport before script when experimental streaming is enabled (2.5348ms)
+✔ typing delay applies bounded ±30 percent variation and can be made deterministic (0.8328ms)
+✔ 16:00 in Shanghai is an authoritative daylight afternoon (34.6215ms)
+✔ long intervals expose both endpoint clocks and continuity age (2.8876ms)
+✔ reload-style ISO timestamp rows are materialized as Date objects (2.4364ms)
+✔ timezone formatters are reused instead of rebuilt on every turn (5.8777ms)
+✔ recentScript payload carries derived ownership without changing stored entries (1.5487ms)
+✔ timeline display uses the story timezone and prints its GMT offset (0.3889ms)
+✔ explicit user-reported clocks stay distinct from the message receive time (5.4576ms)
+✔ prompt payload keeps receive time and user-reported action time as separate fields (1.1867ms)
+✔ short live windows reject explicit future clocks and multiple completed lesson stages (1.9445ms)
+✔ midnight wraparound and latency grace do not drop legitimate live scripts (0.8702ms)
+✔ the current user message remains both a durable event and the explicit currentEvent (0.7335ms)
+✔ background Agency payload includes relationship identity but not raw chat history (0.8201ms)
+✔ headline-window semantics: narrative declarations block, references and user deadlines pass (1.8078ms)
+✔ user-endorsed clocks from the message exempt the guard while unendorsed ones stay blocked (1.1087ms)
+✔ normalizeTimelinePlan coerces string positions and near-miss kinds (4.025ms)
+✔ normalizeTimelinePlan still rejects genuinely unusable beats (0.5027ms)
+✔ describeTimelinePlanRejection explains each rejected beat (1.1157ms)
+✔ timeline director accepts only bounded relative beats and discards malformed output (3.4317ms)
+✔ automatic script entries project to their host timeline ledger on later turns (0.7962ms)
+✔ desktop Arrangement uses an explicit automatic window and leaves legacy prose as a point event (1.0902ms)
+✔ timeline director reuses the compaction route and requests a small JSON ledger (3.9572ms)
+✔ timeline director accepts JSON from a later gateway response field (1.0616ms)
+✔ protocol 4 desktop projection carries commit identity, delivery ledger truth and scene checkpoints (0.9285ms)
+✔ protocol 4 projection survives hostile metadata shapes without throwing (0.9111ms)
+✔ parseTokenUsage reads OpenAI and DeepSeek cache shapes and ignores unknown ones (5.7018ms)
+✔ aggregateTokenUsages sums attempts and keeps the final attempt identity and pricing (1.3345ms)
+✔ computeTokenCost bills cached tokens at the cache price and reports savings (0.928ms)
+✔ computeTokenCost is undefined without prices and falls back to the input price (0.4472ms)
+✔ formatTokenUsageLine renders usage, hit rate and optional billing (0.9223ms)
+✔ OneBot record CQ segments are recognized as incoming voice (4.864ms)
+✔ voice transcription joins typed text into one explicit user event (0.5815ms)
+ℹ tests 253
+ℹ suites 0
+ℹ pass 251
+ℹ fail 2
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 8649.4857
+
+✖ failing tests:
+
+test at test\configuration.test.ts:2:3543
+✖ runtime and plugin exports share one version constant (20.3192ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  + actual - expected
+  
+  + '1.0.0-beta7-enhanced'
+  - '1.0.0-beta6'
+               ^
+  
+      at TestContext.<anonymous> (C:\dev\HDS-Interlude\plugins\hds-interlude\test\configuration.test.ts:50:10)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1382:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:960:18)
+      at Test.postRun (node:internal/test_runner/test:1522:19)
+      at Test.run (node:internal/test_runner/test:1447:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: '1.0.0-beta7-enhanced',
+    expected: '1.0.0-beta6',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at test\release-consistency.test.ts:2:1611
+✖ release-facing files share the runtime version (49.4022ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /koishi-plugin-hds-interlude-1\.0\.0-beta7-enhanced\.tgz/. Input:
+  
+  '<!DOCTYPE html>\n' +
+    '<html lang="zh-CN">\n' +
+    '<head>\n' +
+    '<meta charset="UTF-8">\n' +
+    '<meta name="viewport" content="width=device-width, initial-scale=1.0">\n' +
+    '<title>HDS Interlude 一键部署向导</title>\n' +
+    '<link rel="preconnect" href="https://fonts.googleapis.com">\n' +
+    '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>\n' +
+    '<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">\n' +
+    '<style>\n' +
+    '  /* ═══ 白天模式（默认） ═══ */\n' +
+    '  :root {\n' +
+    '    --bg: #f7f8fa;\n' +
+    '    --sheet: #f7f8fa;\n' +
+    '    --paper-2: #f3f4f6;\n' +
+    '    --ink: #111827;\n' +
+    '    --muted: #6b7280;\n' +
+    '    --line: #e5e7eb;\n' +
+    '    --accent: #2563eb;\n' +
+    '    --accent-2: #14b8a6;\n' +
+    '    --green: #14b8a6;\n' +
+    '    --code-bg: #111827;\n' +
+    '    --code-text: #e5e7eb;\n' +
+    '    --input-bg: #ffffff;\n' +
+    '    --input-line: #e5e7eb;\n' +
+    '    --info-bg: #eff6ff;\n' +
+    '    --info-tx: #1d4ed8;\n' +
+    '    --warn-bg: #fffbeb;\n' +
+    '    --warn-tx: #b45309;\n' +
+    '    --danger-bg: #fef2f2;\n' +
+    '    --danger-tx: #991b1b;\n' +
+    '    --miss-tx: #d97706;\n' +
+    '    --side-bg: #1f2937;\n' +
+    '    --side-tx: #f9fafb;\n' +
+    '    --side-muted: #9ca3af;\n' +
+    '    --side-accent: #3b82f6;\n' +
+    '    --sel-bg: #2563eb;\n' +
+    '    --sel-tx: #ffffff;\n' +
+    '    /* 侧光投影：冷调，自右上照向左下 */\n' +
+    '    --sun: rgba(15, 23, 42, 0.16);\n' +
+    '    --sun-soft: rgba(15, 23, 42, 0.08);\n' +
+    '    --sun-long: -26px 30px 52px -22px var(--sun), -8px 10px 22px -12px var(--sun-soft);\n' +
+    '    --sun-mid: -14px 17px 32px -16px var(--sun);\n' +
+    '    --sun-sm: -6px 7px 16px -8px var(--sun-soft);\n' +
+    '    --edge: rgba(255, 255, 255, 0.9);\n' +
+    '    --tint-a: rgba(37, 99, 235, 0.07);\n' +
+    '    --tint-b: rgba(37, 99, 235, 0.045);\n' +
+    '    --side-glow: rgba(96, 165, 250, 0.10);\n' +
+    `    --geo-tile: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='110' height='110'%3E%3Crect x='0' y='0' width='90' height='90' fill='%239db0c9'/%3E%3C/svg%3E");\n` +
+    '    --geo-far-c: #9db0c9;\n' +
+    '    --beam: linear-gradient(112deg,\n' +
+    '      transparent 26%,\n' +
+    '      rgba(148, 187, 255, 0.05) 34%,\n' +
+    '      rgba(160, 195, 255, 0.09) 41%,\n' +
+    '      rgba(170, 200, 255, 0.11) 45%,\n' +
+    '      rgba(148, 187, 255, 0.06) 50%,\n' +
+    '      transparent 58%,\n' +
+    '      rgba(160, 195, 255, 0.05) 66%,\n' +
+    '      transparent 73%);\n' +
+    `    --noise: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='260' height='260'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='260' height='260' filter='url(%23n)' opacity='0.05'/%3E%3C/svg%3E");\n` +
+    '    font-size: 15px;\n' +
+    '  }\n' +
+    '  /* ═══ 午后纸面 · 暗色 ═══ */\n' +
+    '  html[data-theme="dark"] {\n' +
+    '    --bg: #131110;\n' +
+    '    --sheet: #1d1a15;\n' +
+    '    --paper-2: #272219;\n' +
+    '    --ink: #ece6d8;\n' +
+    '    --muted: #9c9078;\n' +
+    '    --line: #3b3527;\n' +
+    '    --accent: #ff5c33;\n' +
+    '    --green: #7ba184;\n' +
+    '    --code-bg: #12100c;\n' +
+    '    --code-text: #e6ddc9;\n' +
+    '    --input-bg: #241f17;\n' +
+    '    --input-line: #47402f;\n' +
+    '    --info-bg: #272a1a;\n' +
+    '    --info-tx: #b9c48e;\n' +
+    '    --warn-bg: #342a12;\n' +
+    '    --warn-tx: #dfc084;\n' +
+    '    --danger-bg: #3c241b;\n' +
+    '    --danger-tx: #e8a184;\n' +
+    '    --miss-tx: #ef9a63;\n' +
+    '    --side-bg: #0f0d0a;\n' +
+    '    --side-tx: #f0eadd;\n' +
+    '    --side-muted: #9a8f7a;\n' +
+    '    --side-accent: #ff8a58;\n' +
+    '    --sel-bg: #ff5c33;\n' +
+    '    --sel-tx: #1d1a15;\n' +
+    '    --sun: rgba(0, 0, 0, 0.55);\n' +
+    '    --sun-soft: rgba(0, 0, 0, 0.35);\n' +
+    '    --edge: rgba(255, 215, 170, 0.05);\n' +
+    '    --tint-a: rgba(255, 160, 90, 0.16);\n' +
+    '    --tint-b: rgba(255, 180, 110, 0.10);\n' +
+    '    --side-glow: rgba(255, 150, 90, 0.08);\n' +
+    '    --geo-far-c: #964326;\n' +
+    '    --beam: linear-gradient(112deg,\n' +
+    '      transparent 26%,\n' +
+    '      rgba(255, 216, 150, 0.05) 34%,\n' +
+    '      rgba(255, 220, 158, 0.11) 41%,\n' +
+    '      rgba(255, 224, 170, 0.14) 45%,\n' +
+    '      rgba(255, 216, 150, 0.08) 50%,\n' +
+    '      transparent 58%,\n' +
+    '      rgba(255, 220, 158, 0.06) 66%,\n' +
+    '      transparent 73%);\n' +
+    '  }\n' +
+    '  * { box-sizing: border-box; margin: 0; padding: 0; }\n' +
+    '  html { scroll-behavior: smooth; }\n' +
+    '  body {\n' +
+    '    background:\n' +
+    '      radial-gradient(1100px 720px at 84% -10%, var(--tint-a), transparent 62%),\n' +
+    '      linear-gradient(212deg, var(--tint-b), transparent 42%),\n' +
+    '      var(--bg);\n' +
+    '    color: var(--ink);\n' +
+    '    font-family: "Outfit", "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei", "PingFang SC", sans-serif;\n' +
+    '    line-height: 1.75;\n' +
+    '    transition: background-color .35s ease, color .35s ease;\n' +
+    '  }\n' +
+    '  /* 午后光束：斜铺整个画面的暖光带，极缓慢地移动 */\n' +
+    '  body::before {\n' +
+    '    content: ""; position: fixed; inset: -25%;\n' +
+    '    z-index: 60; pointer-events: none;\n' +
+    '    background: var(--beam);\n' +
+    '    animation: sunShift 18s ease-in-out infinite alternate;\n' +
+    '  }\n' +
+    '  @keyframes sunShift {\n' +
+    '    from { transform: translate3d(-1.6%, -0.6%, 0) rotate(0.4deg); opacity: .8; }\n' +
+    '    to   { transform: translate3d(1.6%, 0.6%, 0) rotate(-0.4deg); opacity: 1; }\n' +
+    '  }\n' +
+    '  ::selection { background: var(--sel-bg); color: var(--sel-tx); }\n' +
+    '  ::-webkit-scrollbar { width: 10px; height: 10px; }\n' +
+    '  ::-webkit-scrollbar-track { background: transparent; }\n' +
+    '  ::-webkit-scrollbar-thumb { background: var(--line); }\n' +
+    '  ::-webkit-scrollbar-thumb:hover { background: var(--muted); }\n' +
+    '\n' +
+    '  a { color: var(--accent); text-decoration: none; font-weight: 600; }\n' +
+    '  a:hover { text-decoration: underline; text-underline-offset: 4px; }\n' +
+    '\n' +
+    '  .layout { display: flex; min-height: 100vh; }\n' +
+    '\n' +
+    '  /* ── 侧边栏：深炭面板，带纸纹 ── */\n' +
+    '  .sidebar {\n' +
+    '    width: 276px; flex-shrink: 0;\n' +
+    '    background-color: var(--side-bg);\n' +
+    '    background-image: var(--noise), radial-gradient(520px 340px at 88% -6%, var(--side-glow), transparent 62%);\n' +
+    '    color: var(--side-tx);\n' +
+    '    padding: 40px 34px 28px; position: sticky; top: 0; height: 100vh;\n' +
+    '    display: flex; flex-direction: column;\n' +
+    '    transition: background-color .35s ease;\n' +
+    '  }\n' +
+    '  .brand { margin-bottom: 52px; }\n' +
+    '  .brand-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }\n' +
+    '  .brand h1 {\n' +
+    '    font-size: 24px; font-weight: 800; line-height: 1.12; letter-spacing: .2px;\n' +
+    '    color: var(--side-tx);\n' +
+    '  }\n' +
+    '  .brand h1 span { display: block; }\n' +
+    '  .theme-toggle {\n' +
+    '    width: 34px; height: 34px; flex-shrink: 0;\n' +
+    '    background: none; color: var(--side-muted);\n' +
+    '    border: 1.5px solid var(--side-muted); border-radius: 50%;\n' +
+    '    cursor: pointer; font-size: 14px; line-height: 1;\n' +
+    '    transition: all .2s ease;\n' +
+    '  }\n' +
+    '  .theme-toggle:hover { color: var(--side-tx); border-color: var(--side-tx); transform: rotate(20deg); }\n' +
+    '  .brand p { display: none; }\n' +
+    '\n' +
+    '  .steps { display: flex; flex-direction: column; gap: 2px; }\n' +
+    '  .step-nav {\n' +
+    '    display: flex; align-items: center; gap: 14px; padding: 9px 2px;\n' +
+    '    border: none; cursor: pointer; color: var(--side-muted);\n' +
+    '    font-size: 13.5px; letter-spacing: 2.5px; font-weight: 600;\n' +
+    '    text-align: left; background: none; width: 100%; transition: color .18s ease, padding-left .18s ease;\n' +
+    '  }\n' +
+    '  .step-nav:hover { color: var(--side-tx); padding-left: 8px; }\n' +
+    '  .step-nav.active { color: var(--side-tx); }\n' +
+    '  .step-nav.active .title { color: var(--side-accent); }\n' +
+    '  .step-nav .num {\n' +
+    '    width: 10px; height: 10px; flex-shrink: 0;\n' +
+    '    border: 1.5px solid var(--side-muted); background: transparent;\n' +
+    '    font-size: 0; line-height: 0; transition: all .2s ease;\n' +
+    '  }\n' +
+    '  .step-nav:hover .num { border-color: var(--side-tx); }\n' +
+    '  .step-nav.active .num { background: var(--side-accent); border-color: var(--side-accent); box-shadow: 0 0 10px rgba(59, 130, 246, .45); }\n' +
+    '  html[data-theme="dark"] .step-nav.active .num { box-shadow: 0 0 10px rgba(255, 138, 88, .5); }\n' +
+    '  .step-nav.done .num { background: var(--green); border-color: var(--green); }\n' +
+    '  .step-nav.active.done .num { background: var(--accent); border-color: var(--accent); }\n' +
+    '  .step-nav .title { flex: 1; text-align: left; }\n' +
+    '\n' +
+    '  .progress-wrap { margin-top: auto; padding-top: 26px; }\n' +
+    '  .progress-bar { height: 3px; background: rgba(156,163,175,.30); overflow: hidden; }\n' +
+    '  .progress-bar > div { height: 100%; background: var(--accent); transition: width .45s cubic-bezier(.22,.68,.4,1); }\n' +
+    '  .progress-text { font-size: 11px; color: var(--side-muted); margin-top: 10px; letter-spacing: 2px; font-weight: 600; }\n' +
+    '  .sidebar > div:last-of-type { padding: 18px 0 0; }\n' +
+    '  .sidebar .btn { border-color: var(--side-muted); color: var(--side-muted); background: none; box-shadow: none; }\n' +
+    '  .sidebar .btn:hover { border-color: var(--side-tx); color: var(--side-tx); background: none; }\n' +
+    '  .sidebar::after {\n' +
+    '    content: "HDS INTERLUDE — SETUP GUIDE"; display: block;\n' +
+    '    font-size: 9px; letter-spacing: 2px; color: var(--side-muted);\n' +
+    '    white-space: nowrap;\n' +
+    '    margin-top: auto; padding-top: 30px; opacity: .8;\n' +
+    '  }\n' +
+    '  .sidebar { justify-content: flex-start; }\n' +
+    '\n' +
+    '  /* ── 主内容：大画布 + 顶部冷调光晕 ── */\n' +
+    '  .main {\n' +
+    '    flex: 1; min-width: 0; position: relative;\n' +
+    '    overflow: hidden;\n' +
+    '    background-color: var(--sheet);\n' +
+    '    background-image:\n' +
+    '      var(--noise),\n' +
+    '      linear-gradient(118deg, var(--tint-b) 0%, transparent 50%),\n' +
+    '      radial-gradient(1400px 900px at 82% -14%, var(--tint-a), transparent 68%);\n' +
+    '    padding: 64px 64px 110px;\n' +
+    '    box-shadow: -18px 0 60px -30px var(--sun);\n' +
+    '    transition: background-color .35s ease;\n' +
+    '  }\n' +
+    '  /* 大几何装饰：右上斜切色块——向边缘外出血，视差移动时角落始终被盖住 */\n' +
+    '  .main::before {\n' +
+    '    content: ""; position: absolute; top: -14px; right: -18px;\n' +
+    '    width: calc(min(430px, 42vw) + 20px); height: 348px;\n' +
+    '    background: linear-gradient(204deg, #4f8ef7 0%, var(--accent) 42%, #1e4fbb 100%);\n' +
+    '    clip-path: polygon(18% 0, 100% 0, 100% 100%);\n' +
+    '    filter: drop-shadow(-30px 36px 44px rgba(15, 23, 42, 0.22));\n' +
+    '    pointer-events: none;\n' +
+    '    transform: translate3d(calc(var(--mx, 0) * -14px), calc(var(--my, 0) * -10px), 0);\n' +
+    '    will-change: transform;\n' +
+    '  }\n' +
+    '  html[data-theme="dark"] .main::before {\n' +
+    '    background: linear-gradient(204deg, #ff8a58 0%, var(--accent) 48%, #a83a1c 100%);\n' +
+    '    filter: drop-shadow(-30px 36px 44px rgba(0, 0, 0, 0.5));\n' +
+    '  }\n' +
+    '\n' +
+    '  /* ── 几何影板：阳光透过冲孔板洒下的规则光斑；随鼠标轻微视差 ── */\n' +
+    '  .foliage {\n' +
+    '    position: absolute; inset: 0; overflow: hidden; pointer-events: none; z-index: 0;\n' +
+    '    transform: translate3d(calc(var(--mx, 0) * -7px), calc(var(--my, 0) * -5px), 0);\n' +
+    '    will-change: transform;\n' +
+    '    -webkit-mask-image: radial-gradient(1250px 880px at 80% -4%, #000 30%, transparent 75%);\n' +
+    '    mask-image: radial-gradient(1250px 880px at 80% -4%, #000 30%, transparent 75%);\n' +
+    '  }\n' +
+    '  html[data-theme="dark"] .foliage {\n' +
+    '    --geo-tile: url("data'... 79867 more characters
+  
+      at TestContext.<anonymous> (C:\dev\HDS-Interlude\plugins\hds-interlude\test\release-consistency.test.ts:25:10)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1382:25)
+      at Test.start (node:internal/test_runner/test:1242:17)
+      at startSubtestAfterBootstrap (node:internal/test_runner/harness:387:17) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: `<!DOCTYPE html>\n<html lang="zh-CN">\n<head>\n<meta charset="UTF-8">\n<meta name="viewport" content="width=device-width, initial-scale=1.0">\n<title>HDS Interlude 一键部署向导</title>\n<link rel="preconnect" href="https://fonts.googleapis.com">\n<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>\n<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">\n<style>\n  /* ═══ 白天模式（默认） ═══ */\n  :root {\n    --bg: #f7f8fa;\n    --sheet: #f7f8fa;\n    --paper-2: #f3f4f6;\n    --ink: #111827;\n    --muted: #6b7280;\n    --line: #e5e7eb;\n    --accent: #2563eb;\n    --accent-2: #14b8a6;\n    --green: #14b8a6;\n    --code-bg: #111827;\n    --code-text: #e5e7eb;\n    --input-bg: #ffffff;\n    --input-line: #e5e7eb;\n    --info-bg: #eff6ff;\n    --info-tx: #1d4ed8;\n    --warn-bg: #fffbeb;\n    --warn-tx: #b45309;\n    --danger-bg: #fef2f2;\n    --danger-tx: #991b1b;\n    --miss-tx: #d97706;\n    --side-bg: #1f2937;\n    --side-tx: #f9fafb;\n    --side-muted: #9ca3af;\n    --side-accent: #3b82f6;\n    --sel-bg: #2563eb;\n    --sel-tx: #ffffff;\n    /* 侧光投影：冷调，自右上照向左下 */\n    --sun: rgba(15, 23, 42, 0.16);\n    --sun-soft: rgba(15, 23, 42, 0.08);\n    --sun-long: -26px 30px 52px -22px var(--sun), -8px 10px 22px -12px var(--sun-soft);\n    --sun-mid: -14px 17px 32px -16px var(--sun);\n    --sun-sm: -6px 7px 16px -8px var(--sun-soft);\n    --edge: rgba(255, 255, 255, 0.9);\n    --tint-a: rgba(37, 99, 235, 0.07);\n    --tint-b: rgba(37, 99, 235, 0.045);\n    --side-glow: rgba(96, 165, 250, 0.10);\n    --geo-tile: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='110' height='110'%3E%3Crect x='0' y='0' width='90' height='90' fill='%239db0c9'/%3E%3C/svg%3E");\n    --geo-far-c: #9db0c9;\n    --beam: linear-gradient(112deg,\n      transparent 26%,\n      rgba(148, 187, 255, 0.05) 34%,\n      rgba(160, 195, 255, 0.09) 41%,\n      rgba(170, 200, 255, 0.11) 45%,\n      rgba(148, 187, 255, 0.06) 50%,\n      transparent 58%,\n      rgba(160, 195, 255, 0.05) 66%,\n      transparent 73%);\n    --noise: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='260' height='260'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='260' height='260' filter='url(%23n)' opacity='0.05'/%3E%3C/svg%3E");\n    font-size: 15px;\n  }\n  /* ═══ 午后纸面 · 暗色 ═══ */\n  html[data-theme="dark"] {\n    --bg: #131110;\n    --sheet: #1d1a15;\n    --paper-2: #272219;\n    --ink: #ece6d8;\n    --muted: #9c9078;\n    --line: #3b3527;\n    --accent: #ff5c33;\n    --green: #7ba184;\n    --code-bg: #12100c;\n    --code-text: #e6ddc9;\n    --input-bg: #241f17;\n    --input-line: #47402f;\n    --info-bg: #272a1a;\n    --info-tx: #b9c48e;\n    --warn-bg: #342a12;\n    --warn-tx: #dfc084;\n    --danger-bg: #3c241b;\n    --danger-tx: #e8a184;\n    --miss-tx: #ef9a63;\n    --side-bg: #0f0d0a;\n    --side-tx: #f0eadd;\n    --side-muted: #9a8f7a;\n    --side-accent: #ff8a58;\n    --sel-bg: #ff5c33;\n    --sel-tx: #1d1a15;\n    --sun: rgba(0, 0, 0, 0.55);\n    --sun-soft: rgba(0, 0, 0, 0.35);\n    --edge: rgba(255, 215, 170, 0.05);\n    --tint-a: rgba(255, 160, 90, 0.16);\n    --tint-b: rgba(255, 180, 110, 0.10);\n    --side-glow: rgba(255, 150, 90, 0.08);\n    --geo-far-c: #964326;\n    --beam: linear-gradient(112deg,\n      transparent 26%,\n      rgba(255, 216, 150, 0.05) 34%,\n      rgba(255, 220, 158, 0.11) 41%,\n      rgba(255, 224, 170, 0.14) 45%,\n      rgba(255, 216, 150, 0.08) 50%,\n      transparent 58%,\n      rgba(255, 220, 158, 0.06) 66%,\n      transparent 73%);\n  }\n  * { box-sizing: border-box; margin: 0; padding: 0; }\n  html { scroll-behavior: smooth; }\n  body {\n    background:\n      radial-gradient(1100px 720px at 84% -10%, var(--tint-a), transparent 62%),\n      linear-gradient(212deg, var(--tint-b), transparent 42%),\n      var(--bg);\n    color: var(--ink);\n    font-family: "Outfit", "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei", "PingFang SC", sans-serif;\n    line-height: 1.75;\n    transition: background-color .35s ease, color .35s ease;\n  }\n  /* 午后光束：斜铺整个画面的暖光带，极缓慢地移动 */\n  body::before {\n    content: ""; position: fixed; inset: -25%;\n    z-index: 60; pointer-events: none;\n    background: var(--beam);\n    animation: sunShift 18s ease-in-out infinite alternate;\n  }\n  @keyframes sunShift {\n    from { transform: translate3d(-1.6%, -0.6%, 0) rotate(0.4deg); opacity: .8; }\n    to   { transform: translate3d(1.6%, 0.6%, 0) rotate(-0.4deg); opacity: 1; }\n  }\n  ::selection { background: var(--sel-bg); color: var(--sel-tx); }\n  ::-webkit-scrollbar { width: 10px; height: 10px; }\n  ::-webkit-scrollbar-track { background: transparent; }\n  ::-webkit-scrollbar-thumb { background: var(--line); }\n  ::-webkit-scrollbar-thumb:hover { background: var(--muted); }\n\n  a { color: var(--accent); text-decoration: none; font-weight: 600; }\n  a:hover { text-decoration: underline; text-underline-offset: 4px; }\n\n  .layout { display: flex; min-height: 100vh; }\n\n  /* ── 侧边栏：深炭面板，带纸纹 ── */\n  .sidebar {\n    width: 276px; flex-shrink: 0;\n    background-color: var(--side-bg);\n    background-image: var(--noise), radial-gradient(520px 340px at 88% -6%, var(--side-glow), transparent 62%);\n    color: var(--side-tx);\n    padding: 40px 34px 28px; position: sticky; top: 0; height: 100vh;\n    display: flex; flex-direction: column;\n    transition: background-color .35s ease;\n  }\n  .brand { margin-bottom: 52px; }\n  .brand-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }\n  .brand h1 {\n    font-size: 24px; font-weight: 800; line-height: 1.12; letter-spacing: .2px;\n    color: var(--side-tx);\n  }\n  .brand h1 span { display: block; }\n  .theme-toggle {\n    width: 34px; height: 34px; flex-shrink: 0;\n    background: none; color: var(--side-muted);\n    border: 1.5px solid var(--side-muted); border-radius: 50%;\n    cursor: pointer; font-size: 14px; line-height: 1;\n    transition: all .2s ease;\n  }\n  .theme-toggle:hover { color: var(--side-tx); border-color: var(--side-tx); transform: rotate(20deg); }\n  .brand p { display: none; }\n\n  .steps { display: flex; flex-direction: column; gap: 2px; }\n  .step-nav {\n    display: flex; align-items: center; gap: 14px; padding: 9px 2px;\n    border: none; cursor: pointer; color: var(--side-muted);\n    font-size: 13.5px; letter-spacing: 2.5px; font-weight: 600;\n    text-align: left; background: none; width: 100%; transition: color .18s ease, padding-left .18s ease;\n  }\n  .step-nav:hover { color: var(--side-tx); padding-left: 8px; }\n  .step-nav.active { color: var(--side-tx); }\n  .step-nav.active .title { color: var(--side-accent); }\n  .step-nav .num {\n    width: 10px; height: 10px; flex-shrink: 0;\n    border: 1.5px solid var(--side-muted); background: transparent;\n    font-size: 0; line-height: 0; transition: all .2s ease;\n  }\n  .step-nav:hover .num { border-color: var(--side-tx); }\n  .step-nav.active .num { background: var(--side-accent); border-color: var(--side-accent); box-shadow: 0 0 10px rgba(59, 130, 246, .45); }\n  html[data-theme="dark"] .step-nav.active .num { box-shadow: 0 0 10px rgba(255, 138, 88, .5); }\n  .step-nav.done .num { background: var(--green); border-color: var(--green); }\n  .step-nav.active.done .num { background: var(--accent); border-color: var(--accent); }\n  .step-nav .title { flex: 1; text-align: left; }\n\n  .progress-wrap { margin-top: auto; padding-top: 26px; }\n  .progress-bar { height: 3px; background: rgba(156,163,175,.30); overflow: hidden; }\n  .progress-bar > div { height: 100%; background: var(--accent); transition: width .45s cubic-bezier(.22,.68,.4,1); }\n  .progress-text { font-size: 11px; color: var(--side-muted); margin-top: 10px; letter-spacing: 2px; font-weight: 600; }\n  .sidebar > div:last-of-type { padding: 18px 0 0; }\n  .sidebar .btn { border-color: var(--side-muted); color: var(--side-muted); background: none; box-shadow: none; }\n  .sidebar .btn:hover { border-color: var(--side-tx); color: var(--side-tx); background: none; }\n  .sidebar::after {\n    content: "HDS INTERLUDE — SETUP GUIDE"; display: block;\n    font-size: 9px; letter-spacing: 2px; color: var(--side-muted);\n    white-space: nowrap;\n    margin-top: auto; padding-top: 30px; opacity: .8;\n  }\n  .sidebar { justify-content: flex-start; }\n\n  /* ── 主内容：大画布 + 顶部冷调光晕 ── */\n  .main {\n    flex: 1; min-width: 0; position: relative;\n    overflow: hidden;\n    background-color: var(--sheet);\n    background-image:\n      var(--noise),\n      linear-gradient(118deg, var(--tint-b) 0%, transparent 50%),\n      radial-gradient(1400px 900px at 82% -14%, var(--tint-a), transparent 68%);\n    padding: 64px 64px 110px;\n    box-shadow: -18px 0 60px -30px var(--sun);\n    transition: background-color .35s ease;\n  }\n  /* 大几何装饰：右上斜切色块——向边缘外出血，视差移动时角落始终被盖住 */\n  .main::before {\n    content: ""; position: absolute; top: -14px; right: -18px;\n    width: calc(min(430px, 42vw) + 20px); height: 348px;\n    background: linear-gradient(204deg, #4f8ef7 0%, var(--accent) 42%, #1e4fbb 100%);\n    clip-path: polygon(18% 0, 100% 0, 100% 100%);\n    filter: drop-shadow(-30px 36px 44px rgba(15, 23, 42, 0.22));\n    pointer-events: none;\n    transform: translate3d(calc(var(--mx, 0) * -14px), calc(var(--my, 0) * -10px), 0);\n    will-change: transform;\n  }\n  html[data-theme="dark"] .main::before {\n    background: linear-gradient(204deg, #ff8a58 0%, var(--accent) 48%, #a83a1c 100%);\n    filter: drop-shadow(-30px 36px 44px rgba(0, 0, 0, 0.5));\n  }\n\n  /* ── 几何影板：阳光透过冲孔板洒下的规则光斑；随鼠标轻微视差 ── */\n  .foliage {\n    position: absolute; inset: 0; overflow: hidden; pointer-events: none; z-index: 0;\n    transform: translate3d(calc(var(--mx, 0) * -7px), calc(var(--my, 0) * -5px), 0);\n    will-change: transform;\n    -webkit-mask-image: radial-gradient(1250px 880px at 80% -4%, #000 30%, transparent 75%);\n    mask-image: radial-gradient(1250px 880px at 80% -4%, #000 30%, transparent 75%);\n  }\n  html[data-theme="dark"] .foliage {\n    --geo-tile: url("data`... 79867 more characters,
+    expected: /koishi-plugin-hds-interlude-1\.0\.0-beta7-enhanced\.tgz/,
+    operator: 'match',
+    diff: 'simple'
+  }
+npm error Lifecycle script `test` failed with error:
+npm error code 1
+npm error path C:\dev\HDS-Interlude\plugins\hds-interlude
+npm error workspace koishi-plugin-hds-interlude@1.0.0-beta7-enhanced
+npm error location C:\dev\HDS-Interlude\plugins\hds-interlude
+npm error command failed
+npm error command C:\WINDOWS\system32\cmd.exe /d /s /c node --import tsx --test test/*.test.ts

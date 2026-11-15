@@ -1,0 +1,46 @@
+{
+  "name": "@root/yesimbot",
+  "version": "0.0.0",
+  "private": true,
+  "packageManager": "yarn@4.5.3",
+  "contributors": [
+    "HydroGest <2445691453@qq.com>",
+    "Dispure <3116716016@qq.com>",
+    "MiaowFISH <1293865264@qq.com>",
+    "Touch-Night <1762918301@qq.com>"
+  ],
+  "license": "MIT",
+  "homepage": "github:HydroGest/YesImBot",
+  "workspaces": [
+    "packages/*",
+    "plugins/*"
+  ],
+  "scripts": {
+    "build": "turbo run build",
+    "clean": "turbo run clean && rm -rf .turbo",
+    "dev": "turbo run dev",
+    "lint": "turbo run lint",
+    "prepare": "husky install",
+    "test": "turbo run test",
+    "bump": "bumpp"
+  },
+  "devDependencies": {
+    "@antfu/eslint-config": "^4.16.2",
+    "@changesets/cli": "^3.0.0",
+    "@types/node": "^22.16.2",
+    "bumpp": "^10.2.0",
+    "dumble": "^0.2.2",
+    "esbuild": "^0.27.1",
+    "eslint": "^9.33.0",
+    "husky": "^9.1.7",
+    "lint-staged": "^16.2.7",
+    "pkgroll": "^2.21.4",
+    "prettier": "^3.6.2",
+    "turbo": "^2.6.3",
+    "typescript": "^5.9.3",
+    "yml-register": "^1.2.5"
+  },
+  "lint-staged": {
+    "*.{js,ts,jsx,tsx,json,md,yml}": "prettier --write"
+  }
+}

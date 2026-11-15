@@ -1,0 +1,77 @@
+{
+  "name": "koishi-plugin-hds-interlude",
+  "version": "1.0.1-rc30",
+  "description": "A time-aware, persistent narrative chat framework for Koishi.",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "scripts": {
+    "prepack": "node scripts/ensure-fresh-bundle.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit --incremental false --composite false --noUnusedLocals --noUnusedParameters",
+    "test": "node --import tsx --test test/*.test.ts",
+    "test:model": "node --import tsx --test test/model-behavior.test.ts"
+  },
+  "files": [
+    "lib",
+    "README.md",
+    "DEPLOYMENT_GUIDE.md",
+    "CONFIGURATION_GUIDE.md",
+    "BEGINNER_GUIDE.md",
+    "command.md",
+    "docs/README.md",
+    "docs/FORWARD_MESSAGE_READING_DESIGN.md",
+    "docs/ARCHITECTURE.md",
+    "docs/SCRIPT_CENTRIC_ARCHITECTURE_REDESIGN.md",
+    "docs/V2_IN_PLACE_REFACTOR_IMPLEMENTATION_FORM.md",
+    "docs/ALTER_SYSTEM.md",
+    "docs/AGENCY_WINDOW.md",
+    "docs/SCHEDULE_PREPLAN.md",
+    "docs/CHANGELOG.md",
+    "docs/SECURITY.md",
+    "docs/WORLD_EVENT_SEEDER_DESIGN.md",
+    "docs/GROUP_WILLINGNESS_TIERS.md",
+    "docs/WECHAT_CHANNEL_PLAN.md",
+    "docs/QZONE_FEED_DESIGN.md",
+    "docs/MULTI_CHANNEL_SINGLE_STORY_DESIGN.md",
+    "docs/MULTI_CHANNEL_IMPLEMENTATION_ROADMAP.md",
+    "docs/INDIRECT_SUBJECT_DESIGN.md",
+    "docs/OFFLINE_ATTENTION_EXPERIMENT.md",
+    "docs/development"
+  ],
+  "keywords": [
+    "koishi",
+    "chatbot",
+    "roleplay",
+    "narrative"
+  ],
+  "license": "AGPL-3.0",
+  "koishi": {
+    "service": {
+      "optional": [
+        "puppeteer"
+      ]
+    }
+  },
+  "peerDependencies": {
+    "koishi": "^4.18.7",
+    "koishi-plugin-puppeteer": "^3.9.0"
+  },
+  "peerDependenciesMeta": {
+    "koishi-plugin-puppeteer": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "koishi-plugin-puppeteer": "^3.9.0"
+  },
+  "dependencies": {
+    "qface": "^1.4.1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://gitee.com/MomoiCore/HDS-Interlude.git"
+  },
+  "homepage": "https://gitee.com/MomoiCore/HDS-Interlude#readme",
+  "bugs": {
+    "url": "https://gitee.com/MomoiCore/HDS-Interlude/issues"
+  }
+}

@@ -1,0 +1,27 @@
+node_modules/
+tsconfig.tsbuildinfo
+.env
+.env.*
+!.env.example
+*.log
+*.db
+*.sqlite
+*.sqlite3
+*.db-shm
+*.db-wal
+data/
+cache/
+temp/
+secrets.*
+credentials.*
+*.pem
+*.key
+*.p12
+*.pfx
+.DS_Store
+
+# Local-only recovery and forensic material. Current source, docs and release
+# artifacts remain visible; archived snapshots never enter a publishable tree.
+backup/
+dustbin/
+release/smoke-*/
