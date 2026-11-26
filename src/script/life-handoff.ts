@@ -1,7 +1,9 @@
 import type { ScriptEntry } from '../types'
+import { normalizeFocusDraft, type FocusDraft } from '../life-rhythm'
 
 export interface QuotedLifeValue { value: string; quote: string }
 export interface LifeHandoff {
+  focus?: FocusDraft
   place?: QuotedLifeValue
   activity?: QuotedLifeValue
   /** Complete local roster, including an explicitly evidenced empty roster. */
@@ -18,6 +20,8 @@ export function normalizeLifeHandoff(raw: unknown, prose: string): LifeHandoff |
   const quoted = (quote: unknown): quote is string => typeof quote === 'string'
     && quote.trim().length >= 2 && quote.length <= 500 && prose.includes(quote)
   const result: LifeHandoff = {}
+  const focus = normalizeFocusDraft(value.focus, prose)
+  if (focus) result.focus = focus
   for (const key of ['place', 'activity'] as const) {
     const item = value[key]
     if (item && typeof item.value === 'string' && item.value.trim() && item.value.length <= 160 && quoted(item.quote)) result[key] = { value: item.value.trim(), quote: item.quote }
@@ -34,12 +38,15 @@ export function normalizeLifeHandoff(raw: unknown, prose: string): LifeHandoff |
 }
 
 export function entryLifeHandoff(entry: ScriptEntry) {
-  return entry.kind === 'script' ? normalizeLifeHandoff(entry.metadata?.lifeHandoff, entry.content) : undefined
+  return entry.kind === 'script' || entry.kind === 'prologue' ? normalizeLifeHandoff(entry.metadata?.lifeHandoff, entry.content) : undefined
 }
 
 /** New originals are the completed record; their director plan stays a plan.
  * Legacy ledgers remain distinguishable rather than reinterpreted in place. */
 export function narrativeEvidence(entry: ScriptEntry): { narrativeAuthority?: string; lifeHandoff?: LifeHandoff; proposedTimeline?: unknown; timelineEvidence?: unknown; communicationOutcome?: string } {
+  if (entry.kind === 'prologue') {
+    return { narrativeAuthority: 'administrator-authored-past', lifeHandoff: entryLifeHandoff(entry), communicationOutcome: 'no-outgoing-action-recorded' }
+  }
   return {
     ...(entry.metadata?.commitId && Array.isArray(entry.metadata.deliveryActions) && !entry.metadata.deliveryActions.length
       ? { communicationOutcome: 'no-outgoing-action-recorded' } : {}),

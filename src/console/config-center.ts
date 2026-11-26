@@ -11,7 +11,7 @@
  * schema.simplify 后的值原子写回 koishi.yml。保存即持久，插件与标准
  * 配置页共用同一机制（设计 §6）。
  *
- * 密钥：读取掩码、保存哨兵跳过（CONFIG_CENTER_SECRET_FIELDS）。
+ * 密钥：按 Schema 的 secret role 推导掩码，保存时保留占位值对应的原密钥。
  * 危险项确认名单（CONFIG_CENTER_DANGEROUS_FIELDS）由客户端在提交前
  * 弹确认；服务端不重复拦截。
  */
@@ -29,36 +29,77 @@ declare module '@koishijs/console' {
   }
 }
 
-/** 序列化一个配置节的 Schema（顶层键 → 子 Schema）。节不存在时抛错。 */
-export function serializeConfigSection(configSchema: Schema, section: string): unknown {
-  const node = (configSchema as unknown as { dict?: Record<string, unknown> }).dict?.[section]
-  if (!node) throw new Error(`配置节不存在: ${section}`)
-  const cloned = new Schema(JSON.parse(JSON.stringify(node)))
-  cloned.meta = { ...cloned.meta, collapse: false }
-  // A string section (mainPrompt) needs the same object-shaped form model.
-  return JSON.parse(JSON.stringify(cloned.type === 'object' || cloned.type === 'intersect'
-    ? cloned : Schema.object({ value: cloned }).description('主提示词内容')))
+/** The writing page projects existing keys; stored configuration remains compatible. */
+const WRITING_FIELDS = {
+  value: ['mainPrompt'],
+  'model.fixedPrompt': ['model', 'fixedPrompt'],
+  'model.formatPrompt': ['model', 'formatPrompt'],
+  'model.stylePrompt': ['model', 'stylePrompt'],
+  'storyDefaults.style': ['storyDefaults', 'style'],
+} as const
+const separatedFields: Record<string, string[]> = {
+  model: ['fixedPrompt', 'formatPrompt', 'stylePrompt'],
+  storyDefaults: ['style'],
 }
 
-/** 配置中心读取：菜单恒随行；开放节附带序列化 Schema 与当前值。
- * 密钥脱敏以 Schema 为唯一事实来源（审计 F1）：递归收集 role=secret 的
- * 字段路径——嵌套如 research.jev.apiKey 同样掩码，不依赖手工清单。 */
+function sectionNode(configSchema: Schema, section: string): Schema {
+  const nodes = (configSchema as unknown as { dict: Record<string, Schema> }).dict
+  if (!nodes[section]) throw new Error(`配置节不存在: ${section}`)
+  const clone = (node: Schema) => new Schema(JSON.parse(JSON.stringify(node)))
+  if (section === 'mainPrompt') {
+    return Schema.object({
+      value: clone(nodes.mainPrompt),
+      model: Schema.object({
+        fixedPrompt: clone(nodes.model.dict.fixedPrompt),
+        formatPrompt: clone(nodes.model.dict.formatPrompt),
+        stylePrompt: clone(nodes.model.dict.stylePrompt),
+      }).description('全局写作提示词'),
+      storyDefaults: Schema.object({ style: clone(nodes.storyDefaults.dict.style) })
+        .description('新故事的默认文风；现有故事在「当前故事」中调整'),
+    }).description('写作提示词')
+  }
+  const node = clone(nodes[section])
+  for (const key of separatedFields[section] ?? []) delete node.dict[key]
+  node.meta = { ...node.meta, collapse: false }
+  if (section === 'storyDefaults') node.meta.description = '故事档案：主角、世界、关系、地点、时区与前置剧本。新故事默认文风在「写作提示词」中设置。'
+  return node
+}
+
+function sectionValues(config: Record<string, unknown>, configSchema: Schema, section: string): Record<string, unknown> {
+  const node = sectionNode(configSchema, section)
+  if (section === 'mainPrompt') {
+    const model = config.model as Record<string, unknown> | undefined
+    const story = config.storyDefaults as Record<string, unknown> | undefined
+    const legacyDefault = (configSchema as unknown as { dict: Record<string, Schema> }).dict.model.dict.mainPrompt.meta.default
+    const mainPrompt = typeof config.mainPrompt === 'string' && config.mainPrompt.trim()
+      ? config.mainPrompt : typeof model?.mainPrompt === 'string' && model.mainPrompt !== legacyDefault ? model.mainPrompt : ''
+    return node({ value: mainPrompt, model: {
+      fixedPrompt: model?.fixedPrompt, formatPrompt: model?.formatPrompt, stylePrompt: model?.stylePrompt,
+    }, storyDefaults: { style: story?.style } })
+  }
+  const raw = withProviderIds(section, config[section] ?? node(undefined) ?? {}) as Record<string, unknown>
+  const values = { ...raw }
+  for (const key of separatedFields[section] ?? []) delete values[key]
+  return values
+}
+
+/** Serialize the section as displayed in the dedicated Console. */
+export function serializeConfigSection(configSchema: Schema, section: string): unknown {
+  return JSON.parse(JSON.stringify(sectionNode(configSchema, section)))
+}
+
 export function readConfigCenter(host: InterludeService, configSchema: Schema, section?: string | null): ConfigCenterReadResult {
   if (section == null || section === '') return { ok: true, menu: CONFIG_CENTER_MENU }
   if (!isOpenConfigCenterSection(section)) {
     return { ok: false, menu: CONFIG_CENTER_MENU, error: `未知配置节: ${String(section)}` }
   }
-  const node = (configSchema as unknown as { dict: Record<string, Schema> }).dict[section]
-  const configured = (host.config as unknown as Record<string, unknown>)[section]
-  const raw = withProviderIds(section, configured ?? (node as unknown as (value: unknown) => unknown)(undefined) ?? {})
-  const secretPaths = collectSecretPaths((configSchema as unknown as { dict?: Record<string, unknown> }).dict?.[section])
-  const { value, masked } = maskSecretPaths(raw, secretPaths)
+  const node = sectionNode(configSchema, section)
+  const raw = sectionValues(host.config as unknown as Record<string, unknown>, configSchema, section)
+  const { value, masked } = maskSecretPaths(raw, collectSecretPaths(node))
   return {
-    ok: true,
-    menu: CONFIG_CENTER_MENU,
+    ok: true, menu: CONFIG_CENTER_MENU,
     schema: serializeConfigSection(configSchema, section),
-    values: node.type === 'object' || node.type === 'intersect' ? value as Record<string, unknown> : { value },
-    maskedFields: masked,
+    values: value as Record<string, unknown>, maskedFields: masked,
   }
 }
 
@@ -129,21 +170,53 @@ export function applyConfigSectionPatch(host: InterludeService, configSchema: Sc
   if (!isOpenConfigCenterSection(section)) return { ok: false, error: `未知配置节: ${String(section)}` }
   if (!isPlainObject(patch)) return { ok: false, error: 'invalid patch' }
 
-  const node = (configSchema as unknown as { dict: Record<string, Schema> }).dict[section]
-  const scalar = node.type !== 'object' && node.type !== 'intersect'
   let merged: Record<string, unknown>
   try {
-    const current = withProviderIds(section, (host.config as unknown as Record<string, unknown>)[section])
-    const next = withProviderIds(section, deepMergePatch(current, scalar ? patch.value : patch))
-    // Removing a field must never mutate live configuration before validation.
-    const sectionValue = !scalar && options.unset?.length ? JSON.parse(JSON.stringify(next)) : next
-    if (!scalar && isPlainObject(sectionValue)) unsetPaths(sectionValue, options.unset ?? [])
-    merged = { ...(host.config as unknown as Record<string, unknown>), [section]: sectionValue }
+    const config = host.config as unknown as Record<string, unknown>
+    if (section === 'mainPrompt') {
+      // Only this view's fields may write through to their original locations.
+      const check = (value: Record<string, unknown>, prefix = '') => {
+        for (const [key, child] of Object.entries(value)) {
+          const path = prefix ? `${prefix}.${key}` : key
+          if (Object.hasOwn(WRITING_FIELDS, path)) continue
+          if (!['model', 'storyDefaults'].includes(path) || !isPlainObject(child)) throw new Error(`写作提示词字段无效: ${path}`)
+          check(child, path)
+        }
+      }
+      check(patch)
+      for (const path of options.unset ?? []) {
+        if (!Object.hasOwn(WRITING_FIELDS, path) && !['model', 'storyDefaults'].includes(path)) throw new Error(`写作提示词重置路径无效: ${path}`)
+      }
+      const next = deepMergePatch(sectionValues(config, configSchema, section), patch) as Record<string, unknown>
+      unsetPaths(next, options.unset ?? [])
+      merged = { ...config, model: { ...config.model as object }, storyDefaults: { ...config.storyDefaults as object } }
+      // Clearing the visible prompt also resets the legacy fallback used by older YAML.
+      if (Object.hasOwn(patch, 'value') || options.unset?.includes('value')) {
+        ;(merged.model as Record<string, unknown>).mainPrompt = (configSchema as unknown as { dict: Record<string, Schema> }).dict.model.dict.mainPrompt(undefined)
+      }
+      for (const [path, keys] of Object.entries(WRITING_FIELDS)) {
+        const viewKeys = path.split('.')
+        const source = viewKeys.length === 1 ? next : next[viewKeys[0]] as Record<string, unknown> | undefined
+        const key = viewKeys[viewKeys.length - 1]
+        const target = keys.length === 1 ? merged : merged[keys[0]] as Record<string, unknown>
+        const targetKey = keys[keys.length - 1]
+        if (source && Object.hasOwn(source, key)) target[targetKey] = source[key]
+        else delete target[targetKey]
+      }
+    } else {
+      const current = withProviderIds(section, config[section])
+      const next = withProviderIds(section, deepMergePatch(current, patch))
+      // Removing a field must never mutate live configuration before validation.
+      const sectionValue = options.unset?.length ? JSON.parse(JSON.stringify(next)) : next
+      if (isPlainObject(sectionValue)) unsetPaths(sectionValue, options.unset ?? [])
+      merged = { ...config, [section]: sectionValue }
+    }
   } catch (error) { return { ok: false, error: describeSchemaError(error) } }
+  let resolved: Config
   // 预校验必须先于 scope.update：后者内部的 resolveConfig 失败会 cancel
   // 整个插件作用域（@cordisjs/core scope.ts Fork.update），把插件打停。
   try {
-    ;(configSchema as unknown as (input: unknown) => unknown)(merged)
+    resolved = (configSchema as unknown as (input: unknown) => Config)(merged)
   } catch (error) {
     return { ok: false, error: describeSchemaError(error) }
   }
@@ -152,7 +225,9 @@ export function applyConfigSectionPatch(host: InterludeService, configSchema: Sc
   } catch (error) {
     return { ok: false, error: `配置更新失败: ${describeSchemaError(error)}` }
   }
-  return { ok: true }
+  // Return the validated view directly; an automatic restart may replace this RPC host.
+  const saved = readConfigCenter({ config: resolved } as InterludeService, configSchema, section)
+  return { ok: true, values: saved.values, maskedFields: saved.maskedFields }
 }
 
 function describeSchemaError(error: unknown): string {

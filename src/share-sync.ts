@@ -315,14 +315,14 @@ export async function runAutoSync(ctx: Context, service: InterludeService, opts:
   if (!sync?.enabled || !sync.shareCode?.trim()) return null
   const baseUrl = sync.baseUrl?.trim() || 'https://typ0.space'
   const code = normalizeShareCode(sync.shareCode) ?? sync.shareCode.trim()
-  const logger = ctx.logger('hds-interlude')
+  const logger = service.operationLogger
 
   try {
     // 码变更闸:配置码与已同步码一致且非强制 → 跳过,零网络请求。作者修改
     // 预设后旧码在站点侧失效、发放新码,所以"远端有更新"的主路径就是换码。
     const state = await readSyncState(ctx.baseDir)
     if (!opts.force && state && state.code === code) {
-      logger.info('预设同步:分享码 %s 未变化,跳过(强制重新应用可执行 interlude.preset.sync)', code)
+      logger?.debug('预设同步：分享码未变化，跳过（可手动强制同步）')
       return { applied: false, reason: '分享码未变化', revision: state.revision, title: state.title }
     }
 
@@ -333,7 +333,7 @@ export async function runAutoSync(ctx: Context, service: InterludeService, opts:
     const sectionFilter = sync.sections?.length ? sync.sections : info.sections
     const sections = info.sections.filter((s) => sectionFilter.includes(s))
     if (!sections.length) {
-      logger.warn('预设同步:预设 %s 中没有匹配的分区', info.title)
+      logger?.warn('预设同步:预设 %s 中没有匹配的分区', info.title)
       return { applied: false, reason: '没有匹配的分区', revision: info.revision, title: info.title }
     }
 
@@ -387,7 +387,7 @@ export async function runAutoSync(ctx: Context, service: InterludeService, opts:
 
     const changes = summary.diffs.map((d) => `${d.section}(${d.changed.length + d.added.length}项)`).join('、')
     const templateNote = patchSections.includes('storyDefaults') ? '含 storyDefaults 模板' : ''
-    logger.info('预设同步:已应用「%s」revision %d(%s%s)', info.title, info.revision, changes || '无变化', templateNote ? `;${templateNote}` : '')
+    logger?.info('预设同步:已应用「%s」revision %d(%s%s)', info.title, info.revision, changes || '无变化', templateNote ? `;${templateNote}` : '')
     return { applied: true, reason: `已应用 ${changes || '配置'}${templateNote ? `(${templateNote})` : ''}`, revision: info.revision, title: info.title }
   } catch (error) {
     // 静默保留本地配置,仅记录错误
@@ -399,9 +399,9 @@ export async function runAutoSync(ctx: Context, service: InterludeService, opts:
     // 404 时给出明确提示(分享码可能因作者修改而过期)
     const is404 = /分享码不存在|已过期/.test((error as Error).message)
     if (is404) {
-      logger.warn('预设同步失败:分享码已过期(作者修改了预设,旧码失效)。请到 typ0-site 获取新分享码并更新 Console 配置。')
+      logger?.warn('预设同步失败:分享码已过期(作者修改了预设,旧码失效)。请到 typ0-site 获取新分享码并更新 Console 配置。')
     } else {
-      logger.warn('预设同步失败(保留本地配置):%s', (error as Error).message)
+      logger?.warn('预设同步失败(保留本地配置):%s', (error as Error).message)
     }
     return { applied: false, reason: is404 ? '分享码已过期,请获取新码' : `失败:${(error as Error).message}` }
   }

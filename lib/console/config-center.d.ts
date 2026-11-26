@@ -11,7 +11,7 @@
  * schema.simplify 后的值原子写回 koishi.yml。保存即持久，插件与标准
  * 配置页共用同一机制（设计 §6）。
  *
- * 密钥：读取掩码、保存哨兵跳过（CONFIG_CENTER_SECRET_FIELDS）。
+ * 密钥：按 Schema 的 secret role 推导掩码，保存时保留占位值对应的原密钥。
  * 危险项确认名单（CONFIG_CENTER_DANGEROUS_FIELDS）由客户端在提交前
  * 弹确认；服务端不重复拦截。
  */
@@ -30,11 +30,8 @@ declare module '@koishijs/console' {
         }): Promise<ConfigCenterSaveResult>;
     }
 }
-/** 序列化一个配置节的 Schema（顶层键 → 子 Schema）。节不存在时抛错。 */
+/** Serialize the section as displayed in the dedicated Console. */
 export declare function serializeConfigSection(configSchema: Schema, section: string): unknown;
-/** 配置中心读取：菜单恒随行；开放节附带序列化 Schema 与当前值。
- * 密钥脱敏以 Schema 为唯一事实来源（审计 F1）：递归收集 role=secret 的
- * 字段路径——嵌套如 research.jev.apiKey 同样掩码，不依赖手工清单。 */
 export declare function readConfigCenter(host: InterludeService, configSchema: Schema, section?: string | null): ConfigCenterReadResult;
 /** 按节持久化写入：深合并（审计 F5，嵌套字段不丢）→ 整树预校验 →
  * scope.update（热更新 + loader 写回 koishi.yml）。任何失败都不落盘。 */

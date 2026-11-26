@@ -7,6 +7,7 @@ import { dirname } from 'node:path'
 import type { Schema } from 'koishi'
 import { DataService } from '@koishijs/console'
 import type { InterludeService } from '../service'
+import type { AttentionTier, FixedAttentionEvent } from '../script/event-attention'
 import { installConfigRpc } from './rpc'
 import { installConfigCenterRpc } from './config-center'
 import { installActionsRpc } from './actions'
@@ -22,6 +23,19 @@ export interface HdsiOverview {
     status: string
     cursorLocal: string
     rhythm: string
+    /** Read-only estimate at overview time; not a record of a narrative request. */
+    eventAttention?: {
+      status: 'current' | 'missing' | 'stale' | 'legacy'
+      assessedAtLocal?: string
+      tiers: Record<FixedAttentionEvent, AttentionTier>
+    }
+    location?: string
+    activity?: string
+    focus?: string
+    timezone?: string
+    nextAdvanceLocal?: string
+    lastAdvanceLocal?: string
+    followUpCount?: number
   }
   models: Array<{ task: string, provider: string, model: string, available: boolean, reason?: string }>
   switches: Array<{ key: string, label: string, value: string, ok: boolean | null }>
@@ -37,6 +51,7 @@ export interface HdsiOverview {
     counts: { count5: number, count15: number, count30: number }
     tier: string
     effectiveLimit: number
+    budgets?: { private: { count: number, minutes: number, mode: string }, group: { count: number, minutes: number, mode: string } }
     mode: string
     anchor: number
     globalMode: string
@@ -96,6 +111,6 @@ export function installHdsiConsole(ctx: Context, host: InterludeService, configS
     if (!dist) throw new Error('client-dist not found from either bundled or source path')
     ctx.console.addEntry(dist)
   } catch (error) {
-    ctx.logger('hds-interlude').warn('HDSI Console 客户端资源缺失（只读数据服务仍可用）错误=%s', error)
+    host.operationLogger.warn('HDSI Console 客户端资源未能加载（已注册的数据与 RPC 不受此步影响） 错误=%s', error)
   }
 }

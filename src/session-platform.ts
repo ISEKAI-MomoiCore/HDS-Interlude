@@ -344,23 +344,14 @@ export function describeGroupAttachments(content: unknown) {
     })
 }
 
-/** 出站传输超时包装（rc50 issue 报告）：OneBot 实现不回应时把"永久挂起"
- * 变成有界等待，防止按故事串行的执行链被单次发送永久堵死。默认 30s 与
- * send_forward_msg 一致。与 withTimeout 的区别：超时错误带 `transport-timeout`
- * 标记与调用点标签——上层把它当作"结果未知"（账本记 pending 交由待投递
- * 补偿幂等收尾），而不是确定失败；迟到回执由 deliveryExecutionKey 去重。 */
-
-/** 出站传输超时包装（rc50 issue 报告）：OneBot 实现不回应时把"永久挂起"
- * 变成有界等待，防止按故事串行的执行链被单次发送永久堵死。默认 30s 与
- * send_forward_msg 一致。与 withTimeout 的区别：超时错误带 `transport-timeout`
- * 标记与调用点标签——上层把它当作"结果未知"（账本记 pending 交由待投递
- * 补偿幂等收尾），而不是确定失败；迟到回执由 deliveryExecutionKey 去重。 */
+/** Limit transport waits. Timeout only marks the outcome unknown; callers own
+ * ledger transitions, reconciliation, and any decision to schedule retries. */
 export function withTransportTimeout<T>(promise: Promise<T>, label: string, timeoutMs = 30_000): Promise<T> {
   return withTimeout(promise, timeoutMs).catch(error => {
     const isTimeout = (error as { timeout?: boolean })?.timeout === true
       || String(error?.message || error).includes('timeout after')
     if (isTimeout) {
-      const wrapped = new Error(`transport-timeout:${label} (结果未知，等待补偿重试)`) as Error & { transportTimeout?: boolean }
+      const wrapped = new Error(`transport-timeout:${label} (结果未知)`) as Error & { transportTimeout?: boolean }
       wrapped.transportTimeout = true
       throw wrapped
     }

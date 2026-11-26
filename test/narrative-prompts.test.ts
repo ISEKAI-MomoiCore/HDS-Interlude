@@ -116,12 +116,16 @@ test('private interaction protocol is neutral about reading and explicit about r
   assert.doesNotMatch(user, /interaction as \{"seen":</)
   assert.doesNotMatch(user, /actionId/)
   assert.doesNotMatch(user, /say id=/)
-  assert.match(user, /The content must be exactly the words the script shows her sending/)
-  assert.match(user, /mode=none only when she sends nothing, and a silent turn carries no content/)
+  assert.match(user, /DRAFT ONLY: 她打了个“行”，又删掉。.*reply is \{"mode":"none"\}, without content/)
+  const sent = user.split('\n').find(line => line.startsWith('SENT BY NOW:'))!
+  assert.match(sent, /她先发了句“行”，又补了一条：“几点啊？”/)
+  assert.match(sent, /"mode":"immediate","content":"行<sep\/>几点啊？"/)
+  assert.doesNotMatch(sent, /sendAt/)
+  assert.match(user, /SCHEDULED, NOT SENT:.*"mode":"delayed".*"sendAt":"ISO-8601 with offset, strictly after now"/)
   // 已读不回是明确合法的普通状态。
   assert.match(user, /seen=true with reply\.mode=none is the ordinary read-but-does-not-answer state/)
   // 剧本里写了发送就必须 immediate——弱模型矛盾形态的提示词侧约束。
-  assert.match(user, /Whenever the script shows her actually sending words to the current private participant, reply\.mode must be immediate/)
+  assert.match(sent, /place the exact sent words at the sending action in script and mirror them in reply\.content/)
   // 未读计数是客观到达记录，不是注意力或义务。
   assert.match(user, /unreadMessageCount is the registered count of arrived messages not yet marked read/)
   // 跟进/到期回合：seen=false 不得再暗示回复必须为 none。
@@ -266,7 +270,7 @@ test('admin notes carry explicit semantic weight and are never truncated in the 
   assert.ok(scriptEntry!.content.includes('她写歌'))
 })
 
-test('DeepSeek 家族传输行按家族注入；standard 档协议本身与 full/lite 保持不变', () => {
+test('DeepSeek 家族传输行保持按家族注入；各档共用私聊发送示例', () => {
   const ds = systemPrompt('user-message', '', '', '', '', '', false, false, false, false, false, undefined, false, undefined, false, false, false, false, undefined,
     { tier: 'standard', family: 'deepseek', source: 'auto', probe: 'deepseek-chat' })
   assert.match(ds, /TRANSPORT IS PER-TURN: on every turn that can carry a reply/)
@@ -277,14 +281,14 @@ test('DeepSeek 家族传输行按家族注入；standard 档协议本身与 full
   const glm = systemPrompt('user-message', '', '', '', '', '', false, false, false, false, false, undefined, false, undefined, false, false, false, false, undefined,
     { tier: 'standard', family: 'glm', source: 'auto', probe: 'glm-4' })
   assert.doesNotMatch(glm, /TRANSPORT IS PER-TURN/)
-  assert.match(glm, /TRANSPORT: reply\.content contains the message text/, 'standard 档协议句不变')
-  // full 档原样协议
+  assert.match(glm, /SENT BY NOW:/)
   const full = systemPrompt('user-message', '', '', '', '', '', false, false)
-  assert.doesNotMatch(full, /TRANSPORT: reply\.content contains the message text/)
+  assert.match(full, /SENT BY NOW:/)
   assert.match(full, /When interaction is permitted, its shape is/)
-  // lite 档同样应用家族 extraAfterPhase（与 Claude 家族先例一致）：DeepSeek 行跨档生效，协议块本身不变
+  // lite 档同样应用家族 extraAfterPhase；私聊发送示例与其他档位共用。
   const lite = systemPrompt('user-message', '', '', '', '', '', false, false, false, false, false, undefined, false, undefined, false, false, false, false, undefined,
     { tier: 'lite', family: 'deepseek', source: 'auto', probe: 'deepseek-chat' })
   assert.match(lite, /TRANSPORT IS PER-TURN/)
-  assert.match(lite, /mode=none only when she sends nothing/, 'lite 协议块保持原样')
+  assert.match(lite, /DRAFT ONLY:.*"mode":"none"/)
+  assert.match(lite, /SENT BY NOW:.*"mode":"immediate"/)
 })

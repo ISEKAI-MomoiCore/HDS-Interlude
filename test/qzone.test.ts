@@ -242,14 +242,15 @@ test('qzoneExecute serializes quota reservation: concurrent posts cannot both pa
 test('executeQzoneIntent rejects comment/like tids that were never observed', async () => {
   const intentUpdates: Array<{ id: number, status: string }> = []
   let executed = 0
+  const intent = { id: 9, payload: { action: 'like', tid: 'deadbeefcafe' } }
   const svc = {
-    dbGet: async () => [] as unknown[],
+    dbGet: async (table: string) => table === 'interlude_intent' ? [intent] : [],
     dbSet: async (_table: string, where: { id: number }, patch: { status: string }) => { intentUpdates.push({ id: where.id, status: patch.status }); return {} },
     qzoneExecute: async () => { executed += 1; return { ok: true } },
     reportOperation: () => {},
   } as unknown as InterludeService
   const story = { id: 's1', selfId: '12345' } as never
-  await (InterludeService.prototype as unknown as { executeQzoneIntent: Function }).executeQzoneIntent.call(svc, story, { id: 9, payload: { action: 'like', tid: 'deadbeefcafe' } }, new Date())
+  await (InterludeService.prototype as unknown as { executeQzoneIntent: Function }).executeQzoneIntent.call(svc, story, intent, new Date())
   assert.equal(executed, 0, '未入账的 tid 不得触达执行器')
   assert.deepEqual(intentUpdates, [{ id: 9, status: 'completed' }], '意图仍要完成，防止账本排水被卡')
 })

@@ -1,4 +1,5 @@
 import { withProviderStream } from './http-proxy'
+import { ProviderResponseError, assertProviderCompletion, providerHttpFailure } from './provider-response'
 /** Messages transport adapter. Narrative JSON and delivery decisions remain protocol-independent. */
 export interface AnthropicOptions {
   apiKey: string
@@ -78,13 +79,13 @@ export function anthropicUsage(usage: any) {
 }
 
 export function anthropicResponse(response: any) {
-  if (response?.type === 'error' || response?.error) throw new Error(`Anthropic error: ${response.error?.type || 'unknown'} ${response.error?.message || ''}`)
-  if (response?.stop_reason === 'max_tokens') throw new Error('Anthropic output reached max_tokens before completion.')
-  if (response?.stop_reason === 'refusal') throw new Error('Anthropic provider refused the request.')
+  if (response?.type === 'error' || response?.error) throw new ProviderResponseError('provider-error', `Anthropic error: ${response.error?.type || 'unknown'} ${response.error?.message || ''}`, undefined, anthropicUsage(response?.usage))
+  if (response?.stop_reason === 'max_tokens') throw new ProviderResponseError('budget-truncated', 'Anthropic output reached max_tokens before completion.', 'max_tokens', anthropicUsage(response.usage))
+  if (response?.stop_reason === 'refusal') throw new ProviderResponseError('refused', 'Anthropic provider refused the request.', 'refusal', anthropicUsage(response.usage))
   const text = Array.isArray(response?.content)
     ? response.content.filter((block: any) => block.type === 'text' && typeof block.text === 'string').map((block: any) => block.text).join('') : ''
-  if (!text) throw new Error('Anthropic provider returned an empty text response.')
-  return { choices: [{ message: { content: text } }], usage: anthropicUsage(response.usage) }
+  if (!text) throw new ProviderResponseError('empty-response', 'Anthropic provider returned an empty text response.', response?.stop_reason, anthropicUsage(response?.usage))
+  return { choices: [{ message: { content: text }, finish_reason: response.stop_reason }], usage: anthropicUsage(response.usage) }
 }
 
 export async function requestAnthropicStreaming(endpoint: string, body: Record<string, unknown>, headers: Record<string, string>, timeout: number,
@@ -101,13 +102,14 @@ export async function requestAnthropicStreaming(endpoint: string, body: Record<s
     let usage: Record<string, unknown> = {}, hasUsage = false
     try {
       const response = await request(endpoint, { method: 'POST', headers, body: JSON.stringify({ ...body, stream: true }), signal: controller.signal })
-      if (!response.ok) throw new Error(`Anthropic streaming request failed (${response.status}): ${(await response.text()).slice(0, 500)}`)
+      if (!response.ok) throw providerHttpFailure(`Anthropic streaming request failed (${response.status}): ${(await response.text()).slice(0, 500)}`, response.status)
       if (/application\/json/i.test(response.headers.get('content-type') || '')) {
-        const result = anthropicResponse(await response.json())
-        collect?.(result.usage)
-        return result.choices[0].message.content
+        const raw = await response.json() as any
+        // Record usage before normalization can reject a truncated/refused response.
+        collect?.(anthropicUsage(raw?.usage))
+        return anthropicResponse(raw).choices[0].message.content
       }
-      if (!response.body) throw new Error('Anthropic stream has no response body.')
+      if (!response.body) throw new ProviderResponseError('empty-response', 'Anthropic stream has no response body.')
       reader = response.body.getReader()
       const decoder = new TextDecoder()
       let pending = '', text = '', stopped = false, stopReason = ''
@@ -122,7 +124,7 @@ export async function requestAnthropicStreaming(endpoint: string, body: Record<s
         } catch {
           return
         }
-        if (value.type === 'error') throw new Error(`Anthropic stream error: ${value.error?.type || 'unknown'} ${value.error?.message || ''}`)
+        if (value.type === 'error') throw new ProviderResponseError('provider-error', 'Anthropic stream error: ' + (value.error?.type || 'unknown') + ' ' + (value.error?.message || ''))
         if (value.type === 'message_start' && value.message?.usage) { usage = { ...usage, ...value.message.usage }; hasUsage = true }
         if (value.type === 'message_delta') {
           if (value.usage) { usage = { ...usage, ...value.usage }; hasUsage = true }
@@ -146,12 +148,12 @@ export async function requestAnthropicStreaming(endpoint: string, body: Record<s
         for (const frame of frames) await event(frame)
         if (chunk.done) { if (pending.trim()) await event(pending); break }
       }
-      if (!stopped) throw new Error('Anthropic stream ended before message_stop; response is incomplete.')
-      if (stopReason === 'max_tokens' || stopReason === 'refusal') throw new Error(`Anthropic stream stopped with ${stopReason}.`)
-      if (!text) throw new Error('Anthropic stream ended without visible text.')
+      assertProviderCompletion(stopReason)
+      if (!stopped) throw new ProviderResponseError('stream-incomplete', 'Anthropic stream ended before message_stop; response is incomplete.', stopReason)
+      if (!text) throw new ProviderResponseError('empty-response', 'Anthropic stream ended without visible text.', stopReason)
       return text
     } catch (error) {
-      if (controller.signal.aborted) throw new Error(`Anthropic streaming request timed out after ${!receivedAnyFrame ? `first frame within ${firstFrameTimeout}ms` : `${timeout}ms`}.`)
+      if (controller.signal.aborted) throw new ProviderResponseError('timeout', 'Anthropic streaming request timed out after ' + (!receivedAnyFrame ? 'first frame within ' + firstFrameTimeout + 'ms' : timeout + 'ms') + '.')
       throw error
     } finally {
       clearTimeout(timer)

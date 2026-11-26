@@ -134,12 +134,10 @@ test('路由：proxyAgent 透传到运行时 provider（供 postChat 分流）',
   assert.equal(routing.main.providers[0].proxyAgent, 'http://127.0.0.1:7890', '代理地址去空白透传')
 })
 
-test('催化器截断回归：Gemini incomplete 错误文本必须命中 sideTaskJson 的重试正则', async () => {
-  const { geminiInteractionsResponse } = await import('../src/gemini-interactions')
-  // 与 narrator.ts sideTaskJson 的重试条件保持一致（截断必须走"去掉 max_tokens 重试一次"路径）
-  const retryPattern = /invalid JSON|Unterminated|Unexpected token|empty response|输出未完成|incomplete/i
-  let thrown = ''
-  try { geminiInteractionsResponse({ status: 'incomplete', incomplete_reason: 'MAX_OUTPUT_TOKENS' }) } catch (error) { thrown = String(error) }
-  assert.match(thrown, /输出未完成/)
-  assert.ok(retryPattern.test(thrown), '截断错误文本必须能命中重试正则（首次封顶尝试被思考预算挤爆时，去封顶重试是唯一出路）')
+test('Gemini incomplete classifies only explicit budget exhaustion as recoverable', async () => {
+  const { isBudgetTruncation, ProviderResponseError } = await import('../src/provider-response')
+  assert.throws(() => geminiInteractionsResponse({ status: 'incomplete', incomplete_reason: 'MAX_OUTPUT_TOKENS' }),
+    error => isBudgetTruncation(error))
+  assert.throws(() => geminiInteractionsResponse({ status: 'incomplete', incomplete_reason: 'unknown' }),
+    error => error instanceof ProviderResponseError && error.kind === 'stream-incomplete')
 })

@@ -1,0 +1,10 @@
+import { type FocusAttention } from '../life-rhythm';
+import type { ScriptEntry, StoryState } from '../types';
+export type AttentionTier = 1 | 2 | 3 | 4 | 5;
+export type FixedAttentionEvent = 'privateBatch' | 'groupBatch' | 'groupBackground' | 'weather' | 'friendFeed';
+export declare function resolveEventAttentionFocus(rhythm: StoryState['lifeRhythm'], now: Date): FocusAttention | null;
+export declare function fixedEventTier(focus: FocusAttention | null, event: FixedAttentionEvent): AttentionTier;
+export declare function seededEventTier(importance: unknown, involvement: unknown): AttentionTier;
+export declare function entryEventAttention(entry: Pick<ScriptEntry, 'kind' | 'metadata'>, focus: FocusAttention | null): string | undefined;
+export declare function describeEventAttention(event: string, tier: AttentionTier): string;
+export declare const EVENT_ATTENTION_GUIDE = "T \u6863\u63CF\u8FF0\u4E3B\u89D2\u6B64\u523B\u6CE8\u610F\u5230\u5BF9\u5E94\u4E8B\u4EF6\u7684\u53EF\u80FD\u6027\uFF0CT1 \u6700\u9AD8\uFF0CT5 \u6700\u4F4E\u3002\u5B83\u4E0D\u8868\u793A\u5DF2\u7ECF\u6216\u5FC5\u7136\u6CE8\u610F\u5230\u3001\u5DF2\u7ECF\u9605\u8BFB\uFF0C\u6216\u5FC5\u987B\u56DE\u5E94\uFF1B\u4E5F\u4E0D\u89C4\u5B9A\u611F\u77E5\u987A\u5E8F\uFF0C\u4E0D\u8981\u6C42\u6BCF\u6761\u4E8B\u4EF6\u90FD\u5199\u8FDB\u5267\u672C\u3002";

@@ -127,34 +127,37 @@ test('F13 ConfigCenter save captures deep snapshot, preserves newer edits and ig
   assert.equal(f.api.saving.value, false)
 })
 
-test('F13 ConfigCenter failed post-save refresh leaves form unready and explains failure', async () => {
+test('F13 ConfigCenter failed save retains the editable form and permits retry', async () => {
   const f = page(true); await f.load('story', { world: '测试世界' })
-  const saving = f.api.saveSection(); f.saves[0].resolve({ ok: true }); await new Promise(resolve => setImmediate(resolve))
-  f.reads[1].resolve({ ok: false, error: 'refresh failed' }); await saving
+  const saving = f.api.saveSection(); f.saves[0].reject(new Error('save failed')); await saving
   assert.equal(f.api.noticeKind.value, 'warn')
-  assert.match(f.api.notice.value, /refresh failed/)
-  const next = f.api.saveSection(); assert.equal(f.saves.length, 1); await next
-})
-
-
-test('F13 ConfigCenter unchanged submitted form refreshes normalized values after success', async () => {
-  const f = page(true); await f.load('story', { world: '测试世界' })
-  const saving = f.api.saveSection(); f.saves[0].resolve({ ok: true }); await new Promise(resolve => setImmediate(resolve))
-  assert.equal(f.reads[1].id, 'story')
-  assert.equal(f.api.loading.value, true)
-  f.reads[1].resolve(f.success({ world: '第二世界' })); await saving
-  assert.equal(f.values().world, '第二世界')
+  assert.match(f.api.notice.value, /save failed/)
+  assert.equal(f.values().world, '测试世界')
+  const retry = f.api.saveSection(); assert.equal(f.saves.length, 2)
+  f.saves[1].resolve({ ok: true, values: { world: '测试世界' } }); await retry
   assert.equal(f.api.noticeKind.value, 'ok')
 })
 
-test('F13 ConfigCenter post-save refresh returning after section switch stays retired', async () => {
+test('F13 ConfigCenter applies normalized save response without a restart-sensitive second read', async () => {
   const f = page(true); await f.load('story', { world: '测试世界' })
-  const saving = f.api.saveSection(); f.saves[0].resolve({ ok: true }); await new Promise(resolve => setImmediate(resolve))
+  const saving = f.api.saveSection()
+  f.saves[0].resolve({ ok: true, values: { world: '第二世界' } }); await saving
+  assert.equal(f.reads.length, 1)
+  assert.equal(f.api.loading.value, false)
+  assert.equal(f.values().world, '第二世界')
+  assert.equal(f.api.initial.value.world, '第二世界')
+  assert.equal(f.api.noticeKind.value, 'ok')
+})
+
+test('F13 ConfigCenter normalized save response after section switch stays retired', async () => {
+  const f = page(true); await f.load('story', { world: '测试世界' })
+  const saving = f.api.saveSection()
   await f.load('research', { enabled: true })
-  f.reads[1].resolve(f.success({ world: '第九世界' })); await saving
+  f.saves[0].resolve({ ok: true, values: { world: '第九世界' } }); await saving
   assert.equal(f.values().enabled, true)
   assert.ok(!('world' in f.values()))
   assert.equal(f.api.notice.value, '')
+  assert.equal(f.reads.length, 2)
 })
 
 for (const center of [true, false]) {

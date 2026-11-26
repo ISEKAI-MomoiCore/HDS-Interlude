@@ -1,7 +1,8 @@
+import { isFocusAttention, isLegacyRhythmAttention, type FocusDraft } from './life-rhythm'
 import { normalizeAlterSystemState } from './alter'
 import { normalizeAgencyWindowState } from './agency'
 import {
-  AutomaticDeliverySummary, ContinuitySnapshot, ScenePresenceState, StoryState, WorkingDetail,
+  AutomaticDeliverySummary, ContinuitySnapshot, ScenePresenceState, ScriptEntry, StoryState, WorkingDetail,
   DialogueBurstState, SceneFrame, SceneFrameField,
 } from './types'
 
@@ -259,17 +260,21 @@ export function normalizeLifeStatus(value: unknown): { status: 'busy' | 'asleep'
   return updatedAt ? { status, updatedAt } : undefined
 }
 
-const LIFE_RHYTHM_ATTENTIONS = ['phone-focused', 'available', 'occupied', 'resting', 'asleep'] as const
-
-/** 五档节奏归一化：合法档位+有效时间戳+合法来源才保留。 */
+/** Load detailed focus and pre-upgrade rhythm without guessing a subtype. */
 export function normalizeLifeRhythm(value: unknown): StoryState['lifeRhythm'] {
   if (!isRecord(value)) return undefined
   const attention = value.attention
-  if (typeof attention !== 'string' || !(LIFE_RHYTHM_ATTENTIONS as readonly string[]).includes(attention)) return undefined
+  if (!isFocusAttention(attention) && !isLegacyRhythmAttention(attention)) return undefined
   const assessedAt = typeof value.assessedAt === 'string' && !Number.isNaN(Date.parse(value.assessedAt)) ? value.assessedAt : undefined
+  if (!assessedAt) return undefined
   const source = value.source === 'compactor' || value.source === 'narrator' || value.source === 'incoming' || value.source === 'fallback' ? value.source : 'compactor'
   const basis = typeof value.basis === 'string' ? value.basis.trim().slice(0, 500) : ''
-  return assessedAt ? { attention: attention as StoryState['lifeRhythm'] extends { attention: infer A } ? A : never, basis, assessedAt, source } : undefined
+  const sourceEntryId = typeof value.sourceEntryId === 'number' && Number.isSafeInteger(value.sourceEntryId) && value.sourceEntryId > 0 ? value.sourceEntryId : undefined
+  return { attention, basis, assessedAt, source, ...(sourceEntryId === undefined ? {} : { sourceEntryId }) }
+}
+
+export function lifeRhythmFromScript(focus: FocusDraft, entry: Pick<ScriptEntry, 'id' | 'occurredAt'>, source: 'narrator' | 'compactor'): NonNullable<StoryState['lifeRhythm']> {
+  return { attention: focus.attention, basis: focus.quote, assessedAt: entry.occurredAt.toISOString(), sourceEntryId: entry.id, source }
 }
 
 /** 节奏过期判定（>2h 无更新视为 stale，退回 restWindows 兜底）。

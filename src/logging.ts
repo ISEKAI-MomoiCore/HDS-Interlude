@@ -1,11 +1,31 @@
 import { format as formatText } from 'node:util'
+import { providerSafeErrorText } from './provider-response'
 import { NarrativePhase } from './types'
 
 export type InterludeLogLevel = 'error' | 'warn' | 'info' | 'debug'
+export type InterludeLogSink = Record<InterludeLogLevel, (message: string, ...args: unknown[]) => void>
+
+export function allowsLogLevel(configured: InterludeLogLevel | 'silent' = 'info', level: InterludeLogLevel) {
+  const rank = { silent: 0, error: 1, warn: 2, info: 3, debug: 4 }
+  return rank[configured] >= rank[level]
+}
+
+export function communicationLogAction(event: CommunicationEventLog, level: InterludeLogLevel): InterludeLogAction {
+  if (level === 'error') return 'error'
+  if (level === 'warn' || event.domain === 'policy') return 'warning'
+  if (event.type === 'delivery-result') {
+    if (event.status === 'delivered') return 'send'
+    if (event.status === 'cancelled') return 'cancelled'
+    if (event.status === 'pending') return 'waiting'
+    if (event.status === 'unknown' || event.status === 'failed') return 'warning'
+  }
+  if (event.domain === 'authoring') return 'processing'
+  return 'system'
+}
 export type InterludeLogColorTheme = 'dark' | 'light'
 export type InterludeLogAction =
   | 'receive' | 'send' | 'processing' | 'complete' | 'trigger' | 'emotion'
-  | 'memory' | 'advance' | 'agency' | 'group' | 'error' | 'retry' | 'warning' | 'waiting' | 'system'
+  | 'memory' | 'advance' | 'agency' | 'group' | 'error' | 'retry' | 'warning' | 'waiting' | 'cancelled' | 'system'
 
 export interface LayeredLogInput {
   level: InterludeLogLevel
@@ -60,12 +80,13 @@ const KAOMOJI: Record<InterludeLogAction, string> = {
   retry: '(ง •̀_•́)ง',
   warning: '(´･_･`)',
   waiting: '(っ˘ω˘ς )',
+  cancelled: '(・_・;)',
   system: '(^_^)/',
 }
 
 const SYMBOLS: Record<InterludeLogAction, string> = {
   receive: '←', send: '→', processing: '⋯', complete: '✓', trigger: '⚡', emotion: '★',
-  memory: '◈', advance: '⟳', agency: '◇', group: '◎', error: '✗', retry: '↻', warning: '!', waiting: '…', system: '•',
+  memory: '◈', advance: '⟳', agency: '◇', group: '◎', error: '✗', retry: '↻', warning: '!', waiting: '…', cancelled: '–', system: '•',
 }
 
 const FIELD_LABELS: Record<string, string> = {
@@ -121,7 +142,11 @@ const COLOR_PALETTES: Record<InterludeLogColorTheme, {
 }
 
 export function renderLogMessage(message: string, args: unknown[] = []) {
-  return formatText(message, ...args.map(value => value instanceof Error ? value.message : value))
+  return formatText(message, ...args.map(value => {
+    if (!(value instanceof Error)) return value
+    const status = (value as { response?: { status?: number } }).response?.status
+    return providerSafeErrorText(value) ?? (Number.isFinite(status) && status ? `HTTP ${status}` : value.message)
+  }))
 }
 
 export function detectLogAction(message: string, level: InterludeLogLevel): InterludeLogAction {
@@ -135,28 +160,34 @@ export function detectLogAction(message: string, level: InterludeLogLevel): Inte
   if (/Agency|主动联系判断|主动联系重查/.test(message)) return 'agency'
   if (/记忆|压缩|Overlay/.test(message)) return 'memory'
   if (/群消息|群聊|群发言/.test(message)) return 'group'
+  if (/投递准备|投递开始|适配器发送开始/.test(message)) return 'processing'
+  if (/等待|计时器|排队|已排程/.test(message)) return 'waiting'
   if (/投递|发送/.test(message)) return 'send'
   if (/收到|接收|入队/.test(message)) return 'receive'
-  if (/模型调用开始|分析开始|读取开始|整理开始/.test(message)) return 'processing'
-  if (/完成|成功|已就绪|已启动/.test(message)) return 'complete'
+  if (/模型调用开始|本地叙事回退开始|分析开始|读取开始|整理开始/.test(message)) return 'processing'
+  if (/完成|成功|已提交|已就绪|已启动/.test(message)) return 'complete'
   if (/推进|后台扫描/.test(message)) return 'advance'
-  if (/等待|计时器|排队/.test(message)) return 'waiting'
   return 'system'
 }
 
 export function formatLayeredLog(input: LayeredLogInput) {
   const text = renderLogMessage(input.message, input.args)
-  const action = input.action ?? detectLogAction(text, input.level)
-  const communicationFields = communicationLogFields(input.communication)
-  const details = { ...extractFields(text), fields: [...extractFields(text).fields, ...communicationFields] }
+  const action = input.action ?? (input.communication ? communicationLogAction(input.communication, input.level) : detectLogAction(input.message, input.level))
+  const parsed = extractFields(text)
+  // An interpolated value may itself contain `key=value`. Do not pretend its
+  // contents are independent fields (or drop them if an `=` breaks parsing).
+  const templateFields = input.args?.length ? extractFields(input.message).fields : parsed.fields
+  const details = parsed.fields.length === templateFields.length && parsed.fields.every((field, i) => field.label === templateFields[i].label)
+    ? { ...parsed, fields: [...parsed.fields, ...communicationLogFields(input.communication)] }
+    : { summary: text, fields: communicationLogFields(input.communication) }
   const summary = details.summary || text
   const root = isRootLog(summary, action, input.level, input.standalone === true)
   const branch = root ? '' : isFinalBranch(summary, action) ? '└─' : '├─'
-  const category = logCategory(action, input.phase, input.standalone === true, text)
+  const category = logCategory(action, input.phase, input.standalone === true, input.message)
   const face = input.kaomoji === false ? SYMBOLS[action] : KAOMOJI[action]
   const palette = COLOR_PALETTES[input.colorTheme ?? 'dark']
   const header = root
-    ? `${paint(category, categoryColor(action, input.phase, text, palette), input.colors)} ${paint(input.protagonist || 'HDSI', palette.protagonist, input.colors)}`
+    ? `${paint(category, categoryColor(action, input.phase, input.message, palette), input.colors)} ${paint(input.protagonist || 'HDSI', palette.protagonist, input.colors)}`
     : branch
   const main = `${header}${header ? ' ' : ''}${paint(face, actionColor(action, palette), input.colors)} ${paint(summary, summaryColor(action, input.level, palette), input.colors)}`.trimEnd()
   if (!details.fields.length) return main
@@ -172,18 +203,20 @@ export function phaseLabel(phase?: NarrativePhase) {
   return ({
     'user-message': '用户消息',
     'conversation-follow-up': '对话后续',
-    advance: '自动推进',
+    advance: '剧本推进',
     'intent-due': '到期意图',
   } as Record<NarrativePhase, string>)[phase]
 }
 
 /** 结构化载荷中值得进入文本渲染的字段（§13.2：策略修订与动作身份供诊断，
  * 其余经事件对象供 Console/桌面消费）。 */
-function communicationLogFields(communication: CommunicationEventLog | undefined) {
+export function communicationLogFields(communication: CommunicationEventLog | undefined) {
   if (!communication) return [] as Array<{ label: string, value: string }>
   const fields: Array<{ label: string, value: string }> = []
   if (communication.commitId) fields.push({ label: '委托', value: communication.commitId })
   if (communication.eventId) fields.push({ label: '事件', value: communication.eventId })
+  if (communication.segmentIndex !== undefined) fields.push({ label: '分段', value: String(communication.segmentIndex + 1) })
+  if (communication.targetId) fields.push({ label: '目标', value: communication.targetId })
   if (communication.intentId !== undefined) fields.push({ label: '计划', value: String(communication.intentId) })
   if (communication.policyRevision) fields.push({ label: '策略版本', value: communication.policyRevision })
   return fields
@@ -225,8 +258,8 @@ function isRootLog(summary: string, action: InterludeLogAction, level: Interlude
 }
 
 function isFinalBranch(summary: string, action: InterludeLogAction) {
-  if (action === 'send') return true
-  if (action === 'complete' && !/模型调用完成/.test(summary)) return true
+  if (action === 'send' || action === 'cancelled') return true
+  if (action === 'complete' && !/(?:模型调用|本地叙事回退)完成/.test(summary)) return true
   return /写作回合完成|扫描完成|整理完成|已注入/.test(summary)
 }
 

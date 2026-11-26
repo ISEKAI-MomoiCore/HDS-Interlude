@@ -98,16 +98,8 @@ export declare function extractSessionFileFacts(session: Session): SessionFileFa
 /** 群聊入站没有原生附件通道：把 <img>/<file>/<record> 等元素标记转成事实
  * 占位（保留"发过什么"的信息），URL 污水不进群上下文，也不再被模型复述。 */
 export declare function describeGroupAttachments(content: unknown): string;
-/** 出站传输超时包装（rc50 issue 报告）：OneBot 实现不回应时把"永久挂起"
- * 变成有界等待，防止按故事串行的执行链被单次发送永久堵死。默认 30s 与
- * send_forward_msg 一致。与 withTimeout 的区别：超时错误带 `transport-timeout`
- * 标记与调用点标签——上层把它当作"结果未知"（账本记 pending 交由待投递
- * 补偿幂等收尾），而不是确定失败；迟到回执由 deliveryExecutionKey 去重。 */
-/** 出站传输超时包装（rc50 issue 报告）：OneBot 实现不回应时把"永久挂起"
- * 变成有界等待，防止按故事串行的执行链被单次发送永久堵死。默认 30s 与
- * send_forward_msg 一致。与 withTimeout 的区别：超时错误带 `transport-timeout`
- * 标记与调用点标签——上层把它当作"结果未知"（账本记 pending 交由待投递
- * 补偿幂等收尾），而不是确定失败；迟到回执由 deliveryExecutionKey 去重。 */
+/** Limit transport waits. Timeout only marks the outcome unknown; callers own
+ * ledger transitions, reconciliation, and any decision to schedule retries. */
 export declare function withTransportTimeout<T>(promise: Promise<T>, label: string, timeoutMs?: number): Promise<T>;
 export declare function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T>;
 export declare function guessImageMime(bytes: Buffer, hinted?: unknown): string;

@@ -4,6 +4,7 @@ import { BlindModeConfig, BrowserConfig, ChatActionsConfig, Config as InterludeC
 import { AgencyConfig, AlterSystemConfig, ChatReactionName, ChatRhythmConfig, NativeFaceSemantic, StorySetting } from './types'
 import type { ModelCaptureConfig } from './capture'
 import { HDS_INTERLUDE_VERSION } from './meta'
+import { MAX_PROLOGUE_PASSAGES, MAX_PROLOGUE_PASSAGE_LENGTH } from './script/prologue'
 import { resolveAgencyConfig } from './agency'
 import { deliveryPolicyRevision, migrateLegacyRunLimits, resolveDeliveryPolicyConfig } from './script/delivery-policy'
 import { migrateProactiveCheckIntents } from './script/contact-plan-migration'
@@ -166,7 +167,7 @@ const Model: Schema<ModelConfig> = Schema.object({
   mainMaxTokens: Schema.natural().min(0).max(100_000).default(4096).description('主叙事最大输出 token 数。'),
   mainTimeout: Schema.natural().min(1_000).max(300_000).default(60_000).role('ms').description('主叙事请求超时，单位毫秒。'),
   mainResponseFormat: Schema.union(['json-object', 'prompt-only']).default('json-object').description('主叙事输出格式；不支持 JSON mode 时选 prompt-only。此项是主叙事格式的唯一开关——旧版本写在连接行上的 responseFormat 对主叙事不再生效（仅侧端任务可能参考）。'),
-  mainStreamingMode: Schema.union(['off', 'experimental']).default('off').description('实验性私聊首泡加速；仅 JSON 模式。'),
+  mainStreamingMode: Schema.union(['off', 'experimental']).default('off').description('保留的首泡提前投递实验设置，仅适用于提供提前投递回调的 JSON 回合。当前私聊即时文本采用逐泡延迟，等待完整输出后再投递。智谱官方 GLM 仍使用其 SSE 接收路径。'),
   mainPayloadOrder: Schema.union(['legacy', 'cache-first']).default('cache-first').description('请求字段顺序；支持前缀缓存的接口可选 cache-first。'),
   failover: Failover.default({ enabled: true, strategy: 'priority', maxAttemptsPerProvider: 1, cooldownMinutes: 5 }).description('主叙事请求失败时的切换策略。'),
   specialization: Schema.union([
@@ -256,9 +257,9 @@ const Runtime: Schema<RuntimeConfig> = Schema.object({
   splitReplyMessages: Schema.boolean().default(true).description('将主叙事回复中的 `<sep/>` 拆成多条消息气泡；各平台沿用相同分段语义。'),
   messageSeparator: Schema.string().default('<sep/>').description('分段消息标记。通常保持 `<sep/>`；模型会在需要多条气泡时输出它。'),
   convertNewlineToSeparator: Schema.boolean().default(false).description('小模型适配：模型没有输出分句标记而是用换行分条时，把每个换行自动视作一条消息的分隔再发送。默认关闭；Gemma 等使用换行分段的小模型建议开启。'),
-  typingBaseDelaySeconds: Schema.number().min(0).max(60).default(1).description('发送第二条及后续分段消息前的基础打字等待秒数。'),
+  typingBaseDelaySeconds: Schema.number().min(0).max(60).default(1).description('模拟打字的基础等待秒数。新私聊触发的即时文本回复从首个气泡开始逐泡计算；首泡已耗费的模型生成时间不重复等待。'),
   typingCharactersPerSecond: Schema.number().min(1).max(100).default(8).description('模拟打字速度，每秒字符数；数值越小，长消息等待越久。'),
-  typingMaxDelaySeconds: Schema.number().min(0).max(120).default(12).description('单条后续分段消息的最长打字等待秒数。'),
+  typingMaxDelaySeconds: Schema.number().min(0).max(120).default(12).description('单个气泡的模拟打字时长上限（秒）。只限制打字模拟，不限制模型为该气泡指定的等待。'),
   typingJitterRatio: Schema.number().min(0).max(0.5).step(0.05).default(0.3).description('打字延迟随机浮动；0 为固定延迟。'),
   forwardMessage: Schema.object({
     enabled: Schema.boolean().default(true).description('是否读取 QQ 合并转发正文；关闭时保留原有转发卡片文本行为。'),
@@ -270,7 +271,7 @@ const Runtime: Schema<RuntimeConfig> = Schema.object({
   narrativeRetryMaxAttempts: Schema.natural().min(0).max(50).default(6).description('单次用户回合因模型失败可自动重试的最多次数；0 表示关闭。'),
   minimumDelayedReplySeconds: Schema.natural().min(0).max(86_400).default(10).description('模型允许设置的最短延迟，单位秒。'),
   maximumDelayedReplyMinutes: Schema.natural().min(1).max(43_200).default(1_440).description('模型允许设置的最长延迟，单位分钟。'),
-  cancelDelayedRepliesOnUserMessage: Schema.boolean().default(true).description('新消息到达时取消普通延迟回复。'),
+  cancelDelayedRepliesOnUserMessage: Schema.boolean().default(true).description('同一参与者发来新私聊时，是否取消普通延迟回复和跨会话发送计划。无论此项是否开启，新私聊都会打断尚未交给平台的待发气泡，包括仍在等待中的首泡。'),
   allowProactiveMessages: Schema.boolean().default(false).description('是否允许无新消息时向参与者主动发送可见消息。'),
   proactiveWillingnessThreshold: Schema.number().min(0).max(1).step(0.05).default(0.65).hidden().description('【已弃用·P3】意愿数值已退出执行许可链（统一动作设计 §4.2）；兼容解析一个迁移周期，新链不再读取。'),
   sweepIntervalMinutes: Schema.natural().min(1).max(1_440).default(5).description('后台扫描周期；仅用于发现到期任务，不代表每轮都调用模型。'),
@@ -348,8 +349,8 @@ const Browser: Schema<BrowserConfig> = Schema.object({
   allowedDomains: Schema.array(Schema.string()).role('table').default([]).description('允许访问的域名白名单；留空表示不额外限制。填入后，仅这些域名及其子域名可访问。'),
   blockedDomains: Schema.array(Schema.string()).role('table').default([]).description('永远禁止访问的域名黑名单；localhost、私网地址和非 HTTP(S) 地址始终禁止。'),
   maxConcurrentPages: Schema.natural().min(1).max(4).default(1).description('同时打开的网页页数上限。建议保持 1，避免浏览器占用影响 Koishi。'),
-  maxResearchPerSweep: Schema.natural().min(1).max(20).default(1).description('每轮后台最多处理的网页浏览意图数。保持 1 可避免网页积压拖慢剧本队列。'),
-  navigationTimeout: Schema.natural().min(1_000).max(120_000).default(15_000).role('ms').description('单页加载超时，单位毫秒。超时会记录失败观察，不会中断剧本。'),
+  maxResearchPerSweep: Schema.natural().min(1).max(20).default(1).description('每轮后台最多处理的网页浏览意图数。浏览在故事队列外执行，保持 1 可缩短当前后台推进的等待。'),
+  navigationTimeout: Schema.natural().min(1_000).max(120_000).default(15_000).role('ms').description('单页导航超时，单位毫秒。整次浏览还有额外 5 秒的总预算，涵盖等待页面槽位、建页、提取与关页；读取超时记为失败观察。'),
   waitUntil: Schema.union(['domcontentloaded', 'networkidle2']).default('domcontentloaded').description('读取网页的等待条件。domcontentloaded 更快；networkidle2 对动态页面更完整但更慢。'),
   maxTextCharacters: Schema.natural().min(500).max(50_000).default(12_000).description('从网页正文提取的最大字符数。仅提取可见文本，不保存 HTML。'),
   maxExcerptCharacters: Schema.natural().min(200).max(12_000).default(3_000).description('单条网页观察送给主模型的最大字符数。'),
@@ -413,21 +414,30 @@ const StoryDefaults: Schema<StoryDefaults> = Schema.object({
   world: Schema.string().role('textarea').default('').description('故事时代、地点与现实规则。'),
   supportingCast: Schema.string().role('textarea').default('').description('配角及其与主角的关系；无配角可留空。'),
   supplementaryFacts: Schema.array(Schema.string().role('textarea')).default([]).description('补充事实：界限不明显的世界/人物/关系复杂事实，每条一段，作为初始长期事实注入。'),
+  prologue: Schema.object({
+    passages: Schema.array(Schema.string().max(MAX_PROLOGUE_PASSAGE_LENGTH).role('textarea', { rows: [8, 24] }))
+      .max(MAX_PROLOGUE_PASSAGES).default([]).description('按故事时间顺序填写，最后一段写开场现场。最多三段，每段最多 2000 字。'),
+    place: Schema.string().max(160).default('').description('开场地点（可选），摘自最后一段原文。'),
+    activity: Schema.string().max(160).default('').description('开场时正在做的事（可选），摘自最后一段原文。'),
+    presentPeople: Schema.array(Schema.string().max(80)).max(8).default([]).description('开场时在场的人（可选），每个名字均需出现在下方引文中。'),
+    presenceQuote: Schema.string().max(500).role('textarea').default('').description('最后一段里说明谁在场的原文。主角独处时可只填引文。'),
+  }).description('前置剧本 · 新故事启动时导入一次。'),
   location: Schema.string().default('').description('主角的主要活动地点。'),
   style: Schema.string().role('textarea').default('现实主义日常叙事，情绪克制，关系变化缓慢而具体。').description('故事级叙事文风。'),
   timezone: Schema.string().default('Asia/Shanghai').description('用于自动推进、休息窗口和延迟时间解析的 IANA 时区。'),
 })
 
 const Logging: Schema<LoggingConfig> = Schema.object({
-  level: Schema.union(['silent', 'error', 'warn', 'info', 'debug']).default('info').description('日志级别。'),
-  verbosity: Schema.union(['summary', 'standard', 'diagnostic']).default('standard').description('运行信息密度：摘要只显示关键结果；标准显示模型、计时器和后台任务；诊断追加跳过原因、队列和上下文统计。'),
+  level: Schema.union(['silent', 'error', 'warn', 'info', 'debug']).default('info').description('HDSI 日志最低级别；silent 不输出普通 HDSI 日志。Koishi 全局日志过滤仍适用，盲区模式健康心跳单独控制。'),
+  verbosity: Schema.union(['summary', 'standard', 'diagnostic']).default('standard').description('运行信息密度：摘要显示关键结果；标准追加模型和后台任务；诊断追加队列、计时器和上下文统计，其中 debug 记录还需将日志级别设为 debug。'),
   format: Schema.union(['layered', 'compact', 'detailed']).default('layered').description('显示布局：layered 为彩色任务时间线；compact 为单行；detailed 为兼容旧版的分行格式。'),
   colors: Schema.boolean().default(true).description('为阶段、完成、警告、错误、记忆和 Alter 添加 ANSI 语义颜色；Koishi Console 与常规终端均可渲染。'),
   colorTheme: Schema.union(['dark', 'light']).default('dark').description('深色或浅色 Console 配色。'),
   kaomoji: Schema.boolean().default(true).description('使用颜文字标识运行阶段。'),
   logScriptPreview: Schema.boolean().default(false).description('是否输出本轮剧本内容；可能包含私聊信息，生产环境建议关闭。'),
   logMessageContent: Schema.boolean().default(false).description('是否输出用户消息和主角可见消息内容；涉及隐私，生产环境建议关闭。'),
-  previewLength: Schema.natural().min(50).max(4_000).default(500).description('剧本和消息内容写入日志时的最大字符数。'),
+  logModelResponse: Schema.boolean().default(false).description('允许诊断日志输出模型原始响应片段或拒绝的输出字段；可能包含私聊或剧本，默认关闭。'),
+  previewLength: Schema.natural().min(50).max(4_000).default(500).description('剧本、消息和模型响应预览的最大字符数。'),
 }).collapse(true)
 
 const OneBotBotAccount: Schema<OneBotAccountRule> = Schema.object({
@@ -437,15 +447,15 @@ const OneBotBotAccount: Schema<OneBotAccountRule> = Schema.object({
 })
 
 // The allowlist is also the identity sheet for the shared story. Each row is
-// a collapsible card, so the two long narrative fields get full-width editors.
+// an expanded, collapsible card with full-width editors for background and relationship.
 const OneBotUserAccount: Schema<OneBotAccountRule> = Schema.object({
   qq: Schema.string().default('').description('允许互动的用户 QQ；未列出的账号直接拒绝。'),
   label: Schema.string().default('').description('主角对该用户的称呼；留空时使用平台昵称。'),
   personId: Schema.string().default('').description('稳定的人物标识；同一现实人物的多个账号可复用。'),
-  profile: Schema.string().role('textarea').default('').description('主角已知的用户背景；仅用于该关系分支。'),
-  relationship: Schema.string().role('textarea').default('').description('该用户与主角的初始关系，例如“熟悉但近来联系不多”。'),
+  profile: Schema.string().role('textarea', { rows: [10, 28] }).default('').description('主角已知的用户背景；仅用于该关系分支。'),
+  relationship: Schema.string().role('textarea', { rows: [6, 18] }).default('').description('该用户与主角的初始关系，例如“熟悉但近来联系不多”。'),
   enabled: Schema.boolean().default(true).description('是否接受该账号的私聊并允许向其投递消息。'),
-}).collapse(true)
+}).collapse(false)
 
 const WillingnessTierChoice = Schema.union([
   Schema.const('quiet').description('极少：约每 10 条普通消息一次'),
@@ -504,7 +514,7 @@ const GroupChatRuleSchema: Schema<GroupChatRule> = (Schema.object({
 const OneBot: Schema<OneBotNapCatConfig> = Schema.object({
   enabled: Schema.boolean().default(false).description('启用 OneBot/NapCat 账号过滤。默认关闭：未配置时沿用旧行为（不过滤）；启用后空白名单拒绝全部，须同时配置机器人/用户白名单。'),
   botAccounts: Schema.array(OneBotBotAccount).role('table').default([]).description('机器人账号白名单；空表拒绝全部账号。'),
-  userAccounts: Schema.array(OneBotUserAccount).role('table').default([]).description('用户白名单与初始关系；空表拒绝全部私聊。'),
+  userAccounts: Schema.array(OneBotUserAccount).default([]).description('用户白名单与人物档案：每位用户独立编辑背景和初始关系，卡片可展开或收起；启用账号过滤后，空名单拒绝全部私聊。'),
   groupChats: Schema.array(GroupChatRuleSchema).default([]).description('群聊白名单与角色定位。'),
   willingnessPresetMigrated: Schema.boolean().default(false).description('自动迁移标记：历史 off+enabled 群规则已在加载时一次性归一为 custom。请勿手动修改。'),
   ignoreSelfMessages: Schema.boolean().default(true).description('忽略机器人自身产生的消息事件。'),
@@ -607,7 +617,7 @@ export const Config: Schema<InterludeConfig> = Schema.object({
   alterSystem: AlterSystem.description('【内在 13】Alter 情绪：低频氛围偏移、动态阈值、权重和侧端分析。'),
   browser: Browser.description('【扩展 14】网页观察：Puppeteer 只读浏览与安全边界。'),
   worldSeeder: Schema.object({
-    enabled: Schema.boolean().default(false).description('启用世界事件播种器：后台低频生成与她有关的外部事件（线下通道、NPC），到点以 [世界事件] 条目进入剧本。模型在【必填 2】模型中心的连接上勾选“用于世界播种”选择；未勾选任何连接时本开关无效。'),
+    enabled: Schema.boolean().default(false).description('启用世界事件播种器：后台低频生成环境变化或直接涉及主角的外部事件，到点以 [世界事件] 条目进入剧本。重要性与涉及程度由模型在生成时一并提供，宿主据此计算 T 档；T 档不改变排期。模型在【必填 2】模型中心的连接上勾选“用于世界播种”选择；未勾选任何连接时本开关无效。'),
     cadenceMinutes: Schema.natural().min(5).max(1_440).default(30).description('生成检查间隔（分钟）；偶发跳过整轮检查，多数检查输出空。'),
     maxPending: Schema.natural().min(1).max(20).default(6).description('同时挂起的未注入事件上限。'),
     dailyCap: Schema.natural().min(1).max(20).default(8).description('每 24 小时注入上限（高重要性每天至多 1 条）。'),
@@ -617,7 +627,7 @@ export const Config: Schema<InterludeConfig> = Schema.object({
     timeout: Schema.natural().min(5_000).max(300_000).default(60_000).description('请求超时（毫秒）。'),
   }).collapse(true).description('【扩展 15】世界播种器：外部事件的生成与注入（未选模型即关闭）。'),
   weather: Schema.object({
-    enabled: Schema.boolean().default(false).description('启用运行时天气注入:从 Open-Meteo(免费无 Key)拉取真实天气,以 [世界事件] 剧本条目注入当前温度与天况。'),
+    enabled: Schema.boolean().default(false).description('启用运行时天气注入：从 Open-Meteo（免费无 Key）拉取真实天气，以 [世界事件] 剧本条目注入温度与天况。天气码、风速和采样变化只影响已纳入事件的 T 档，不新增注入条件。'),
     latitude: Schema.number().min(-90).max(90).default(39.14).description('观测点纬度(手动模式,或自动解析失败时的回退)。'),
     longitude: Schema.number().min(-180).max(180).default(117.18).description('观测点经度。'),
     autoFromLocation: Schema.boolean().default(true).description('从故事设定中的地点(storySetting.location)自动解析观测点;解析失败回退手动经纬度。'),
@@ -673,28 +683,25 @@ export const Config: Schema<InterludeConfig> = Schema.object({
 /** F7：启动时一次性迁移历史 off+enabled 群规则（归一为 custom）并持久化
  * 迁移标志。整树经 Config Schema 预校验（scope.update 内部 resolveConfig
  * 失败会 cancel 整个插件作用域——必须先校验）；任何失败静默放弃，运行时
- * 归一继续兜底。幂等：标志已置位即跳过。审计修正：函数体首个语句制造
- * await 边界——此前 scope.update 在 apply() 同步栈内执行，cordis 的嵌套
- * 重启会让 apply 尾部（命令/中间件注册）在旧 service 实例上二次执行；
- * 微任务边界保证重启发生在 apply 完整返回之后（与 runAutoSync 的实际
- * 时序对齐）。 */
-async function migrateWillingnessPresetsAtStartup(ctx: Context, service: InterludeService, config: InterludeConfig) {
+ * 归一继续兜底。幂等：标志已置位即跳过。调用方在 ready 后通过作用域
+ * 计时器执行迁移，等待 Service 异步登记完成；函数内的 await 同时保留
+ * apply 同步栈外更新的边界，使命令、中间件与服务一起完成作用域重载。
+ */
+async function migrateWillingnessPresetsAtStartup(service: InterludeService, config: InterludeConfig) {
   await Promise.resolve()
   const result = migrateWillingnessPresetsConfig(config.onebot)
   if (!result) return
   const next = { ...config, onebot: { ...config.onebot, ...result.next } } as InterludeConfig
   ;(Config as unknown as (input: unknown) => unknown)(next)
   service.updatePluginConfig(next)
-  if (result.changed) ctx.logger('hds-interlude').info('意愿档位一次性迁移:历史 off+enabled 群规则已归一为 custom 并写入迁移标志')
+  if (result.changed) service.operationLogger.info('意愿档位一次性迁移:历史 off+enabled 群规则已归一为 custom 并写入迁移标志')
 }
 
 export function apply(ctx: Context, config: InterludeConfig) {
-  const startupLogger = ctx.logger('hds-interlude')
   // 顶层主提示词覆盖：非空时取代模型中心的旧字段（旧 YAML 自定义值继续生效）。
   const mainPromptOverride = config.mainPrompt?.trim()
   if (mainPromptOverride) config.model.mainPrompt = mainPromptOverride
   const blindModeEnabled = config.blindMode?.enabled === true || config.blackBox?.enabled === true
-  if (!blindModeEnabled) startupLogger.info('plugin load started version=%s', HDS_INTERLUDE_VERSION)
   const service = new InterludeService(ctx, config)
   // typ-0 worker-only integration. The bridge is environment-gated and does
   // not register any Console field or change ordinary Koishi behaviour.
@@ -707,14 +714,20 @@ export function apply(ctx: Context, config: InterludeConfig) {
   // 变化完全跳过(零网络请求)。失败静默,不影响启动,下次重载自动重试。
   if (config.presetSync?.enabled && config.presetSync?.shareCode?.trim()) {
     void runAutoSync(ctx, service).catch((error) => {
-      startupLogger.warn('预设同步启动检查失败(不影响运行):%s', (error as Error).message)
+      service.operationLogger.warn('预设同步启动检查失败（不影响运行） 错误=%s', error)
     })
   }
   // F7:意愿档位一次性迁移——历史 off+enabled 规则归一为 custom 并持久化
   // 迁移标志(整树经 Config 预校验后 scope.update)。失败静默降级:标志未
   // 落库前 groupRule 的运行时归一继续兜底;成功后 off 稳定表达关闭。
-  void migrateWillingnessPresetsAtStartup(ctx, service, config).catch((error) => {
-    startupLogger.warn('意愿档位一次性迁移失败(保留运行时兼容):%s', (error as Error).message)
+  // Service 的 ready 回调异步登记实例；等待下一次计时器再重载，确保旧实例
+  // 的登记已完成并能随 scope 一起释放。作用域销毁会同时取消尚未执行的迁移。
+  ctx.on('ready', () => {
+    ctx.setTimeout(() => {
+      void migrateWillingnessPresetsAtStartup(service, config).catch((error) => {
+        service.operationLogger.warn('意愿档位一次性迁移失败（保留运行时兼容） 错误=%s', error)
+      })
+    }, 0)
   })
   if (blindModeEnabled) {
     // Registered commands from every plugin reach this hook before their
@@ -750,7 +763,6 @@ export function apply(ctx: Context, config: InterludeConfig) {
     const consumed = await service.receive(session)
     return consumed ? undefined : next()
   })
-  if (!blindModeEnabled) startupLogger.info('plugin load completed')
 }
 
 function registerCommands(ctx: Context, service: InterludeService, config: InterludeConfig) {

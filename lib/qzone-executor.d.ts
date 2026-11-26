@@ -1,7 +1,7 @@
 import { type QzoneActionCaller, type QzoneActionKind } from './qzone';
 import type { InterludeStory, NarrativeIntent } from './types';
 /** P3 自 service.ts QQ 空间执行区迁出（2026-10-29），行为不变；宿主经 service 同名委托传入。 */
-export declare function qzoneCaller(svc: any, preferSelfId?: string): (action: string, params?: Record<string, unknown>) => any;
+export declare function qzoneCaller(svc: any, preferSelfId?: string): (action: string, params?: Record<string, unknown>) => Promise<any>;
 /** P3 自 service.ts QQ 空间执行区迁出（2026-10-29），行为不变；宿主经 service 同名委托传入。 */
 export declare function qzoneExecute(svc: any, story: InterludeStory, kind: QzoneActionKind, input: {
     content?: string;
@@ -11,14 +11,11 @@ export declare function qzoneExecute(svc: any, story: InterludeStory, kind: Qzon
 }, preferSelfId?: string): Promise<{
     ok: boolean;
     error: string;
-    tid?: undefined;
 } | {
     ok: boolean;
     tid: string;
-    error?: undefined;
 } | {
     ok: boolean;
-    error?: undefined;
     tid?: undefined;
 }>;
 /** P3 自 service.ts QQ 空间执行区迁出（2026-10-29），行为不变；宿主经 service 同名委托传入。 */

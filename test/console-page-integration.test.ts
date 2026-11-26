@@ -95,7 +95,12 @@ function mount(component: any) {
   app.mount(tree)
   return { tree, errors, unmount: () => app.unmount() }
 }
-function fixture() {
+function fixture(initialSection = 'runtime') {
+  const storage = new Map<string, string>([['hdsi.config-center.section', initialSection]])
+  ;(globalThis as any).window = { confirm: () => true, sessionStorage: {
+    getItem: (key: string) => storage.get(key) ?? null,
+    setItem: (key: string, value: string) => storage.set(key, value),
+  } }
   const config: any = Config({})
   config.research.searchApiKey = 'test-private-key'
   config.research.jev.apiKey = 'test-jev-key'
@@ -239,6 +244,8 @@ test('all visible sections render with the installed Schema form, including scal
       assert.ok(all(view.tree).some(el => el.tag === 'form'), meta.id)
       assert.deepEqual(view.errors, [], meta.id)
     }
+    click(view.tree, '写作提示词')
+    await until(() => all(view.tree).some(el => el.tag === 'h3' && text(el).includes('value')))
     field(view.tree, 'value', 'input').props.onChange('剧本事实与人物行动保持一致。')
     await vue.nextTick(); click(view.tree, '保存并重载')
     await until(() => f.updates.length === 1)
@@ -259,4 +266,39 @@ test('configuration menu RPC tolerates null produced by real Console JSON transp
   assert.equal(responses[0].body.value.ok, true)
   assert.equal(responses[0].body.value.menu.flatMap((group: any) => group.sections).length, 25)
   assert.equal(responses[0].body.value.schema, undefined)
+})
+
+
+test('配置中心首次打开呈现分类总览，主动选择后保存和重建页面保持当前节', async () => {
+  const f = fixture('')
+  let view = mount(Center)
+  try {
+    await until(() => text(view.tree).includes('从故事档案和模型接入开始'))
+    assert.equal(f.calls.filter((call: any) => call.event === 'hdsi/config-center/read').length, 1)
+    assert.ok(!all(view.tree).some(el => el.tag === 'form'))
+    click(view.tree, '写作提示词')
+    await until(() => all(view.tree).some(el => el.tag === 'h3' && text(el).includes('value')))
+    field(view.tree, 'value', 'input').props.onChange('保存后保留写作页')
+    field(view.tree, 'model.fixedPrompt', 'input').props.onChange('长期写作规则')
+    field(view.tree, 'storyDefaults.style', 'input').props.onChange('克制而具体')
+    await vue.nextTick(); click(view.tree, '保存本节')
+    await until(() => text(view.tree).includes('已保存到 koishi.yml'))
+    assert.equal(f.host.config.mainPrompt, '保存后保留写作页')
+    assert.equal(f.host.config.model.fixedPrompt, '长期写作规则')
+    assert.equal(f.host.config.storyDefaults.style, '克制而具体')
+    assert.ok(!text(view.tree).includes('有未保存的修改'))
+    view.unmount(); view = mount(Center)
+    await until(() => all(view.tree).some(el => el.tag === 'h3' && text(el).includes('value')))
+    assert.equal(field(view.tree, 'value', 'input').props.value, '保存后保留写作页')
+    click(view.tree, '保存并重载')
+    await until(() => f.updates.length === 2)
+    view.unmount(); view = mount(Center)
+    await until(() => all(view.tree).some(el => el.tag === 'h3' && text(el).includes('value')))
+    assert.equal(f.calls.filter((call: any) => call.event === 'hdsi/config-center/read' && call.input === 'runtime').length, 0)
+    click(view.tree, '配置总览')
+    await until(() => text(view.tree).includes('从故事档案和模型接入开始'))
+    view.unmount(); view = mount(Center)
+    await until(() => text(view.tree).includes('从故事档案和模型接入开始'))
+    assert.deepEqual(view.errors, [])
+  } finally { view.unmount() }
 })

@@ -2,16 +2,13 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { InterludeService } from '../src/service'
 import { OneBotAdapter } from '../src/platform/onebot-adapter'
-import { decodeStoryState } from '../src/story-state'
 
 /** 回归：issue hdsi-issue-urge-density-decay-deadlock-20261029（rc58 报告）。
  * Bug 2（死锁主因）：群消息接收路径曾无条件重置 nextAdvanceAt，且发生在
  * mention-only 证据过滤之前——活跃群每条未 @ 消息都把自动推进推回未来，
  * 永不触发（日志反复 conversation-density-decay、0 次模型调用）。
  * 修复：pause 移至 flushGroupTurnUnlocked 意愿/冷却两道门通过之后。
- * Bug 1（节奏续期）：elevateRhythmOnIncoming 只提升 asleep/resting，已是
- * phone-focused 的 assessedAt 永不刷新，持续对话 2 小时后节奏 stale，
- * Urge 推进无端退化到兜底因子（1.4 → 1.0）。 */
+ */
 
 const methods = InterludeService.prototype as any
 
@@ -103,49 +100,4 @@ test('Bug2 冲刷层：@ 直通通过两道门后 pause 先于主叙事调用（
   const { service, order } = flushHarness({}, { mentionedBot: true })
   await service.flushGroupTurn('s:100', 1)
   assert.deepEqual(order, ['pause', 'decide'], '进入主叙事的批次应先 pause 再调用模型')
-})
-
-test('Bug1：phone-focused 节奏过期时入站续期 assessedAt', async () => {
-  const now = new Date('2026-10-29T12:00:00+08:00')
-  const stale = { attention: 'phone-focused', basis: '在看手机', assessedAt: new Date(now.getTime() - 3 * 3_600_000).toISOString(), source: 'model' as const }
-  let saved: unknown
-  const host: any = {
-    getStory: async () => ({ id: 's', state: { lifeRhythm: stale }, setting: {} }),
-    dbSet: async (_t: unknown, _q: unknown, update: unknown) => { saved = update },
-    reportOperation: () => {},
-  }
-  await methods.elevateRhythmOnIncoming.call(host, 's', now)
-  const rhythm = decodeStoryState((saved as any).state).lifeRhythm
-  assert.equal(rhythm?.attention, 'phone-focused', '只续期，不改档位')
-  assert.equal(rhythm?.assessedAt, now.toISOString())
-  assert.equal(rhythm?.source, 'incoming')
-  assert.equal(rhythm?.basis, '在看手机', '续期不改写原依据')
-})
-
-test('Bug1：phone-focused 未过期不写库，available 不在续期范围', async () => {
-  const now = new Date('2026-10-29T12:00:00+08:00')
-  for (const attention of ['phone-focused', 'available', 'occupied'] as const) {
-    let writes = 0
-    const host: any = {
-      getStory: async () => ({ id: 's', state: { lifeRhythm: { attention, basis: 'x', assessedAt: now.toISOString(), source: 'model' } }, setting: {} }),
-      dbSet: async () => { writes++ },
-      reportOperation: () => {},
-    }
-    await methods.elevateRhythmOnIncoming.call(host, 's', now)
-    assert.equal(writes, 0, `${attention} 未过期时不应写库`)
-  }
-})
-
-test('Bug1 回归防线：asleep 提升为 phone-focused 的既有行为保持不变', async () => {
-  const now = new Date('2026-10-29T12:00:00+08:00')
-  let saved: unknown
-  const host: any = {
-    getStory: async () => ({ id: 's', state: { lifeRhythm: { attention: 'asleep', basis: '睡着', assessedAt: now.toISOString() } }, setting: {} }),
-    dbSet: async (_t: unknown, _q: unknown, update: unknown) => { saved = update },
-    reportOperation: () => {},
-  }
-  await methods.elevateRhythmOnIncoming.call(host, 's', now)
-  const rhythm = decodeStoryState((saved as any).state).lifeRhythm
-  assert.equal(rhythm?.attention, 'phone-focused')
-  assert.equal(rhythm?.source, 'incoming')
 })

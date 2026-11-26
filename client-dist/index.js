@@ -1,58 +1,58 @@
-import { defineComponent as ee, h as se, defineAsyncComponent as ae, computed as F, ref as g, onUnmounted as ue, onMounted as ve, resolveComponent as le, openBlock as n, createBlock as z, withCtx as re, createElementVNode as e, createElementBlock as s, Fragment as L, renderList as Z, createVNode as A, normalizeClass as Q, createTextVNode as O, toDisplayString as y, createCommentVNode as p, resolveDynamicComponent as me, useId as fe, withKeys as oe, withModifiers as ie, unref as ne, normalizeStyle as be, nextTick as pe, withDirectives as ke, vModelText as we, reactive as _e } from "vue";
-import { send as G, icons as $e, SchemaBase as Se, Schema as xe } from "@koishijs/client";
-import { useRoute as Ce, onBeforeRouteLeave as ye, onBeforeRouteUpdate as he } from "vue-router";
-const W = {
+import { defineComponent as ne, h as de, defineAsyncComponent as oe, computed as Y, ref as _, onUnmounted as fe, onMounted as ye, resolveComponent as ae, openBlock as n, createBlock as K, withCtx as le, createElementVNode as e, createElementBlock as s, Fragment as B, renderList as X, createVNode as m, normalizeClass as Z, createTextVNode as x, toDisplayString as g, createCommentVNode as p, resolveDynamicComponent as Ce, useId as pe, withKeys as ve, withModifiers as ce, unref as ie, normalizeStyle as xe, nextTick as Me, withDirectives as Ae, vModelText as Ie, reactive as Oe } from "vue";
+import { send as ee, icons as Ne, SchemaBase as Pe, Schema as Le } from "@koishijs/client";
+import { useRoute as Te, onBeforeRouteLeave as $e, onBeforeRouteUpdate as Se } from "vue-router";
+const Q = {
   /** 拉取 hdsi-overview DataService 快照。 */
   async overview() {
-    return G("hdsi-overview/get");
+    return ee("hdsi-overview/get");
   },
   /** 读取一节配置（authority=1）。无活跃故事时 story 节返回空 values。 */
   async readConfig(t) {
-    return G("hdsi/config/read", t);
+    return ee("hdsi/config/read", t);
   },
   /** 提交一节配置（authority=3）。白名单外的键由服务端静默忽略。 */
-  async saveConfig(t, r) {
-    return G("hdsi/config/save", { section: t, values: r });
+  async saveConfig(t, u) {
+    return ee("hdsi/config/save", { section: t, values: u });
   },
   /** 配置中心：读取菜单树（无参）或某开放节（authority=1）。 */
   async readConfigCenter(t) {
-    return t ? G("hdsi/config-center/read", t) : G("hdsi/config-center/read");
+    return t ? ee("hdsi/config-center/read", t) : ee("hdsi/config-center/read");
   },
   /** 配置中心：按节提交 patch（authority=3）——服务端合并、预校验后
    * scope.update 持久化写回 koishi.yml 并热更新。 */
-  async saveConfigCenter(t, r, l = {}) {
-    return G("hdsi/config-center/save", { section: t, patch: r, ...l });
+  async saveConfigCenter(t, u, a = {}) {
+    return ee("hdsi/config-center/save", { section: t, patch: u, ...a });
   },
   /** 通信动作只读视图：账本/计划派生的动作列表（authority=1，游标分页）。 */
-  async actionsList(t, r = 20) {
-    return G("hdsi/actions/list", { cursor: t, limit: r });
+  async actionsList(t, u = 20) {
+    return ee("hdsi/actions/list", { cursor: t, limit: u });
   },
   /** 通信动作详情（按动作 ID 惰性读取，含分段与原文摘录）。 */
   async actionDetail(t) {
-    return G("hdsi/actions/get", { id: t });
+    return ee("hdsi/actions/get", { id: t });
   },
   /** 取消未来计划/未执行分段（authority=3；服务端幂等）。 */
   async cancelAction(t) {
-    return G("hdsi/actions/cancel", { id: t });
+    return ee("hdsi/actions/cancel", { id: t });
   },
   /** unknown 分段人工核实（authority=3）。 */
-  async verifyAction(t, r) {
-    return G("hdsi/actions/verify", { id: t, outcome: r });
+  async verifyAction(t, u) {
+    return ee("hdsi/actions/verify", { id: t, outcome: u });
   }
-}, ce = {
+}, we = {
   overview: "M12 3.5a8.5 8.5 0 1 0 0 17 8.5 8.5 0 0 0 0-17zm0 6a2.5 2.5 0 1 1 0 5 2.5 2.5 0 0 1 0-5z",
   desk: "M10.5 4a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13zm9.1 15.6L15.5 15.5M7.5 10.5h6M10.5 7.5v6",
   density: "M4 20v-6M9.3 20V9M14.6 20V4M20 20v-9",
   config: "M4 7.5h7M15 7.5h5M15 4.5v6M4 16.5h3M11 16.5h9M9 13.5v6",
   actions: "M4 5h16v11H9l-5 4V5zm4 4h8M8 12h5",
   center: "M4 7h4.5M11.5 7H20M4 17h9.5M16.5 17H20M7.2 4.4v5.2M13.2 14.4v5.2"
-}, Me = ee({
+}, qe = ne({
   name: "IconSet",
   props: { name: { type: String, required: !0 } },
   render() {
-    return se("path", { d: ce[this.name] ?? ce.overview });
+    return de("path", { d: we[this.name] ?? we.overview });
   }
-}), Ie = { class: "hdsi-host-title" }, Ae = { class: "hdsi-shell" }, Oe = { class: "topbar" }, Pe = { class: "tabs" }, Ne = {
+}), Ee = { class: "hdsi-host-title" }, je = { class: "hdsi-shell" }, De = { class: "topbar" }, Ve = { class: "tabs" }, Be = {
   class: "glyph",
   viewBox: "0 0 24 24",
   fill: "none",
@@ -61,104 +61,104 @@ const W = {
   "stroke-linecap": "round",
   "stroke-linejoin": "round",
   "aria-hidden": "true"
-}, je = { class: "main" }, De = {
+}, Je = { class: "main" }, Re = {
   key: 0,
   class: "notice info"
-}, qe = {
+}, Fe = {
   key: 1,
   class: "notice warn"
-}, Ee = {
+}, ze = {
   key: 0,
   class: "snapshot-actions"
-}, Ve = {
+}, He = {
   key: 0,
   class: "notice warn"
-}, Le = ["disabled"], Te = /* @__PURE__ */ ee({
+}, Ue = ["disabled"], Ke = /* @__PURE__ */ ne({
   name: "HdsiApp",
   __name: "HdsiApp",
   setup(t) {
-    const r = [
-      { id: "overview", path: "/hdsi/overview", label: "概览", group: "运行", icon: "overview", component: ae(() => Promise.resolve().then(() => st)) },
-      { id: "config-center", path: "/hdsi/config-center", label: "配置中心", group: "配置", icon: "center", component: ae(() => Promise.resolve().then(() => Ot)) },
-      { id: "config", path: "/hdsi/config", label: "当前故事", group: "配置", icon: "config", component: ae(() => Promise.resolve().then(() => Xt)) },
-      { id: "desk", path: "/hdsi/desk", label: "考据案头", group: "观测", icon: "desk", component: ae(() => Promise.resolve().then(() => sa)) },
-      { id: "actions", path: "/hdsi/actions", label: "通信动作", group: "观测", icon: "actions", component: ae(() => Promise.resolve().then(() => ja)) },
-      { id: "density", path: "/hdsi/density", label: "上下文预算", group: "观测", icon: "density", component: ae(() => Promise.resolve().then(() => Ba)) }
-    ], l = Ce(), k = F(() => {
-      const b = l.params.page, S = Array.isArray(b) ? b[0] : b;
-      return r.some((d) => d.id === S) ? S : "overview";
-    }), u = F(() => !["config", "config-center", "actions"].includes(k.value)), f = g(null), w = g(!0), o = g("");
-    let a = 0, m = !1;
-    ue(() => {
-      m = !0, a++;
+    const u = [
+      { id: "overview", path: "/hdsi/overview", label: "概览", group: "运行", icon: "overview", component: oe(() => Promise.resolve().then(() => $t)) },
+      { id: "config-center", path: "/hdsi/config-center", label: "配置中心", group: "配置", icon: "center", component: oe(() => Promise.resolve().then(() => Wt)) },
+      { id: "config", path: "/hdsi/config", label: "当前故事", group: "配置", icon: "config", component: oe(() => Promise.resolve().then(() => gl)) },
+      { id: "desk", path: "/hdsi/desk", label: "考据案头", group: "观测", icon: "desk", component: oe(() => Promise.resolve().then(() => _l)) },
+      { id: "actions", path: "/hdsi/actions", label: "通信动作", group: "观测", icon: "actions", component: oe(() => Promise.resolve().then(() => Ql)) },
+      { id: "density", path: "/hdsi/density", label: "上下文预算", group: "观测", icon: "density", component: oe(() => Promise.resolve().then(() => sn)) }
+    ], a = Te(), O = Y(() => {
+      const S = a.params.page, d = Array.isArray(S) ? S[0] : S;
+      return u.some((l) => l.id === d) ? d : "overview";
+    }), w = Y(() => !["config", "config-center", "actions"].includes(O.value)), r = _(null), v = _(!0), o = _("");
+    let i = 0, $ = !1;
+    fe(() => {
+      $ = !0, i++;
     });
-    async function i() {
-      if (m) return;
-      const b = ++a, S = () => !m && b === a;
-      w.value = !0, o.value = "";
+    async function f() {
+      if ($) return;
+      const S = ++i, d = () => !$ && S === i;
+      v.value = !0, o.value = "";
       try {
-        const d = await W.overview();
-        if (!S()) return;
-        if (!d) throw new Error("Console 连接尚未就绪，请重试。");
-        f.value = d;
-      } catch (d) {
-        S() && (o.value = (d == null ? void 0 : d.message) ?? String(d));
+        const l = await Q.overview();
+        if (!d()) return;
+        if (!l) throw new Error("Console 连接尚未就绪，请重试。");
+        r.value = l;
+      } catch (l) {
+        d() && (o.value = (l == null ? void 0 : l.message) ?? String(l));
       } finally {
-        S() && (w.value = !1);
+        d() && (v.value = !1);
       }
     }
-    return ve(i), (b, S) => {
-      const d = le("router-link"), P = le("k-layout");
-      return n(), z(P, { main: "hdsi-layout" }, {
-        header: re(() => {
-          var C;
+    return ye(f), (S, d) => {
+      const l = ae("router-link"), L = ae("k-layout");
+      return n(), K(L, { main: "hdsi-layout" }, {
+        header: le(() => {
+          var k;
           return [
-            e("span", Ie, [
-              S[0] || (S[0] = O("HDSI ", -1)),
-              e("small", null, y(((C = f.value) == null ? void 0 : C.version) ?? "写作工作台"), 1)
+            e("span", Ee, [
+              d[0] || (d[0] = x("HDSI ", -1)),
+              e("small", null, g(((k = r.value) == null ? void 0 : k.version) ?? "写作工作台"), 1)
             ])
           ];
         }),
-        default: re(() => [
-          e("div", Ae, [
-            e("header", Oe, [
-              e("nav", Pe, [
-                (n(), s(L, null, Z(r, (C) => A(d, {
-                  key: C.id,
-                  to: C.path,
-                  class: Q(["tab", { on: k.value === C.id }])
+        default: le(() => [
+          e("div", je, [
+            e("header", De, [
+              e("nav", Ve, [
+                (n(), s(B, null, X(u, (k) => m(l, {
+                  key: k.id,
+                  to: k.path,
+                  class: Z(["tab", { on: O.value === k.id }])
                 }, {
-                  default: re(() => [
-                    (n(), s("svg", Ne, [
-                      A(Me, {
-                        name: C.icon
+                  default: le(() => [
+                    (n(), s("svg", Be, [
+                      m(qe, {
+                        name: k.icon
                       }, null, 8, ["name"])
                     ])),
-                    O(" " + y(C.label), 1)
+                    x(" " + g(k.label), 1)
                   ]),
                   _: 2
                 }, 1032, ["to", "class"])), 64))
               ])
             ]),
-            e("main", je, [
-              u.value && !f.value ? (n(), s(L, { key: 0 }, [
-                w.value ? (n(), s("div", De, "正在连接 HDSI 数据服务……")) : (n(), s("div", qe, [
-                  O(" 数据服务不可用：" + y(o.value) + " ", 1),
+            e("main", Je, [
+              w.value && !r.value ? (n(), s(B, { key: 0 }, [
+                v.value ? (n(), s("div", Re, "正在连接 HDSI 数据服务……")) : (n(), s("div", Fe, [
+                  x(" 数据服务不可用：" + g(o.value) + " ", 1),
                   e("button", {
                     class: "refresh",
-                    onClick: i
+                    onClick: f
                   }, "重试")
                 ]))
-              ], 64)) : (n(), s(L, { key: 1 }, [
-                u.value ? (n(), s("div", Ee, [
-                  o.value ? (n(), s("span", Ve, "刷新失败：" + y(o.value) + "，当前展示上次快照。", 1)) : p("", !0),
+              ], 64)) : (n(), s(B, { key: 1 }, [
+                w.value ? (n(), s("div", ze, [
+                  o.value ? (n(), s("span", He, "刷新失败：" + g(o.value) + "，当前展示上次快照。", 1)) : p("", !0),
                   e("button", {
                     class: "refresh",
-                    disabled: w.value,
-                    onClick: i
-                  }, y(w.value ? "刷新中……" : "刷新概览"), 9, Le)
+                    disabled: v.value,
+                    onClick: f
+                  }, g(v.value ? "刷新中……" : "刷新概览"), 9, Ue)
                 ])) : p("", !0),
-                (n(), z(me(r.find((C) => C.id === k.value).component), { overview: f.value }, null, 8, ["overview"]))
+                (n(), K(Ce(u.find((k) => k.id === O.value).component), { overview: r.value }, null, 8, ["overview"]))
               ], 64))
             ])
           ])
@@ -167,15 +167,15 @@ const W = {
       });
     };
   }
-}), X = (t, r) => {
-  const l = t.__vccOpts || t;
-  for (const [k, u] of r)
-    l[k] = u;
-  return l;
-}, Re = /* @__PURE__ */ X(Te, [["__scopeId", "data-v-83d18947"]]);
-function Fa(t) {
-  $e.register("hdsi", {
-    render: () => se("svg", {
+}), te = (t, u) => {
+  const a = t.__vccOpts || t;
+  for (const [O, w] of u)
+    a[O] = w;
+  return a;
+}, We = /* @__PURE__ */ te(Ke, [["__scopeId", "data-v-83d18947"]]);
+function vn(t) {
+  Ne.register("hdsi", {
+    render: () => de("svg", {
       viewBox: "0 0 24 24",
       fill: "none",
       stroke: "currentColor",
@@ -186,9 +186,9 @@ function Fa(t) {
       height: 24,
       style: "width:24px;height:24px;max-width:100%;display:block;margin:auto;flex:none"
     }, [
-      se("rect", { x: "4", y: "4", width: "10", height: "10", transform: "rotate(45 9 9)" }),
-      se("path", { d: "M20 11v9h-9" }),
-      se("circle", { cx: "20", cy: "8", r: "2" })
+      de("rect", { x: "4", y: "4", width: "10", height: "10", transform: "rotate(45 9 9)" }),
+      de("path", { d: "M20 11v9h-9" }),
+      de("circle", { cx: "20", cy: "8", r: "2" })
     ])
   }), t.page({
     id: "hdsi",
@@ -196,13 +196,13 @@ function Fa(t) {
     name: "HDS Interlude",
     icon: "hdsi",
     order: 600,
-    component: Re
+    component: We
   });
 }
-const Be = ["aria-expanded", "aria-describedby", "onKeydown"], Je = ["id"], ze = { key: 0 }, He = {
+const Ye = ["aria-expanded", "aria-describedby", "onKeydown"], Ge = ["id"], Qe = { key: 0 }, Xe = {
   key: 1,
   class: "tip-range"
-}, Fe = /* @__PURE__ */ ee({
+}, Ze = /* @__PURE__ */ ne({
   name: "InfoDot",
   __name: "InfoDot",
   props: {
@@ -210,54 +210,54 @@ const Be = ["aria-expanded", "aria-describedby", "onKeydown"], Je = ["id"], ze =
     range: {}
   },
   setup(t) {
-    const r = g(!1), l = g(null), k = fe();
-    let u = 0;
-    ve(() => {
+    const u = _(!1), a = _(null), O = pe();
+    let w = 0;
+    ye(() => {
       typeof window < "u" && window.addEventListener("scroll", o, !0);
-    }), ue(() => {
+    }), fe(() => {
       typeof window < "u" && window.removeEventListener("scroll", o, !0);
     });
-    const f = g({ left: "0px", top: "0px", maxWidth: "320px" });
-    async function w(a) {
-      const i = a.currentTarget.getBoundingClientRect(), b = Math.min(320, window.innerWidth - 32), S = window.innerHeight - i.bottom > 140;
-      f.value = {
-        left: `${Math.max(16, Math.min(i.left, window.innerWidth - b - 16))}px`,
-        top: `${S ? i.bottom + 8 : Math.max(16, i.top - 140)}px`,
-        maxWidth: `${b}px`
-      }, r.value = !0;
-      const d = ++u;
-      if (await pe(), !r.value || d !== u || !l.value) return;
-      const P = l.value.getBoundingClientRect().height;
-      f.value.top = `${Math.max(8, Math.min(Number.parseFloat(f.value.top), window.innerHeight - P - 8))}px`;
+    const r = _({ left: "0px", top: "0px", maxWidth: "320px" });
+    async function v(i) {
+      const f = i.currentTarget.getBoundingClientRect(), S = Math.min(320, window.innerWidth - 32), d = window.innerHeight - f.bottom > 140;
+      r.value = {
+        left: `${Math.max(16, Math.min(f.left, window.innerWidth - S - 16))}px`,
+        top: `${d ? f.bottom + 8 : Math.max(16, f.top - 140)}px`,
+        maxWidth: `${S}px`
+      }, u.value = !0;
+      const l = ++w;
+      if (await Me(), !u.value || l !== w || !a.value) return;
+      const L = a.value.getBoundingClientRect().height;
+      r.value.top = `${Math.max(8, Math.min(Number.parseFloat(r.value.top), window.innerHeight - L - 8))}px`;
     }
     function o() {
-      r.value = !1, u++;
+      u.value = !1, w++;
     }
-    return (a, m) => (n(), s("button", {
+    return (i, $) => (n(), s("button", {
       type: "button",
       class: "info-dot",
       "aria-label": "查看说明（悬停或按住）",
-      "aria-expanded": r.value,
-      "aria-describedby": r.value ? ne(k) : void 0,
-      onMouseenter: w,
+      "aria-expanded": u.value,
+      "aria-describedby": u.value ? ie(O) : void 0,
+      onMouseenter: v,
       onMouseleave: o,
-      onPointerdown: ie(w, ["stop"]),
+      onPointerdown: ce(v, ["stop"]),
       onPointerup: o,
       onPointercancel: o,
-      onFocus: w,
+      onFocus: v,
       onBlur: o,
-      onClick: ie(o, ["stop"]),
+      onClick: ce(o, ["stop"]),
       onKeydown: [
-        oe(o, ["esc"]),
-        oe(ie(w, ["prevent"]), ["space"]),
-        oe(ie(w, ["prevent"]), ["enter"])
+        ve(o, ["esc"]),
+        ve(ce(v, ["prevent"]), ["space"]),
+        ve(ce(v, ["prevent"]), ["enter"])
       ],
       onKeyup: [
-        oe(o, ["space"]),
-        oe(o, ["enter"])
+        ve(o, ["space"]),
+        ve(o, ["enter"])
       ]
     }, [
-      m[0] || (m[0] = e("svg", {
+      $[0] || ($[0] = e("svg", {
         viewBox: "0 0 24 24",
         fill: "none",
         stroke: "currentColor",
@@ -278,23 +278,23 @@ const Be = ["aria-expanded", "aria-describedby", "onKeydown"], Je = ["id"], ze =
           stroke: "none"
         })
       ], -1)),
-      r.value ? (n(), s("span", {
+      u.value ? (n(), s("span", {
         key: 0,
-        id: ne(k),
+        id: ie(O),
         ref_key: "tooltip",
-        ref: l,
+        ref: a,
         class: "hdsi-tip",
         role: "tooltip",
-        style: be(f.value)
+        style: xe(r.value)
       }, [
-        t.info ? (n(), s("span", ze, y(t.info), 1)) : p("", !0),
-        t.range ? (n(), s("span", He, "范围：" + y(t.range), 1)) : p("", !0)
-      ], 12, Je)) : p("", !0)
-    ], 40, Be));
+        t.info ? (n(), s("span", Qe, g(t.info), 1)) : p("", !0),
+        t.range ? (n(), s("span", Xe, "范围：" + g(t.range), 1)) : p("", !0)
+      ], 12, Ge)) : p("", !0)
+    ], 40, Ye));
   }
-}), ge = /* @__PURE__ */ X(Fe, [["__scopeId", "data-v-d68b18ae"]]), Ue = {
+}), _e = /* @__PURE__ */ te(Ze, [["__scopeId", "data-v-d68b18ae"]]), et = {
   name: "DataRow",
-  components: { InfoDot: ge },
+  components: { InfoDot: _e },
   props: {
     label: { type: String, required: !0 },
     value: { type: [String, Number, Boolean], default: "—" },
@@ -303,396 +303,637 @@ const Be = ["aria-expanded", "aria-describedby", "onKeydown"], Je = ["id"], ze =
     info: { type: String, default: "" },
     range: { type: String, default: "" }
   }
-}, Ke = { class: "row" }, We = { class: "k" };
-function Ye(t, r, l, k, u, f) {
-  const w = le("InfoDot");
-  return n(), s("div", Ke, [
-    e("span", We, [
-      O(y(l.label) + " ", 1),
-      l.info || l.range ? (n(), z(w, {
+}, tt = { class: "row" }, lt = { class: "k" };
+function nt(t, u, a, O, w, r) {
+  const v = ae("InfoDot");
+  return n(), s("div", tt, [
+    e("span", lt, [
+      x(g(a.label) + " ", 1),
+      a.info || a.range ? (n(), K(v, {
         key: 0,
-        info: l.info,
-        range: l.range
+        info: a.info,
+        range: a.range
       }, null, 8, ["info", "range"])) : p("", !0)
     ]),
     e("span", {
-      class: Q(["v", l.state || void 0])
-    }, y(l.value), 3)
+      class: Z(["v", a.state || void 0])
+    }, g(a.value), 3)
   ]);
 }
-const M = /* @__PURE__ */ X(Ue, [["render", Ye], ["__scopeId", "data-v-4e9413bc"]]), Ge = { key: 0 }, Qe = {
+const h = /* @__PURE__ */ te(et, [["render", nt], ["__scopeId", "data-v-4e9413bc"]]), at = { key: 0 }, st = {
   key: 0,
   class: "notice info"
-}, Xe = {
+}, ot = {
   key: 1,
   class: "notice"
-}, Ze = { class: "grid" }, et = { class: "card" }, tt = { class: "card" }, at = { class: "card" }, nt = { class: "card" }, lt = /* @__PURE__ */ ee({
+}, it = {
+  class: "metrics",
+  "aria-label": "关键指标"
+}, ut = { class: "overview-columns" }, rt = { class: "overview-stack" }, vt = { class: "card" }, dt = { class: "card-links" }, ct = {
+  key: 0,
+  class: "card"
+}, ft = { class: "card" }, yt = { class: "card" }, ht = { class: "overview-stack" }, gt = { class: "card" }, mt = { class: "card" }, bt = { class: "card-links" }, wt = { class: "card" }, kt = /* @__PURE__ */ ne({
   name: "OverviewPage",
   __name: "OverviewPage",
   props: {
     overview: {}
   },
   setup(t) {
-    const r = t, l = { active: "活动中", paused: "已暂停", archived: "已归档" }, k = { asleep: "睡眠", resting: "休息", occupied: "忙碌", available: "空闲", normal: "日常", active: "活跃", "phone-focused": "关注消息", focused: "专注" }, u = F(() => {
-      var o, a, m, i;
-      return k[(a = (o = r.overview) == null ? void 0 : o.story) == null ? void 0 : a.rhythm] ?? ((i = (m = r.overview) == null ? void 0 : m.story) == null ? void 0 : i.rhythm) ?? "未建立";
-    }), f = { main: "主叙事", compaction: "记忆整理", timeline: "时间导演", alter: "情绪分析", embedding: "向量检索", stickers: "表情包描述", vision: "视觉理解", research: "考据检索" }, w = {
+    const u = t, a = { active: "活动中", paused: "已暂停", archived: "已归档" }, O = { "device-focus-chat": "查看聊天", "device-focus-other": "使用设备", "busy-work": "专注事务", "busy-play": "投入娱乐", "avaliable-relax": "放松空闲", "avaliable-tense": "警觉空闲", "rest-conscious": "清醒休息", "rest-dazed": "朦胧休息", asleep: "睡眠", resting: "休息", occupied: "忙碌", available: "空闲", normal: "日常", active: "活跃", "phone-focused": "关注消息", focused: "专注" }, w = Y(() => {
+      var d, l, L, k;
+      return O[(l = (d = u.overview) == null ? void 0 : d.story) == null ? void 0 : l.rhythm] ?? ((k = (L = u.overview) == null ? void 0 : L.story) == null ? void 0 : k.rhythm) ?? "未建立";
+    }), r = Y(() => {
+      var d, l;
+      return (l = (d = u.overview) == null ? void 0 : d.story) == null ? void 0 : l.eventAttention;
+    }), v = {
+      current: "有效",
+      missing: "未建立 · 中性档",
+      stale: "已过期 · 中性档",
+      legacy: "旧档未细分 · 中性档"
+    }, o = Y(() => {
+      var d, l, L;
+      return ((d = r.value) == null ? void 0 : d.status) === "missing" ? "未建立" : `${w.value}（${(L = (l = u.overview) == null ? void 0 : l.story) == null ? void 0 : L.rhythm}）`;
+    }), i = { low: "低密度", normal: "日常", high: "高密度", burst: "密集对话" }, $ = (d) => d === "auto" ? "自动" : d === "fixed" ? "固定" : "—", f = { main: "主叙事", compaction: "记忆整理", timeline: "时间导演", alter: "情绪分析", embedding: "向量检索", stickers: "表情包描述", vision: "视觉理解", research: "考据检索" }, S = {
       allowProactiveMessages: "主角可主动发起可见消息（非回复式）",
       urge: "依据生活节奏和对话密度安排后台补写；人物是否联系他人由主叙事形成动作",
-      sceneConditions: "设备、隐私和负荷的有效场景证据；缺失或过期时显示未知",
+      sceneConditions: "设备、隐私和负荷的有效场景证据，与 Focus 相互独立；设备可达性不参与当前 T 档标注",
       deliveryPolicy: "管理员设置的主动出站运行额度和间隔；人物动机由主叙事决定",
       research: "考据 Agent：人物形成查证动作后，后台核实并写入考据案头，供后续写作参考",
       jev: "生活推进前的外部考据判定；命中时先检索资料，再继续写作"
     };
-    return (o, a) => {
-      var m;
-      return t.overview ? (n(), s("div", Ge, [
-        a[6] || (a[6] = e("div", { class: "pg-head" }, [
+    return (d, l) => {
+      var k, j, z, J, T, P, R, I, D, A, H, C, M, c, V, se, he, ue, b, y, N, q, F, E, G, U, re, ge, me, be;
+      const L = ae("router-link");
+      return t.overview ? (n(), s("div", at, [
+        l[21] || (l[21] = e("div", { class: "pg-head" }, [
           e("div", null, [
             e("h2", null, "概览"),
-            e("div", { class: "sub" }, "当前故事 · 模型用途 · 运行边界 · 考据状态")
+            e("div", { class: "sub" }, "故事现场、推进时钟、上下文预算与模型配置的当前快照")
           ])
         ], -1)),
-        (m = t.overview.story) != null && m.found ? (n(), s("div", Qe, [
-          e("b", null, y(t.overview.story.characterName), 1),
-          O(" · " + y(l[t.overview.story.status] ?? t.overview.story.status) + " · 当前节奏 " + y(u.value) + "。剧情时间 ", 1),
-          e("code", null, y(t.overview.story.cursorLocal), 1),
-          a[0] || (a[0] = O("，共 ", -1)),
-          e("b", null, y(t.overview.story.entryCount), 1),
-          a[1] || (a[1] = O(" 条剧本记录。 ", -1))
-        ])) : (n(), s("div", Xe, "当前还没有故事。先在配置中心填写故事档案和模型，再从聊天启动故事。")),
-        e("div", Ze, [
-          e("div", et, [
-            a[2] || (a[2] = e("h3", null, [
-              e("span", { class: "sq" }),
-              O("故事状态")
-            ], -1)),
-            A(M, {
-              label: "主角",
-              value: t.overview.story.characterName || "—",
-              info: "主角姓名，出现在全部叙事中",
-              range: "任意非空中文/英文"
-            }, null, 8, ["value"]),
-            A(M, {
-              label: "关系人数",
-              value: t.overview.story.participantCount,
-              info: "已登记的参与者（跨会话共享同一故事）"
-            }, null, 8, ["value"]),
-            A(M, {
-              label: "故事状态",
-              value: l[t.overview.story.status] ?? t.overview.story.status,
-              state: t.overview.story.status === "active" ? "ok" : "",
-              info: "active=活动 / paused=暂停 / archived=归档"
-            }, null, 8, ["value", "state"]),
-            A(M, {
-              label: "节奏",
-              value: u.value,
-              state: "acc",
-              info: "主角当前的生活节奏/注意力，由时间与近况推得"
-            }, null, 8, ["value"])
+        (k = t.overview.story) != null && k.found ? (n(), s("div", st, [
+          e("b", null, g(t.overview.story.characterName), 1),
+          x(" · " + g(a[t.overview.story.status] ?? t.overview.story.status) + " · " + g(r.value && r.value.status !== "current" ? "已存 Focus" : "当前 Focus") + " " + g(w.value) + "。剧情时间 ", 1),
+          e("code", null, g(t.overview.story.cursorLocal), 1),
+          l[0] || (l[0] = x("，共 ", -1)),
+          e("b", null, g(t.overview.story.entryCount), 1),
+          l[1] || (l[1] = x(" 条剧本记录。 ", -1))
+        ])) : (n(), s("div", ot, "当前还没有故事。先在配置中心填写故事档案和模型，再从聊天启动故事。")),
+        e("div", it, [
+          e("div", null, [
+            l[2] || (l[2] = e("span", null, "剧本记录", -1)),
+            e("strong", null, g(((j = t.overview.story) == null ? void 0 : j.entryCount) ?? 0), 1)
           ]),
-          e("div", tt, [
-            a[3] || (a[3] = e("h3", null, [
-              e("span", { class: "sq" }),
-              O("模型连接")
-            ], -1)),
-            (n(!0), s(L, null, Z(t.overview.models, (i) => (n(), z(M, {
-              key: i.task,
-              label: f[i.task] ?? i.task,
-              value: `${i.provider} · ${i.model}`,
-              state: i.available ? "ok" : i.reason === "disabled" ? "" : "warn",
-              info: "按模型中心的用途配置解析出的连接与模型；该状态表示配置匹配，不表示网络探活成功"
-            }, null, 8, ["label", "value", "state"]))), 128))
+          e("div", null, [
+            l[3] || (l[3] = e("span", null, "关系人数", -1)),
+            e("strong", null, g(((z = t.overview.story) == null ? void 0 : z.participantCount) ?? 0), 1)
           ]),
-          e("div", at, [
-            a[4] || (a[4] = e("h3", null, [
-              e("span", { class: "sq" }),
-              O("系统开关")
-            ], -1)),
-            (n(!0), s(L, null, Z(t.overview.switches, (i) => (n(), z(M, {
-              key: i.key,
-              label: i.label,
-              value: i.value,
-              state: i.ok === !0 ? "ok" : i.ok === !1 ? "warn" : "",
-              info: w[i.key]
-            }, null, 8, ["label", "value", "state", "info"]))), 128))
+          e("div", null, [
+            l[5] || (l[5] = e("span", null, "私聊上下文", -1)),
+            e("strong", null, [
+              x(g(((P = (T = (J = t.overview.density) == null ? void 0 : J.budgets) == null ? void 0 : T.private) == null ? void 0 : P.count) ?? ((R = t.overview.density) == null ? void 0 : R.effectiveLimit) ?? "—") + " ", 1),
+              l[4] || (l[4] = e("small", null, "条", -1))
+            ])
           ]),
-          e("div", nt, [
-            a[5] || (a[5] = e("h3", null, [
-              e("span", { class: "sq" }),
-              O("考据 Agent")
-            ], -1)),
-            A(M, {
-              label: "状态",
-              value: t.overview.research.enabled ? "开启" : "关闭",
-              state: t.overview.research.enabled ? "ok" : "",
-              info: "考据总开关，可在配置中心的「考据 Agent」中修改"
-            }, null, 8, ["value", "state"]),
-            A(M, {
-              label: "搜索后端",
-              value: t.overview.research.backend,
-              state: "acc",
-              info: "考据检索的网络后端",
-              range: "auto/tavily/bocha/searxng/duckduckgo-html"
-            }, null, 8, ["value"]),
-            A(M, {
-              label: "案头条目",
-              value: t.overview.research.deskEntries,
-              info: "在架的核实事实数（稳定+易变，TTL 过期淘汰）",
-              range: "案头容量 2-32"
-            }, null, 8, ["value"]),
-            A(M, {
-              label: "写入 / 复用",
-              value: `${t.overview.research.counters.offered} / ${t.overview.research.counters.reused}`,
-              info: "累计写入案头 / 复用已有条目（重载归零）"
-            }, null, 8, ["value"]),
-            A(M, {
-              label: "Jev 门控",
-              value: t.overview.research.jev.enabled ? t.overview.research.jev.keyConfigured ? `判定 ${t.overview.research.jev.calls} / 触发 ${t.overview.research.jev.triggered}` : "已开启 · 待配置密钥" : "未启用",
-              state: t.overview.research.jev.enabled ? t.overview.research.jev.keyConfigured ? "ok" : "warn" : "",
-              info: "判定=门控调用次数，触发=判定 TRUE 放行先查后写"
-            }, null, 8, ["value", "state"])
+          e("div", null, [
+            l[7] || (l[7] = e("span", null, "群聊上下文", -1)),
+            e("strong", null, [
+              x(g(((A = (D = (I = t.overview.density) == null ? void 0 : I.budgets) == null ? void 0 : D.group) == null ? void 0 : A.count) ?? "—") + " ", 1),
+              l[6] || (l[6] = e("small", null, "条", -1))
+            ])
+          ])
+        ]),
+        e("div", ut, [
+          e("div", rt, [
+            e("div", vt, [
+              l[10] || (l[10] = e("h3", null, [
+                e("span", { class: "sq" }),
+                x("故事状态")
+              ], -1)),
+              m(h, {
+                label: "主角",
+                value: t.overview.story.characterName || "—",
+                info: "主角姓名，出现在全部叙事中",
+                range: "任意非空中文/英文"
+              }, null, 8, ["value"]),
+              m(h, {
+                label: "关系人数",
+                value: t.overview.story.participantCount,
+                info: "已登记的参与者（跨会话共享同一故事）"
+              }, null, 8, ["value"]),
+              m(h, {
+                label: "故事状态",
+                value: a[t.overview.story.status] ?? t.overview.story.status,
+                state: t.overview.story.status === "active" ? "ok" : "",
+                info: "active=活动 / paused=暂停 / archived=归档"
+              }, null, 8, ["value", "state"]),
+              r.value ? p("", !0) : (n(), K(h, {
+                key: 0,
+                label: "生活节奏",
+                value: w.value,
+                state: "acc",
+                info: "最近保存的生活节奏状态"
+              }, null, 8, ["value"])),
+              m(h, {
+                label: "场景地点",
+                value: t.overview.story.location || "待建立",
+                info: "优先显示当前场景中的地点，缺失时显示故事档案的主要地点"
+              }, null, 8, ["value"]),
+              m(h, {
+                label: "正在进行",
+                value: t.overview.story.activity || "待建立",
+                info: "来自已落库的场景状态"
+              }, null, 8, ["value"]),
+              m(h, {
+                label: "叙事焦点",
+                value: t.overview.story.focus || "待建立"
+              }, null, 8, ["value"]),
+              m(h, {
+                label: "故事时区",
+                value: t.overview.story.timezone || "—"
+              }, null, 8, ["value"]),
+              e("div", dt, [
+                m(L, { to: "/hdsi/config" }, {
+                  default: le(() => [...l[8] || (l[8] = [
+                    x("编辑当前故事", -1)
+                  ])]),
+                  _: 1
+                }),
+                m(L, { to: "/hdsi/actions" }, {
+                  default: le(() => [...l[9] || (l[9] = [
+                    x("查看通信动作", -1)
+                  ])]),
+                  _: 1
+                })
+              ])
+            ]),
+            r.value ? (n(), s("div", ct, [
+              l[11] || (l[11] = e("h3", null, [
+                e("span", { class: "sq" }),
+                x("Focus 与事件注意度")
+              ], -1)),
+              m(h, {
+                label: "已存 Focus",
+                value: o.value,
+                state: "acc",
+                info: "主叙事在剧本提交后更新；压缩器可补写。收到私聊不会改变或续期 Focus。"
+              }, null, 8, ["value"]),
+              m(h, {
+                label: "标注依据",
+                value: v[r.value.status] ?? "未知",
+                state: r.value.status === "current" ? "ok" : "warn",
+                info: "以概览读取时间判断，超过两小时使用中性行；旧档中仅有效的 asleep 可直接使用。"
+              }, null, 8, ["value", "state"]),
+              r.value.assessedAtLocal ? (n(), K(h, {
+                key: 0,
+                label: "证据时间",
+                value: r.value.assessedAtLocal,
+                info: "按故事时区显示的剧本证据时间"
+              }, null, 8, ["value"])) : p("", !0),
+              l[12] || (l[12] = e("p", { class: "attention-caption" }, "按当前状态预览，非上次请求记录。T1 最容易被注意到，T5 最不容易；只给已有材料加标注，不改变顺序，也不表示已读或必须回复。", -1)),
+              m(h, {
+                label: "私聊入站",
+                value: `T${r.value.tiers.privateBatch}`
+              }, null, 8, ["value"]),
+              m(h, {
+                label: "群聊入站 / 群聊背景",
+                value: `T${r.value.tiers.groupBatch} / T${r.value.tiers.groupBackground}`
+              }, null, 8, ["value"]),
+              m(h, {
+                label: "社交动态",
+                value: `T${r.value.tiers.friendFeed}`
+              }, null, 8, ["value"]),
+              m(h, {
+                label: "实况天气基础档",
+                value: `T${r.value.tiers.weather}`,
+                info: "恶劣天气前移两档，明显变化用基础档，其余后移一档；限定 T1–T5。不因分档增加新事件。"
+              }, null, 8, ["value"]),
+              m(h, {
+                label: "播种世界事件",
+                value: "按重要性 × 涉及程度",
+                info: "environment 为环境事件、involved 为直接涉及主角或其关系和事务。每条独立计算，不受 Focus 影响。"
+              }),
+              l[13] || (l[13] = e("p", { class: "attention-caption" }, "设备可达性见「当前行动条件」，是独立状态；本功能不按它过滤消息。", -1))
+            ])) : p("", !0),
+            e("div", ft, [
+              l[14] || (l[14] = e("h3", null, [
+                e("span", { class: "sq" }),
+                x("推进时钟")
+              ], -1)),
+              m(h, {
+                label: "剧情时间",
+                value: t.overview.story.cursorLocal || "—",
+                info: "剧本已经推进到的故事时间"
+              }, null, 8, ["value"]),
+              m(h, {
+                label: "补写最早时间",
+                value: t.overview.story.nextAdvanceLocal || "尚未安排",
+                info: "持久化的自动补写时钟；实际执行还取决于故事状态、任务队列和运行条件"
+              }, null, 8, ["value"]),
+              m(h, {
+                label: "上次自动补写",
+                value: t.overview.story.lastAdvanceLocal || "暂无记录"
+              }, null, 8, ["value"]),
+              m(h, {
+                label: "对话后续时点",
+                value: t.overview.story.followUpCount ?? 0,
+                info: "已排定的对话后续时点数量"
+              }, null, 8, ["value"])
+            ]),
+            e("div", yt, [
+              l[15] || (l[15] = e("h3", null, [
+                e("span", { class: "sq" }),
+                x("系统开关")
+              ], -1)),
+              (n(!0), s(B, null, X(t.overview.switches, (W) => (n(), K(h, {
+                key: W.key,
+                label: W.label,
+                value: W.value,
+                state: W.ok === !0 ? "ok" : W.ok === !1 ? "warn" : "",
+                info: S[W.key]
+              }, null, 8, ["label", "value", "state", "info"]))), 128))
+            ])
+          ]),
+          e("div", ht, [
+            e("div", gt, [
+              l[16] || (l[16] = e("h3", null, [
+                e("span", { class: "sq" }),
+                x("模型连接")
+              ], -1)),
+              (n(!0), s(B, null, X(t.overview.models, (W) => (n(), K(h, {
+                key: W.task,
+                label: f[W.task] ?? W.task,
+                value: `${W.provider} · ${W.model}`,
+                state: W.available ? "ok" : W.reason === "disabled" ? "" : "warn",
+                info: "按模型中心的用途配置解析出的连接与模型；该状态表示配置匹配，不表示网络探活成功"
+              }, null, 8, ["label", "value", "state"]))), 128))
+            ]),
+            e("div", mt, [
+              l[19] || (l[19] = e("h3", null, [
+                e("span", { class: "sq" }),
+                x("上下文与对话密度")
+              ], -1)),
+              m(h, {
+                label: "密度档位",
+                value: i[(H = t.overview.density) == null ? void 0 : H.tier] ?? "—",
+                info: "根据近期对话频率确定，供自动上下文预算使用"
+              }, null, 8, ["value"]),
+              m(h, {
+                label: "5 / 15 / 30 分钟",
+                value: `${((M = (C = t.overview.density) == null ? void 0 : C.counts) == null ? void 0 : M.count5) ?? 0} / ${((V = (c = t.overview.density) == null ? void 0 : c.counts) == null ? void 0 : V.count15) ?? 0} / ${((he = (se = t.overview.density) == null ? void 0 : se.counts) == null ? void 0 : he.count30) ?? 0}`,
+                info: "各时间窗内的对话计数"
+              }, null, 8, ["value"]),
+              m(h, {
+                label: "私聊模式",
+                value: $(((y = (b = (ue = t.overview.density) == null ? void 0 : ue.budgets) == null ? void 0 : b.private) == null ? void 0 : y.mode) ?? ((N = t.overview.density) == null ? void 0 : N.mode))
+              }, null, 8, ["value"]),
+              m(h, {
+                label: "群聊模式",
+                value: $((E = (F = (q = t.overview.density) == null ? void 0 : q.budgets) == null ? void 0 : F.group) == null ? void 0 : E.mode)
+              }, null, 8, ["value"]),
+              m(h, {
+                label: "时间窗口",
+                value: ((re = (U = (G = t.overview.density) == null ? void 0 : G.budgets) == null ? void 0 : U.private) == null ? void 0 : re.minutes) === 0 ? "不限时间" : `${((be = (me = (ge = t.overview.density) == null ? void 0 : ge.budgets) == null ? void 0 : me.private) == null ? void 0 : be.minutes) ?? "—"} 分钟`,
+                info: "与条目预算共同约束普通用户消息回合的近期上下文"
+              }, null, 8, ["value"]),
+              e("div", bt, [
+                m(L, { to: "/hdsi/density" }, {
+                  default: le(() => [...l[17] || (l[17] = [
+                    x("查看密度详情", -1)
+                  ])]),
+                  _: 1
+                }),
+                m(L, { to: "/hdsi/config-center" }, {
+                  default: le(() => [...l[18] || (l[18] = [
+                    x("调整配置", -1)
+                  ])]),
+                  _: 1
+                })
+              ])
+            ]),
+            e("div", wt, [
+              l[20] || (l[20] = e("h3", null, [
+                e("span", { class: "sq" }),
+                x("考据 Agent")
+              ], -1)),
+              m(h, {
+                label: "状态",
+                value: t.overview.research.enabled ? "开启" : "关闭",
+                state: t.overview.research.enabled ? "ok" : "",
+                info: "考据总开关，可在配置中心的「考据 Agent」中修改"
+              }, null, 8, ["value", "state"]),
+              m(h, {
+                label: "搜索后端",
+                value: t.overview.research.backend,
+                state: "acc",
+                info: "考据检索的网络后端",
+                range: "auto/tavily/bocha/searxng/duckduckgo-html"
+              }, null, 8, ["value"]),
+              m(h, {
+                label: "案头条目",
+                value: t.overview.research.deskEntries,
+                info: "在架的核实事实数（稳定+易变，TTL 过期淘汰）",
+                range: "案头容量 2-32"
+              }, null, 8, ["value"]),
+              m(h, {
+                label: "写入 / 复用",
+                value: `${t.overview.research.counters.offered} / ${t.overview.research.counters.reused}`,
+                info: "累计写入案头 / 复用已有条目（重载归零）"
+              }, null, 8, ["value"]),
+              m(h, {
+                label: "Jev 门控",
+                value: t.overview.research.jev.enabled ? t.overview.research.jev.keyConfigured ? `判定 ${t.overview.research.jev.calls} / 触发 ${t.overview.research.jev.triggered}` : "已开启 · 待配置密钥" : "未启用",
+                state: t.overview.research.jev.enabled ? t.overview.research.jev.keyConfigured ? "ok" : "warn" : "",
+                info: "判定=门控调用次数，触发=判定 TRUE 放行先查后写"
+              }, null, 8, ["value", "state"])
+            ])
           ])
         ])
       ])) : p("", !0);
     };
   }
-}), ot = /* @__PURE__ */ X(lt, [["__scopeId", "data-v-870eac41"]]), st = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
+}), pt = /* @__PURE__ */ te(kt, [["__scopeId", "data-v-05583d36"]]), $t = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
   __proto__: null,
-  default: ot
-}, Symbol.toStringTag, { value: "Module" })), it = { class: "cc" }, rt = ["disabled"], ut = {
+  default: pt
+}, Symbol.toStringTag, { value: "Module" })), St = { class: "cc" }, _t = ["disabled"], Ct = {
   key: 1,
   class: "hint"
-}, vt = { class: "layout" }, dt = {
+}, xt = { class: "layout" }, Mt = {
   class: "menu",
   "aria-label": "配置分类"
-}, ct = { class: "search" }, ft = {
+}, At = { class: "search" }, It = {
   key: 0,
   class: "menu-summary"
-}, yt = { class: "group" }, ht = ["aria-current", "disabled", "onClick"], gt = {
-  key: 1,
-  class: "hint"
-}, mt = { class: "content" }, bt = {
-  key: 0,
-  class: "hint"
-}, pt = {
-  key: 1,
-  class: "card"
-}, kt = { class: "hint" }, wt = { class: "actions" }, _t = {
-  class: "save-state",
-  role: "status"
-}, $t = ["disabled"], St = ["disabled"], xt = ["disabled"], Ct = {
+}, Ot = ["disabled"], Nt = { class: "group" }, Pt = ["aria-current", "disabled", "onClick"], Lt = {
   key: 2,
   class: "hint"
-}, Mt = {
-  key: 3,
+}, Tt = { class: "content" }, qt = {
+  key: 0,
   class: "hint"
-}, It = /* @__PURE__ */ ee({
+}, Et = {
+  key: 1,
+  class: "card"
+}, jt = { class: "hint" }, Dt = { class: "actions" }, Vt = {
+  class: "save-state",
+  role: "status"
+}, Bt = ["disabled"], Jt = ["disabled"], Rt = ["disabled"], Ft = {
+  key: 2,
+  class: "hint"
+}, zt = {
+  key: 3,
+  class: "landing"
+}, Ht = ["onClick"], ke = "hdsi.config-center.section", Ut = /* @__PURE__ */ ne({
   name: "ConfigCenterPage",
   __name: "ConfigCenterPage",
   props: {
     overview: {}
   },
   setup(t) {
-    const r = {
+    const u = {
       blindMode: ["enabled"]
-    }, l = g(""), k = g([]), u = g(""), f = g(null), w = g(null), o = g({}), a = g({}), m = g([]), i = g(!1), b = g(!1), S = g(!1), d = g(!1), P = g(""), C = g("ok"), B = g("");
-    let H = 0, V = !1;
-    ue(() => {
-      V = !0, H++;
+    }, a = _("");
+    function O() {
+      try {
+        return window.sessionStorage.getItem(ke) ?? "";
+      } catch {
+        return "";
+      }
+    }
+    function w(b) {
+      try {
+        window.sessionStorage.setItem(ke, b);
+      } catch {
+      }
+    }
+    const r = _([]), v = _(""), o = _(null), i = _(null), $ = _({}), f = _({}), S = _([]), d = _(!1), l = _(!1), L = _(!1), k = _(!1), j = _(""), z = _("ok"), J = _("");
+    let T = 0, P = !1;
+    fe(() => {
+      P = !0, T++;
     });
-    const j = F(() => k.value.flatMap((h) => h.sections.filter((c) => c.stage === 1))), D = F(() => B.value === u.value && JSON.stringify(o.value) !== JSON.stringify(a.value)), J = F(() => k.value.map((h) => ({ ...h, sections: h.sections.filter((c) => `${c.label} ${c.id} ${c.description}`.toLowerCase().includes(l.value.trim().toLowerCase())) })).filter((h) => h.sections.length)), I = () => !D.value || window.confirm("配置中心有未保存的修改。离开此页面？");
-    ye(I), he((h, c) => h.path === c.path || I());
-    async function T(h) {
-      h === u.value || d.value || D.value && !window.confirm("本节有尚未保存的修改。切换配置节将重新读取，继续切换？") || await v(h);
+    const R = Y(() => r.value.flatMap((b) => b.sections.filter((y) => y.stage === 1))), I = Y(() => J.value === v.value && JSON.stringify($.value) !== JSON.stringify(f.value)), D = Y(() => r.value.map((b) => ({ ...b, sections: b.sections.filter((y) => `${y.label} ${y.id} ${y.description}`.toLowerCase().includes(a.value.trim().toLowerCase())) })).filter((b) => b.sections.length)), A = () => !I.value || window.confirm("配置中心有未保存的修改。离开此页面？");
+    $e(A), Se((b, y) => b.path === y.path || A());
+    async function H(b) {
+      b === v.value || k.value || I.value && !window.confirm("本节有尚未保存的修改。切换配置节将重新读取，继续切换？") || (b ? await se(b) : (T++, v.value = J.value = "", o.value = null, i.value = null, d.value = !1, j.value = "", w("")));
     }
-    async function x() {
-      i.value || d.value || !u.value || D.value && !window.confirm("重新读取将以已保存配置替换本节的未保存修改。继续？") || await v(u.value);
+    async function C() {
+      d.value || k.value || !v.value || I.value && !window.confirm("重新读取将以已保存配置替换本节的未保存修改。继续？") || await se(v.value);
     }
-    function U(h, c, N = "") {
-      return Object.keys(h).flatMap((E) => {
-        const K = N ? `${N}.${E}` : E;
-        if (!(E in c)) return [K];
-        const q = h[E], Y = c[E];
-        return q && Y && typeof q == "object" && typeof Y == "object" && !Array.isArray(q) && !Array.isArray(Y) ? U(q, Y, K) : [];
+    function M(b, y, N = "") {
+      return Object.keys(b).flatMap((q) => {
+        const F = N ? `${N}.${q}` : q;
+        if (!(q in y)) return [F];
+        const E = b[q], G = y[q];
+        return E && G && typeof E == "object" && typeof G == "object" && !Array.isArray(E) && !Array.isArray(G) ? M(E, G, F) : [];
       });
     }
-    function _(h) {
-      for (const c of k.value) {
-        const N = c.sections.find((E) => E.id === h);
+    function c(b) {
+      for (const y of r.value) {
+        const N = y.sections.find((q) => q.id === b);
         if (N) return N;
       }
     }
-    async function $() {
-      if (!(V || b.value)) {
-        b.value = !0, S.value = !1, P.value = "";
+    async function V() {
+      if (!(P || l.value)) {
+        l.value = !0, L.value = !1, j.value = "";
         try {
-          const h = await W.readConfigCenter();
-          if (V) return;
-          if (!(h != null && h.ok) || !Array.isArray(h.menu)) throw new Error((h == null ? void 0 : h.error) ?? "菜单读取失败");
-          k.value = h.menu;
-          const c = j.value.find((N) => N.id === "runtime") ?? j.value[0];
-          c && await v(c.id);
-        } catch (h) {
-          V || (S.value = !0, P.value = `配置菜单读取失败：${(h == null ? void 0 : h.message) ?? String(h)}`, C.value = "warn");
+          const b = await Q.readConfigCenter();
+          if (P) return;
+          if (!(b != null && b.ok) || !Array.isArray(b.menu)) throw new Error((b == null ? void 0 : b.error) ?? "菜单读取失败");
+          r.value = b.menu;
+          const y = O();
+          R.value.some((N) => N.id === y) && await se(y);
+        } catch (b) {
+          P || (L.value = !0, j.value = `配置菜单读取失败：${(b == null ? void 0 : b.message) ?? String(b)}`, z.value = "warn");
         } finally {
-          V || (b.value = !1);
+          P || (l.value = !1);
         }
       }
     }
-    async function v(h, c = !1) {
-      const N = _(h);
-      if (V || !N || N.stage !== 1) return;
-      const E = ++H, K = () => !V && E === H && u.value === h;
-      u.value = h, f.value = N, B.value = "", w.value = null, o.value = {}, a.value = {}, m.value = [], i.value = !0, c || (P.value = "");
+    async function se(b, y = !1) {
+      const N = c(b);
+      if (P || !N || N.stage !== 1) return;
+      const q = ++T, F = () => !P && q === T && v.value === b;
+      v.value = b, w(b), o.value = N, J.value = "", i.value = null, $.value = {}, f.value = {}, S.value = [], d.value = !0, y || (j.value = "");
       try {
-        const q = await W.readConfigCenter(h);
-        if (!K()) return;
-        if (!q.ok) throw new Error(q.error ?? "读取失败");
-        if (!q.schema) throw new Error("配置结构读取失败");
-        w.value = new xe(q.schema);
-        const Y = q.values ?? {};
-        o.value = JSON.parse(JSON.stringify(Y)), a.value = JSON.parse(JSON.stringify(Y)), m.value = q.maskedFields ?? [], B.value = h;
-      } catch (q) {
-        K() && (P.value = `${c ? "配置已保存，重新读取失败：" : ""}${(q == null ? void 0 : q.message) ?? String(q)}`, C.value = "warn");
+        const E = await Q.readConfigCenter(b);
+        if (!F()) return;
+        if (!(E != null && E.ok)) throw new Error(E.error ?? "读取失败");
+        if (!E.schema) throw new Error("配置结构读取失败");
+        i.value = new Le(E.schema);
+        const G = E.values ?? {};
+        $.value = JSON.parse(JSON.stringify(G)), f.value = JSON.parse(JSON.stringify(G)), S.value = E.maskedFields ?? [], J.value = b;
+      } catch (E) {
+        F() && (j.value = `${y ? "配置已保存，重新读取失败：" : ""}${(E == null ? void 0 : E.message) ?? String(E)}`, z.value = "warn");
       } finally {
-        K() && (i.value = !1);
+        F() && (d.value = !1);
       }
     }
-    function R() {
-      return (r[u.value] ?? []).filter((c) => JSON.stringify(o.value[c]) !== JSON.stringify(a.value[c]));
+    function he() {
+      return (u[v.value] ?? []).filter((y) => JSON.stringify($.value[y]) !== JSON.stringify(f.value[y]));
     }
-    async function de(h = !1) {
-      if (V || d.value || i.value || !u.value || B.value !== u.value) return;
-      const c = u.value, N = H, E = () => !V && N === H && u.value === c, K = JSON.stringify(o.value), q = JSON.parse(K), Y = R();
-      if (!(Y.length && !window.confirm(`本次保存将修改影响排障能力的字段：${Y.join("、")}。
+    async function ue(b = !1) {
+      if (P || k.value || d.value || !v.value || J.value !== v.value) return;
+      const y = v.value, N = T, q = () => !P && N === T && v.value === y, F = JSON.stringify($.value), E = JSON.parse(F), G = he();
+      if (!(G.length && !window.confirm(`本次保存将修改影响排障能力的字段：${G.join("、")}。
 盲区模式开启后将关闭管理指令并隐藏运行日志，恢复需在 Koishi 配置中关闭该开关并重载。
 
 确认继续？`))) {
-        d.value = !0, P.value = "";
+        k.value = !0, j.value = "";
         try {
-          const te = await W.saveConfigCenter(c, q, { reload: h, unset: U(a.value, q) });
-          if (!E()) return;
-          if (!te.ok) throw new Error(te.error ?? "未知错误");
-          P.value = h ? "已保存，并已请求重载 HDSI。" : "已保存到 koishi.yml；配置更新已提交，插件将按需自动重载。", C.value = "ok", JSON.stringify(o.value) === K ? await v(c, !0) : a.value = JSON.parse(K);
-        } catch (te) {
-          E() && (P.value = `保存失败：${(te == null ? void 0 : te.message) ?? String(te)}`, C.value = "warn");
+          const U = await Q.saveConfigCenter(y, E, { reload: b, unset: M(f.value, E) });
+          if (!q()) return;
+          if (!(U != null && U.ok)) throw new Error(U.error ?? "未知错误");
+          if (j.value = b ? "已保存，并已请求重载 HDSI。" : "已保存到 koishi.yml；配置更新已提交，插件将按需自动重载。", z.value = "ok", JSON.stringify($.value) === F) {
+            const re = U.values ?? JSON.parse(F);
+            $.value = re, f.value = JSON.parse(JSON.stringify(re)), S.value = U.maskedFields ?? S.value;
+          } else
+            f.value = JSON.parse(F);
+        } catch (U) {
+          q() && (j.value = `保存失败：${(U == null ? void 0 : U.message) ?? String(U)}`, z.value = "warn");
         } finally {
-          V || (d.value = !1);
+          P || (k.value = !1);
         }
       }
     }
-    return ve($), (h, c) => (n(), s("div", it, [
-      c[8] || (c[8] = e("div", { class: "pg-head" }, [
+    return ye(V), (b, y) => (n(), s("div", St, [
+      y[10] || (y[10] = e("div", { class: "pg-head" }, [
         e("div", null, [
           e("h2", null, "配置中心"),
           e("div", { class: "sub" }, "按用途管理故事档案、模型、上下文与运行能力。修改仅在保存后写入配置文件。")
         ])
       ], -1)),
-      P.value ? (n(), s("div", {
+      j.value ? (n(), s("div", {
         key: 0,
-        class: Q(["notice", C.value]),
+        class: Z(["notice", z.value]),
         role: "status"
       }, [
-        O(y(P.value) + " ", 1),
-        S.value ? (n(), s("button", {
+        x(g(j.value) + " ", 1),
+        L.value ? (n(), s("button", {
           key: 0,
           class: "save",
-          disabled: b.value,
-          onClick: $
-        }, "重试", 8, rt)) : p("", !0)
+          disabled: l.value,
+          onClick: V
+        }, "重试", 8, _t)) : p("", !0)
       ], 2)) : p("", !0),
-      b.value && !k.value.length ? (n(), s("div", ut, "读取配置菜单……")) : p("", !0),
-      e("div", vt, [
-        e("aside", dt, [
-          e("label", ct, [
-            c[5] || (c[5] = e("span", null, "查找配置", -1)),
-            ke(e("input", {
-              "onUpdate:modelValue": c[0] || (c[0] = (N) => l.value = N),
+      l.value && !r.value.length ? (n(), s("div", Ct, "读取配置菜单……")) : p("", !0),
+      e("div", xt, [
+        e("aside", Mt, [
+          e("label", At, [
+            y[6] || (y[6] = e("span", null, "查找配置", -1)),
+            Ae(e("input", {
+              "onUpdate:modelValue": y[0] || (y[0] = (N) => a.value = N),
               type: "search",
               placeholder: "名称或字段，如 runtime",
               "aria-label": "查找配置节"
             }, null, 512), [
-              [we, l.value]
+              [Ie, a.value]
             ])
           ]),
-          k.value.length ? (n(), s("div", ft, y(j.value.length) + " 个配置节 · 全部可编辑", 1)) : p("", !0),
-          (n(!0), s(L, null, Z(J.value, (N) => (n(), s(L, {
+          r.value.length ? (n(), s("div", It, g(R.value.length) + " 个配置节 · 全部可编辑", 1)) : p("", !0),
+          r.value.length ? (n(), s("button", {
+            key: 1,
+            type: "button",
+            class: Z(["item", { on: !v.value }]),
+            disabled: k.value,
+            onClick: y[1] || (y[1] = (N) => H(""))
+          }, "配置总览", 10, Ot)) : p("", !0),
+          (n(!0), s(B, null, X(D.value, (N) => (n(), s(B, {
             key: N.id
           }, [
-            e("div", yt, y(N.label), 1),
-            (n(!0), s(L, null, Z(N.sections, (E) => (n(), s("button", {
-              key: E.id,
+            e("div", Nt, g(N.label), 1),
+            (n(!0), s(B, null, X(N.sections, (q) => (n(), s("button", {
+              key: q.id,
               type: "button",
-              class: Q(["item", { on: u.value === E.id }]),
-              "aria-current": u.value === E.id ? "page" : void 0,
-              disabled: d.value,
-              onClick: (K) => T(E.id)
-            }, y(E.label), 11, ht))), 128))
+              class: Z(["item", { on: v.value === q.id }]),
+              "aria-current": v.value === q.id ? "page" : void 0,
+              disabled: k.value,
+              onClick: (F) => H(q.id)
+            }, g(q.label), 11, Pt))), 128))
           ], 64))), 128)),
-          l.value && !J.value.length ? (n(), s("div", gt, "没有匹配的配置节。")) : p("", !0)
+          a.value && !D.value.length ? (n(), s("div", Lt, "没有匹配的配置节。")) : p("", !0)
         ]),
-        e("main", mt, [
-          i.value ? (n(), s("div", bt, "读取中……")) : f.value && w.value ? (n(), s("div", pt, [
+        e("main", Tt, [
+          d.value ? (n(), s("div", qt, "读取中……")) : o.value && i.value ? (n(), s("div", Et, [
             e("h3", null, [
-              c[6] || (c[6] = e("span", { class: "sq" }, null, -1)),
-              O(y(f.value.label), 1)
+              y[7] || (y[7] = e("span", { class: "sq" }, null, -1)),
+              x(g(o.value.label), 1)
             ]),
-            e("div", kt, [
-              O(y(f.value.description), 1),
-              m.value.length ? (n(), s(L, { key: 0 }, [
-                O(" 密钥已隐藏，保持占位值可保留原密钥；填写新值可替换。")
+            e("div", jt, [
+              x(g(o.value.description), 1),
+              S.value.length ? (n(), s(B, { key: 0 }, [
+                x(" 密钥已隐藏，保持占位值可保留原密钥；填写新值可替换。")
               ], 64)) : p("", !0)
             ]),
-            (n(), z(ne(Se).Form, {
-              onSubmit: c[1] || (c[1] = ie(() => {
+            (n(), K(ie(Pe).Form, {
+              onSubmit: y[2] || (y[2] = ce(() => {
               }, ["prevent"])),
-              key: B.value,
-              inert: d.value || void 0,
-              "aria-busy": d.value,
-              schema: w.value,
-              "model-value": o.value,
-              initial: a.value,
-              "onUpdate:modelValue": c[2] || (c[2] = (N) => o.value = N)
+              key: J.value,
+              inert: k.value || void 0,
+              "aria-busy": k.value,
+              schema: i.value,
+              "model-value": $.value,
+              initial: f.value,
+              "onUpdate:modelValue": y[3] || (y[3] = (N) => $.value = N)
             }, null, 8, ["inert", "aria-busy", "schema", "model-value", "initial"])),
-            e("div", wt, [
-              e("span", _t, y(d.value ? "正在写入配置…" : D.value ? "有未保存的修改" : "与已读取配置一致"), 1),
+            e("div", Dt, [
+              e("span", Vt, g(k.value ? "正在写入配置…" : I.value ? "有未保存的修改" : "与已读取配置一致"), 1),
               e("button", {
                 class: "secondary",
                 type: "button",
-                disabled: d.value || i.value,
-                onClick: x
-              }, "重新读取", 8, $t),
+                disabled: k.value || d.value,
+                onClick: C
+              }, "重新读取", 8, Bt),
               e("button", {
                 class: "save",
                 type: "button",
-                disabled: d.value || i.value || B.value !== u.value,
-                onClick: c[3] || (c[3] = (N) => de(!1))
-              }, y(d.value ? "保存中……" : "保存本节"), 9, St),
+                disabled: k.value || d.value || J.value !== v.value,
+                onClick: y[4] || (y[4] = (N) => ue(!1))
+              }, g(k.value ? "保存中……" : "保存本节"), 9, Jt),
               e("button", {
                 class: "secondary",
                 type: "button",
-                disabled: d.value || i.value || B.value !== u.value,
-                onClick: c[4] || (c[4] = (N) => de(!0))
-              }, "保存并重载", 8, xt)
+                disabled: k.value || d.value || J.value !== v.value,
+                onClick: y[5] || (y[5] = (N) => ue(!0))
+              }, "保存并重载", 8, Rt)
             ])
-          ])) : !i.value && u.value ? (n(), s("div", Ct, [
-            c[7] || (c[7] = O("本节读取失败。", -1)),
+          ])) : !d.value && v.value ? (n(), s("div", Ft, [
+            y[8] || (y[8] = x("本节读取失败。", -1)),
             e("button", {
               class: "secondary",
-              onClick: x
+              onClick: C
             }, "重新读取")
-          ])) : !i.value && k.value.length ? (n(), s("div", Mt, "选择配置节以查看和编辑。")) : p("", !0)
+          ])) : !d.value && r.value.length ? (n(), s("div", zt, [
+            y[9] || (y[9] = e("div", { class: "card intro" }, [
+              e("h3", null, "配置总览"),
+              e("p", null, "从故事档案和模型接入开始，再按写作需要调整提示词、上下文和推进方式。"),
+              e("p", null, "保存本节会写入配置并按需重载；保存并重载会主动重启插件。重载后保留本窗口正在编辑的配置节。")
+            ], -1)),
+            (n(!0), s(B, null, X(D.value, (N) => (n(), s("section", {
+              key: N.id,
+              class: "card"
+            }, [
+              e("h3", null, g(N.label), 1),
+              (n(!0), s(B, null, X(N.sections, (q) => (n(), s("button", {
+                key: q.id,
+                class: "section-link",
+                type: "button",
+                onClick: (F) => H(q.id)
+              }, [
+                e("strong", null, g(q.label), 1),
+                e("span", null, g(q.description), 1)
+              ], 8, Ht))), 128))
+            ]))), 128))
+          ])) : p("", !0)
         ])
       ])
     ]));
   }
-}), At = /* @__PURE__ */ X(It, [["__scopeId", "data-v-10c1f819"]]), Ot = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
+}), Kt = /* @__PURE__ */ te(Ut, [["__scopeId", "data-v-035f471e"]]), Wt = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
   __proto__: null,
-  default: At
-}, Symbol.toStringTag, { value: "Module" })), Pt = {
+  default: Kt
+}, Symbol.toStringTag, { value: "Module" })), Yt = {
   name: "EditField",
-  components: { InfoDot: ge },
+  components: { InfoDot: _e },
   props: {
     label: { type: String, required: !0 },
     modelValue: { type: [String, Number, Boolean], default: "" },
@@ -709,7 +950,7 @@ const M = /* @__PURE__ */ X(Ue, [["render", Ye], ["__scopeId", "data-v-4e9413bc"
   },
   emits: ["update:modelValue"],
   setup() {
-    return { inputId: fe() };
+    return { inputId: pe() };
   },
   data() {
     return { visible: !1 };
@@ -729,92 +970,92 @@ const M = /* @__PURE__ */ X(Ue, [["render", Ye], ["__scopeId", "data-v-4e9413bc"
       this.$emit("update:modelValue", !this.modelValue);
     }
   }
-}, Nt = { class: "field" }, jt = ["for"], Dt = { class: "field-input" }, qt = ["id", "value", "placeholder"], Et = ["id", "value"], Vt = ["value"], Lt = ["id", "aria-checked", "aria-label"], Tt = ["id", "value", "min", "max"], Rt = ["id", "type", "value", "placeholder"];
-function Bt(t, r, l, k, u, f) {
-  const w = le("InfoDot");
-  return n(), s("div", Nt, [
+}, Gt = { class: "field" }, Qt = ["for"], Xt = { class: "field-input" }, Zt = ["id", "value", "placeholder"], el = ["id", "value"], tl = ["value"], ll = ["id", "aria-checked", "aria-label"], nl = ["id", "value", "min", "max"], al = ["id", "type", "value", "placeholder"];
+function sl(t, u, a, O, w, r) {
+  const v = ae("InfoDot");
+  return n(), s("div", Gt, [
     e("label", {
       class: "field-label",
-      for: k.inputId
+      for: O.inputId
     }, [
-      O(y(l.label) + " ", 1),
-      l.info || l.range ? (n(), z(w, {
+      x(g(a.label) + " ", 1),
+      a.info || a.range ? (n(), K(v, {
         key: 0,
-        info: l.info,
-        range: l.range
+        info: a.info,
+        range: a.range
       }, null, 8, ["info", "range"])) : p("", !0)
-    ], 8, jt),
-    e("div", Dt, [
-      l.textarea ? (n(), s("textarea", {
+    ], 8, Qt),
+    e("div", Xt, [
+      a.textarea ? (n(), s("textarea", {
         key: 0,
-        id: k.inputId,
-        value: String(l.modelValue ?? ""),
-        placeholder: l.placeholder,
+        id: O.inputId,
+        value: String(a.modelValue ?? ""),
+        placeholder: a.placeholder,
         class: "input area",
-        onInput: r[0] || (r[0] = (o) => t.$emit("update:modelValue", o.target.value))
-      }, null, 40, qt)) : l.type === "select" ? (n(), s("select", {
+        onInput: u[0] || (u[0] = (o) => t.$emit("update:modelValue", o.target.value))
+      }, null, 40, Zt)) : a.type === "select" ? (n(), s("select", {
         key: 1,
-        id: k.inputId,
-        value: String(l.modelValue),
+        id: O.inputId,
+        value: String(a.modelValue),
         class: "input",
-        onChange: r[1] || (r[1] = (o) => t.$emit("update:modelValue", o.target.value))
+        onChange: u[1] || (u[1] = (o) => t.$emit("update:modelValue", o.target.value))
       }, [
-        (n(!0), s(L, null, Z(l.options, (o) => (n(), s("option", {
+        (n(!0), s(B, null, X(a.options, (o) => (n(), s("option", {
           key: o.value,
           value: o.value
-        }, y(o.label), 9, Vt))), 128))
-      ], 40, Et)) : l.type === "boolean" ? (n(), s("button", {
+        }, g(o.label), 9, tl))), 128))
+      ], 40, el)) : a.type === "boolean" ? (n(), s("button", {
         key: 2,
-        id: k.inputId,
+        id: O.inputId,
         type: "button",
         role: "switch",
-        "aria-checked": !!l.modelValue,
-        "aria-label": l.label,
-        class: Q(["toggle", { on: l.modelValue }]),
-        onClick: r[2] || (r[2] = (...o) => f.onBool && f.onBool(...o))
-      }, [...r[6] || (r[6] = [
+        "aria-checked": !!a.modelValue,
+        "aria-label": a.label,
+        class: Z(["toggle", { on: a.modelValue }]),
+        onClick: u[2] || (u[2] = (...o) => r.onBool && r.onBool(...o))
+      }, [...u[6] || (u[6] = [
         e("span", { class: "toggle-dot" }, null, -1)
-      ])], 10, Lt)) : l.type === "number" ? (n(), s("input", {
+      ])], 10, ll)) : a.type === "number" ? (n(), s("input", {
         key: 3,
-        id: k.inputId,
+        id: O.inputId,
         type: "number",
-        value: Number(l.modelValue),
-        min: l.min,
-        max: l.max,
+        value: Number(a.modelValue),
+        min: a.min,
+        max: a.max,
         class: "input",
-        onInput: r[3] || (r[3] = (o) => t.$emit("update:modelValue", Number(o.target.value)))
-      }, null, 40, Tt)) : (n(), s("input", {
+        onInput: u[3] || (u[3] = (o) => t.$emit("update:modelValue", Number(o.target.value)))
+      }, null, 40, nl)) : (n(), s("input", {
         key: 4,
-        id: k.inputId,
-        type: l.secret && !u.visible ? "password" : "text",
-        value: String(l.modelValue ?? ""),
-        placeholder: l.placeholder,
+        id: O.inputId,
+        type: a.secret && !w.visible ? "password" : "text",
+        value: String(a.modelValue ?? ""),
+        placeholder: a.placeholder,
         class: "input",
-        onInput: r[4] || (r[4] = (o) => t.$emit("update:modelValue", o.target.value))
-      }, null, 40, Rt)),
-      l.secret ? (n(), s("button", {
+        onInput: u[4] || (u[4] = (o) => t.$emit("update:modelValue", o.target.value))
+      }, null, 40, al)),
+      a.secret ? (n(), s("button", {
         key: 5,
         type: "button",
         class: "reveal",
-        onClick: r[5] || (r[5] = (o) => u.visible = !u.visible)
-      }, y(u.visible ? "隐藏" : "显示"), 1)) : p("", !0)
+        onClick: u[5] || (u[5] = (o) => w.visible = !w.visible)
+      }, g(w.visible ? "隐藏" : "显示"), 1)) : p("", !0)
     ])
   ]);
 }
-const Jt = /* @__PURE__ */ X(Pt, [["render", Bt], ["__scopeId", "data-v-47b39beb"]]), zt = {
+const ol = /* @__PURE__ */ te(Yt, [["render", sl], ["__scopeId", "data-v-47b39beb"]]), il = {
   key: 1,
   class: "notice warn"
-}, Ht = { class: "card" }, Ft = { class: "hint" }, Ut = {
+}, ul = { class: "card" }, rl = { class: "hint" }, vl = {
   key: 0,
   class: "hint"
-}, Kt = { class: "actions" }, Wt = ["disabled"], Yt = ["disabled"], Gt = /* @__PURE__ */ ee({
+}, dl = { class: "actions" }, cl = ["disabled"], fl = ["disabled"], yl = /* @__PURE__ */ ne({
   name: "ConfigPage",
   __name: "ConfigPage",
   props: {
     overview: {}
   },
   setup(t) {
-    const r = [
+    const u = [
       {
         id: "story",
         label: "故事设定",
@@ -832,93 +1073,93 @@ const Jt = /* @__PURE__ */ X(Pt, [["render", Bt], ["__scopeId", "data-v-47b39beb
           { key: "timezone", label: "时区", type: "text", info: "IANA 时区", range: "如 Asia/Shanghai / America/New_York", placeholder: "Asia/Shanghai" }
         ]
       }
-    ], l = g("story"), k = () => r.find((j) => j.id === l.value), u = _e({}), f = g(!1), w = g(!1), o = g(""), a = g("ok"), m = g(""), i = F(() => !!d.value && JSON.stringify(u) !== m.value), b = () => !i.value || window.confirm("当前故事有未保存的修改。离开此页面？");
-    ye(b), he((j, D) => j.path === D.path || b());
-    async function S() {
-      i.value && !window.confirm("重新读取将使用服务器上的故事设定替换当前修改。继续？") || await B(l.value);
+    ], a = _("story"), O = () => u.find((T) => T.id === a.value), w = Oe({}), r = _(!1), v = _(!1), o = _(""), i = _("ok"), $ = _(""), f = Y(() => !!l.value && JSON.stringify(w) !== $.value), S = () => !f.value || window.confirm("当前故事有未保存的修改。离开此页面？");
+    $e(S), Se((T, P) => T.path === P.path || S());
+    async function d() {
+      f.value && !window.confirm("重新读取将使用服务器上的故事设定替换当前修改。继续？") || await j(a.value);
     }
-    const d = g("");
-    let P = 0, C = !1;
-    ue(() => {
-      C = !0, P++;
+    const l = _("");
+    let L = 0, k = !1;
+    fe(() => {
+      k = !0, L++;
     });
-    async function B(j) {
-      var T;
-      const D = r.find((x) => x.id === j);
-      if (C || !D) return;
-      const J = ++P, I = () => !C && J === P && l.value === j;
-      l.value = j, d.value = "";
-      for (const x of Object.keys(u)) delete u[x];
-      f.value = !0, o.value = "";
+    async function j(T) {
+      var D;
+      const P = u.find((A) => A.id === T);
+      if (k || !P) return;
+      const R = ++L, I = () => !k && R === L && a.value === T;
+      a.value = T, l.value = "";
+      for (const A of Object.keys(w)) delete w[A];
+      r.value = !0, o.value = "";
       try {
-        const x = await W.readConfig(j);
-        if (!x) throw new Error("Console 连接尚未就绪");
-        if (!x.ok) throw new Error(x.error ?? "读取失败");
+        const A = await Q.readConfig(T);
+        if (!A) throw new Error("Console 连接尚未就绪");
+        if (!A.ok) throw new Error(A.error ?? "读取失败");
         if (!I()) return;
-        for (const U of D.fields) {
-          const _ = (T = x.values) == null ? void 0 : T[U.key];
-          u[U.key] = U.type === "boolean" ? _ === !0 : _ ?? (U.type === "number" ? 0 : "");
+        for (const H of P.fields) {
+          const C = (D = A.values) == null ? void 0 : D[H.key];
+          w[H.key] = H.type === "boolean" ? C === !0 : C ?? (H.type === "number" ? 0 : "");
         }
-        m.value = JSON.stringify(u), d.value = j;
-      } catch (x) {
-        I() && (o.value = (x == null ? void 0 : x.message) ?? String(x), a.value = "warn");
+        $.value = JSON.stringify(w), l.value = T;
+      } catch (A) {
+        I() && (o.value = (A == null ? void 0 : A.message) ?? String(A), i.value = "warn");
       } finally {
-        I() && (f.value = !1);
+        I() && (r.value = !1);
       }
     }
-    async function H() {
-      if (C || w.value || f.value || d.value !== l.value) return;
-      const j = l.value, D = P, J = () => !C && D === P && l.value === j, I = {};
-      for (const x of k().fields) I[x.key] = u[x.key];
-      const T = JSON.parse(JSON.stringify(I));
-      w.value = !0, o.value = "";
+    async function z() {
+      if (k || v.value || r.value || l.value !== a.value) return;
+      const T = a.value, P = L, R = () => !k && P === L && a.value === T, I = {};
+      for (const A of O().fields) I[A.key] = w[A.key];
+      const D = JSON.parse(JSON.stringify(I));
+      v.value = !0, o.value = "";
       try {
-        const x = await W.saveConfig(j, T);
-        if (!J()) return;
-        if (!x.ok) throw new Error(x.error ?? "未知错误");
-        m.value = JSON.stringify(T), o.value = `已写入 ${x.applied ?? 0} 项。${j === "story" ? "已保存到当前故事，后续写作立即使用。" : "已写入 koishi.yml，插件热更新生效。"}`, a.value = "ok";
-      } catch (x) {
-        J() && (o.value = `保存失败：${(x == null ? void 0 : x.message) ?? String(x)}`, a.value = "warn");
+        const A = await Q.saveConfig(T, D);
+        if (!R()) return;
+        if (!A.ok) throw new Error(A.error ?? "未知错误");
+        $.value = JSON.stringify(D), o.value = `已写入 ${A.applied ?? 0} 项。${T === "story" ? "已保存到当前故事，后续写作立即使用。" : "已写入 koishi.yml，插件热更新生效。"}`, i.value = "ok";
+      } catch (A) {
+        R() && (o.value = `保存失败：${(A == null ? void 0 : A.message) ?? String(A)}`, i.value = "warn");
       } finally {
-        C || (w.value = !1);
+        k || (v.value = !1);
       }
     }
-    const V = () => l.value === "story" && d.value === "story" && !u["character.name"] && !f.value;
-    return ve(() => B("story")), (j, D) => {
-      const J = le("router-link");
+    const J = () => a.value === "story" && l.value === "story" && !w["character.name"] && !r.value;
+    return ye(() => j("story")), (T, P) => {
+      const R = ae("router-link");
       return n(), s("div", null, [
-        D[2] || (D[2] = e("div", { class: "pg-head" }, [
+        P[2] || (P[2] = e("div", { class: "pg-head" }, [
           e("div", null, [
             e("h2", null, "当前故事"),
             e("div", { class: "sub" }, "编辑当前故事的设定，保存到故事数据库。新故事的默认档案在配置中心设置。")
           ])
         ], -1)),
-        A(J, {
+        m(R, {
           to: "/hdsi/config-center",
           class: "redirect-card"
         }, {
-          default: re(() => [...D[0] || (D[0] = [
-            O("模型、上下文预算、运行时与考据设置 → 配置中心", -1)
+          default: le(() => [...P[0] || (P[0] = [
+            x("模型、上下文预算、运行时与考据设置 → 配置中心", -1)
           ])]),
           _: 1
         }),
         o.value ? (n(), s("div", {
           key: 0,
-          class: Q(["notice", a.value]),
+          class: Z(["notice", i.value]),
           role: "status"
-        }, y(o.value), 3)) : p("", !0),
-        V() ? (n(), s("div", zt, "当前没有活跃故事——先在聊天里用 interlude.story.start 启动，再回来编辑故事设定。")) : p("", !0),
-        e("div", Ht, [
+        }, g(o.value), 3)) : p("", !0),
+        J() ? (n(), s("div", il, "当前没有活跃故事——先在聊天里用 interlude.story.start 启动，再回来编辑故事设定。")) : p("", !0),
+        e("div", ul, [
           e("h3", null, [
-            D[1] || (D[1] = e("span", { class: "sq" }, null, -1)),
-            O(y(k().label), 1)
+            P[1] || (P[1] = e("span", { class: "sq" }, null, -1)),
+            x(g(O().label), 1)
           ]),
-          e("div", Ft, y(k().hint), 1),
-          f.value ? (n(), s("div", Ut, "读取中……")) : d.value === l.value && !V() ? (n(), s(L, { key: 1 }, [
-            (n(!0), s(L, null, Z(k().fields, (I) => (n(), z(Jt, {
+          e("div", rl, g(O().hint), 1),
+          r.value ? (n(), s("div", vl, "读取中……")) : l.value === a.value && !J() ? (n(), s(B, { key: 1 }, [
+            (n(!0), s(B, null, X(O().fields, (I) => (n(), K(ol, {
               key: I.key,
-              modelValue: u[I.key],
-              "onUpdate:modelValue": (T) => u[I.key] = T,
+              modelValue: w[I.key],
+              "onUpdate:modelValue": (D) => w[I.key] = D,
               label: I.label,
               type: I.type,
               options: I.options,
@@ -930,140 +1171,140 @@ const Jt = /* @__PURE__ */ X(Pt, [["render", Bt], ["__scopeId", "data-v-47b39beb
               secret: I.secret,
               placeholder: I.placeholder
             }, null, 8, ["modelValue", "onUpdate:modelValue", "label", "type", "options", "info", "range", "min", "max", "textarea", "secret", "placeholder"]))), 128)),
-            e("div", Kt, [
+            e("div", dl, [
               e("button", {
                 class: "refresh",
-                disabled: f.value || w.value,
-                onClick: S
-              }, "重新读取", 8, Wt),
+                disabled: r.value || v.value,
+                onClick: d
+              }, "重新读取", 8, cl),
               e("button", {
                 class: "save",
-                disabled: w.value || f.value || d.value !== l.value,
-                onClick: H
-              }, y(w.value ? "写入中……" : "保存故事设定"), 9, Yt)
+                disabled: v.value || r.value || l.value !== a.value,
+                onClick: z
+              }, g(v.value ? "写入中……" : "保存故事设定"), 9, fl)
             ])
           ], 64)) : (n(), s("button", {
             key: 2,
             type: "button",
             class: "save",
-            onClick: S
+            onClick: d
           }, "重新读取"))
         ])
       ]);
     };
   }
-}), Qt = /* @__PURE__ */ X(Gt, [["__scopeId", "data-v-8946789c"]]), Xt = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
+}), hl = /* @__PURE__ */ te(yl, [["__scopeId", "data-v-8946789c"]]), gl = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
   __proto__: null,
-  default: Qt
-}, Symbol.toStringTag, { value: "Module" })), Zt = { key: 0 }, ea = { class: "grid" }, ta = { class: "card" }, aa = { class: "card" }, na = {
+  default: hl
+}, Symbol.toStringTag, { value: "Module" })), ml = { key: 0 }, bl = { class: "grid" }, wl = { class: "card" }, kl = { class: "card" }, pl = {
   key: 0,
   class: "notice info",
   style: { "margin-top": "8px" }
-}, la = /* @__PURE__ */ ee({
+}, $l = /* @__PURE__ */ ne({
   name: "DeskPage",
   __name: "DeskPage",
   props: {
     overview: {}
   },
   setup(t) {
-    return (r, l) => t.overview ? (n(), s("div", Zt, [
-      l[2] || (l[2] = e("div", { class: "pg-head" }, [
+    return (u, a) => t.overview ? (n(), s("div", ml, [
+      a[2] || (a[2] = e("div", { class: "pg-head" }, [
         e("div", null, [
           e("h2", null, "考据案头"),
           e("div", { class: "sub" }, "经核实的写作参考；资料可供作者使用，主角知情范围由剧情证据决定。")
         ])
       ], -1)),
-      e("div", ea, [
-        e("div", ta, [
-          l[0] || (l[0] = e("h3", null, [
+      e("div", bl, [
+        e("div", wl, [
+          a[0] || (a[0] = e("h3", null, [
             e("span", { class: "sq" }),
-            O("案头概况")
+            x("案头概况")
           ], -1)),
-          A(M, {
+          m(h, {
             label: "在架条目",
             value: t.overview.research.deskEntries,
             info: "在架的核实事实数（稳定+易变，TTL 过期淘汰）",
             range: "案头容量 2-32，默认 8"
           }, null, 8, ["value"]),
-          A(M, {
+          m(h, {
             label: "搜索后端",
             value: t.overview.research.backend,
             state: "acc",
             info: "考据检索的网络后端",
             range: "auto/tavily/bocha/searxng/duckduckgo-html"
           }, null, 8, ["value"]),
-          A(M, {
+          m(h, {
             label: "查询缓存",
             value: `${t.overview.research.cache.size} 条（命中 ${t.overview.research.cache.hits} / 未命中 ${t.overview.research.cache.misses}）`,
             info: "搜索查询结果缓存——命中可省一次网络检索"
           }, null, 8, ["value"]),
-          A(M, {
+          m(h, {
             label: "累计写入 / 复用 / 淘汰",
             value: `${t.overview.research.counters.offered} / ${t.overview.research.counters.reused} / ${t.overview.research.counters.evicted}`,
             info: "写入案头 / 复用已有条目 / 容量与 TTL 淘汰（重载归零）"
           }, null, 8, ["value"])
         ]),
-        e("div", aa, [
-          l[1] || (l[1] = e("h3", null, [
+        e("div", kl, [
+          a[1] || (a[1] = e("h3", null, [
             e("span", { class: "sq" }),
-            O("Jev 决策门控")
+            x("Jev 决策门控")
           ], -1)),
-          A(M, {
+          m(h, {
             label: "状态",
             value: t.overview.research.jev.enabled ? t.overview.research.jev.keyConfigured ? "已启用" : "已开启 · 待配置密钥" : "未启用",
             state: t.overview.research.jev.enabled ? t.overview.research.jev.keyConfigured ? "ok" : "warn" : "",
             info: "自动生活推进前的考据判定；同时受考据总开关控制"
           }, null, 8, ["value", "state"]),
-          A(M, {
+          m(h, {
             label: "判定 / 触发",
             value: `${t.overview.research.jev.calls} / ${t.overview.research.jev.triggered}`,
             info: "判定=门控调用次数，触发=判定 TRUE 放行先查后写（重载归零）"
           }, null, 8, ["value"]),
-          t.overview.research.jev.enabled ? p("", !0) : (n(), s("div", na, "如需在生活推进前判定是否查证，可在配置中心的「考据 Agent」中配置 Jev 密钥并启用门控。"))
+          t.overview.research.jev.enabled ? p("", !0) : (n(), s("div", pl, "如需在生活推进前判定是否查证，可在配置中心的「考据 Agent」中配置 Jev 密钥并启用门控。"))
         ])
       ]),
-      l[3] || (l[3] = e("div", {
+      a[3] || (a[3] = e("div", {
         class: "notice info",
         style: { "margin-top": "12px" }
       }, "当前页展示案头数量、缓存与门控的汇总状态；资料的使用情况可结合写作记录和考据日志核对。", -1))
     ])) : p("", !0);
   }
-}), oa = /* @__PURE__ */ X(la, [["__scopeId", "data-v-9c6e59c1"]]), sa = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
+}), Sl = /* @__PURE__ */ te($l, [["__scopeId", "data-v-9c6e59c1"]]), _l = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
   __proto__: null,
-  default: oa
-}, Symbol.toStringTag, { value: "Module" })), ia = { class: "pg-head" }, ra = { class: "sub" }, ua = ["disabled"], va = {
+  default: Sl
+}, Symbol.toStringTag, { value: "Module" })), Cl = { class: "pg-head" }, xl = { class: "sub" }, Ml = ["disabled"], Al = {
   key: 0,
   class: "error",
   role: "alert"
-}, da = {
+}, Il = {
   key: 1,
   class: "notice",
   role: "status"
-}, ca = {
+}, Ol = {
   key: 2,
   class: "empty"
-}, fa = {
+}, Nl = {
   key: 3,
   class: "empty"
-}, ya = { class: "list" }, ha = ["aria-expanded", "disabled", "onClick"], ga = ["data-kind"], ma = { class: "target" }, ba = { class: "head" }, pa = ["data-status"], ka = { class: "time" }, wa = {
+}, Pl = { class: "list" }, Ll = ["aria-expanded", "disabled", "onClick"], Tl = ["data-kind"], ql = { class: "target" }, El = { class: "head" }, jl = ["data-status"], Dl = { class: "time" }, Vl = {
   key: 0,
   class: "detail"
-}, _a = { key: 0 }, $a = {
+}, Bl = { key: 0 }, Jl = {
   key: 4,
   class: "quote"
-}, Sa = {
+}, Rl = {
   key: 5,
   class: "ops"
-}, xa = {
+}, Fl = {
   key: 0,
   class: "verify-hint"
-}, Ca = ["disabled"], Ma = ["disabled"], Ia = ["disabled"], Aa = ["onClick"], Oa = ["disabled"], Pa = /* @__PURE__ */ ee({
+}, zl = ["disabled"], Hl = ["disabled"], Ul = ["disabled"], Kl = ["onClick"], Wl = ["disabled"], Yl = /* @__PURE__ */ ne({
   name: "ActionsPage",
   __name: "ActionsPage",
   setup(t) {
-    const r = g([]), l = g(0), k = g(void 0), u = g(!1), f = g(""), w = g(""), o = g(""), a = g(null), m = g(!1), i = g(!1);
-    let b = !1, S = 0, d = 0;
-    const P = { action: "当前动作", plan: "人物计划", "fixed-delay": "确定延迟" }, C = {
+    const u = _([]), a = _(0), O = _(void 0), w = _(!1), r = _(""), v = _(""), o = _(""), i = _(null), $ = _(!1), f = _(!1);
+    let S = !1, d = 0, l = 0;
+    const L = { action: "当前动作", plan: "人物计划", "fixed-delay": "确定延迟" }, k = {
       pending: "待执行",
       delivered: "已送达",
       partial: "部分送达",
@@ -1071,10 +1312,10 @@ const Jt = /* @__PURE__ */ X(Pt, [["render", Bt], ["__scopeId", "data-v-47b39beb
       cancelled: "已取消",
       unknown: "待核实",
       "pending-plan": "计划待处理"
-    }, B = F(() => a.value ? a.value.kind !== "action" ? !0 : a.value.segments.some((_) => _.status === "pending" || _.status === "unknown") : !1), H = F(() => {
-      var _;
-      return !!((_ = a.value) != null && _.segments.some(($) => $.status === "unknown"));
-    }), V = {
+    }, j = Y(() => i.value ? i.value.kind !== "action" ? !0 : i.value.segments.some((C) => C.status === "pending" || C.status === "unknown") : !1), z = Y(() => {
+      var C;
+      return !!((C = i.value) != null && C.segments.some((M) => M.status === "unknown"));
+    }), J = {
       "plan-cancelled": "计划已取消",
       "segments-cancelled": "分段已取消",
       "nothing-pending": "没有待取消的分段",
@@ -1085,7 +1326,7 @@ const Jt = /* @__PURE__ */ X(Pt, [["render", Bt], ["__scopeId", "data-v-47b39beb
       "already-completed": "已完成，无需取消",
       "not-found": "记录已移除或不存在",
       "no-story": "没有活跃故事"
-    }, j = {
+    }, T = {
       "console-cancel": "管理员取消后续",
       "manual-verified-delivered": "管理员已核实送达",
       "manual-verified-not-sent": "管理员已核实未发送",
@@ -1099,292 +1340,292 @@ const Jt = /* @__PURE__ */ X(Pt, [["render", Bt], ["__scopeId", "data-v-47b39beb
       "delivery-unconfirmed-retry-scheduled": "投递尚未确认，已安排重试",
       "group-not-allowed": "当前群聊未获发送许可"
     };
-    function D(_) {
-      return j[_] ? `${j[_]}（${_}）` : _;
+    function P(C) {
+      return T[C] ? `${T[C]}（${C}）` : C;
     }
-    async function J(_) {
-      if (i.value) return;
-      const $ = o.value;
-      i.value = !0, w.value = "", f.value = "";
+    async function R(C) {
+      if (f.value) return;
+      const M = o.value;
+      f.value = !0, v.value = "", r.value = "";
       try {
-        const v = await _();
-        if (b) return;
-        if (!v.ok) throw new Error(V[v.reason] ?? v.reason ?? "操作失败");
-        w.value = V[v.reason] ?? (v.changed ? "操作已完成。" : "状态已经更新，本次无需变更。"), v.changed > 0 && (await T(!0), !b && o.value === $ && await I($));
-      } catch (v) {
-        b || (f.value = v instanceof Error ? v.message : String(v));
+        const c = await C();
+        if (S) return;
+        if (!c.ok) throw new Error(J[c.reason] ?? c.reason ?? "操作失败");
+        v.value = J[c.reason] ?? (c.changed ? "操作已完成。" : "状态已经更新，本次无需变更。"), c.changed > 0 && (await D(!0), !S && o.value === M && await I(M));
+      } catch (c) {
+        S || (r.value = c instanceof Error ? c.message : String(c));
       } finally {
-        b || (i.value = !1);
+        S || (f.value = !1);
       }
     }
-    async function I(_) {
-      f.value = "";
-      const $ = ++d;
-      m.value = !0, a.value = null;
+    async function I(C) {
+      r.value = "";
+      const M = ++l;
+      $.value = !0, i.value = null;
       try {
-        const v = await W.actionDetail(_);
-        if (b || $ !== d || o.value !== _) return;
-        if (!v) throw new Error("该动作已不在当前记录中，请刷新列表。");
-        a.value = v;
-      } catch (v) {
-        !b && $ === d && (f.value = v instanceof Error ? v.message : String(v));
+        const c = await Q.actionDetail(C);
+        if (S || M !== l || o.value !== C) return;
+        if (!c) throw new Error("该动作已不在当前记录中，请刷新列表。");
+        i.value = c;
+      } catch (c) {
+        !S && M === l && (r.value = c instanceof Error ? c.message : String(c));
       } finally {
-        !b && $ === d && (m.value = !1);
+        !S && M === l && ($.value = !1);
       }
     }
-    async function T(_ = !0) {
-      const $ = ++S;
-      u.value = !0, f.value = "";
+    async function D(C = !0) {
+      const M = ++d;
+      w.value = !0, r.value = "";
       try {
-        const v = await W.actionsList(_ ? void 0 : k.value);
-        if (!v) throw new Error("Console 连接尚未就绪");
-        if (b || $ !== S) return;
-        r.value = _ ? v.rows : [...r.value, ...v.rows], l.value = v.total, k.value = v.cursor, _ && o.value && !r.value.some((R) => R.id === o.value) && (o.value = "", a.value = null, d++, m.value = !1);
-      } catch (v) {
-        !b && $ === S && (f.value = String(v));
+        const c = await Q.actionsList(C ? void 0 : O.value);
+        if (!c) throw new Error("Console 连接尚未就绪");
+        if (S || M !== d) return;
+        u.value = C ? c.rows : [...u.value, ...c.rows], a.value = c.total, O.value = c.cursor, C && o.value && !u.value.some((V) => V.id === o.value) && (o.value = "", i.value = null, l++, $.value = !1);
+      } catch (c) {
+        !S && M === d && (r.value = String(c));
       } finally {
-        !b && $ === S && (u.value = !1);
+        !S && M === d && (w.value = !1);
       }
     }
-    async function x(_) {
-      if (!i.value) {
-        if (f.value = "", w.value = "", o.value === _) {
-          o.value = "", a.value = null, d++, m.value = !1;
+    async function A(C) {
+      if (!f.value) {
+        if (r.value = "", v.value = "", o.value === C) {
+          o.value = "", i.value = null, l++, $.value = !1;
           return;
         }
-        o.value = _, await I(_);
+        o.value = C, await I(C);
       }
     }
-    function U(_) {
-      if (!_) return "—";
-      const $ = new Date(_);
-      return Number.isNaN($.getTime()) ? "—" : $.toLocaleString();
+    function H(C) {
+      if (!C) return "—";
+      const M = new Date(C);
+      return Number.isNaN(M.getTime()) ? "—" : M.toLocaleString();
     }
-    return ve(() => void T()), ue(() => {
-      b = !0, S++, d++;
-    }), (_, $) => (n(), s("div", null, [
-      e("div", ia, [
+    return ye(() => void D()), fe(() => {
+      S = !0, d++, l++;
+    }), (C, M) => (n(), s("div", null, [
+      e("div", Cl, [
         e("div", null, [
-          $[5] || ($[5] = e("h2", null, "通信动作", -1)),
-          e("div", ra, "查看作者动作、投递结果与未来计划；管理员可取消后续分段或核实未知回执。当前窗口共 " + y(l.value) + " 条。", 1)
+          M[5] || (M[5] = e("h2", null, "通信动作", -1)),
+          e("div", xl, "查看作者动作、投递结果与未来计划；管理员可取消后续分段或核实未知回执。当前窗口共 " + g(a.value) + " 条。", 1)
         ]),
         e("button", {
           class: "refresh",
-          disabled: u.value,
-          onClick: $[0] || ($[0] = (v) => T(!0))
-        }, "刷新", 8, ua)
+          disabled: w.value,
+          onClick: M[0] || (M[0] = (c) => D(!0))
+        }, "刷新", 8, Ml)
       ]),
-      f.value ? (n(), s("div", va, y(f.value), 1)) : p("", !0),
-      w.value ? (n(), s("div", da, y(w.value), 1)) : p("", !0),
-      u.value && !r.value.length ? (n(), s("div", ca, "正在读取通信动作…")) : p("", !0),
-      !u.value && !r.value.length && !f.value ? (n(), s("div", fa, "暂无动作记录。")) : p("", !0),
-      e("div", ya, [
-        (n(!0), s(L, null, Z(r.value, (v) => (n(), s("div", {
-          key: v.id,
-          class: Q(["row", { open: o.value === v.id }])
+      r.value ? (n(), s("div", Al, g(r.value), 1)) : p("", !0),
+      v.value ? (n(), s("div", Il, g(v.value), 1)) : p("", !0),
+      w.value && !u.value.length ? (n(), s("div", Ol, "正在读取通信动作…")) : p("", !0),
+      !w.value && !u.value.length && !r.value ? (n(), s("div", Nl, "暂无动作记录。")) : p("", !0),
+      e("div", Pl, [
+        (n(!0), s(B, null, X(u.value, (c) => (n(), s("div", {
+          key: c.id,
+          class: Z(["row", { open: o.value === c.id }])
         }, [
           e("button", {
             type: "button",
             class: "row-main",
-            "aria-expanded": o.value === v.id,
-            disabled: i.value,
-            onClick: (R) => x(v.id)
+            "aria-expanded": o.value === c.id,
+            disabled: f.value,
+            onClick: (V) => A(c.id)
           }, [
             e("span", {
               class: "kind",
-              "data-kind": v.kind
-            }, y(P[v.kind] ?? v.kind), 9, ga),
-            e("span", ma, y(v.target), 1),
-            e("span", ba, y(v.head), 1),
+              "data-kind": c.kind
+            }, g(L[c.kind] ?? c.kind), 9, Tl),
+            e("span", ql, g(c.target), 1),
+            e("span", El, g(c.head), 1),
             e("span", {
               class: "status",
-              "data-status": v.status
+              "data-status": c.status
             }, [
-              O(y(C[v.status] ?? v.status), 1),
-              v.segmentCount ? (n(), s(L, { key: 0 }, [
-                O("（" + y(v.deliveredCount) + "/" + y(v.segmentCount) + "）", 1)
+              x(g(k[c.status] ?? c.status), 1),
+              c.segmentCount ? (n(), s(B, { key: 0 }, [
+                x("（" + g(c.deliveredCount) + "/" + g(c.segmentCount) + "）", 1)
               ], 64)) : p("", !0)
-            ], 8, pa),
-            e("span", ka, y(U(v.updatedAt)), 1)
-          ], 8, ha),
-          o.value === v.id ? (n(), s("div", wa, [
-            m.value ? (n(), s("div", _a, "读取中…")) : a.value ? (n(), s(L, { key: 1 }, [
-              A(M, {
+            ], 8, jl),
+            e("span", Dl, g(H(c.updatedAt)), 1)
+          ], 8, Ll),
+          o.value === c.id ? (n(), s("div", Vl, [
+            $.value ? (n(), s("div", Bl, "读取中…")) : i.value ? (n(), s(B, { key: 1 }, [
+              m(h, {
                 label: "动作",
-                value: a.value.id
+                value: i.value.id
               }, null, 8, ["value"]),
-              A(M, {
+              m(h, {
                 label: "渠道",
-                value: a.value.channel === "group" ? "群聊" : "私聊"
+                value: i.value.channel === "group" ? "群聊" : "私聊"
               }, null, 8, ["value"]),
-              a.value.dueAt ? (n(), z(M, {
+              i.value.dueAt ? (n(), K(h, {
                 key: 0,
                 label: "到期",
-                value: U(a.value.dueAt)
+                value: H(i.value.dueAt)
               }, null, 8, ["value"])) : p("", !0),
-              a.value.expiresAt ? (n(), z(M, {
+              i.value.expiresAt ? (n(), K(h, {
                 key: 1,
                 label: "失效",
-                value: U(a.value.expiresAt)
+                value: H(i.value.expiresAt)
               }, null, 8, ["value"])) : p("", !0),
-              a.value.reason ? (n(), z(M, {
+              i.value.reason ? (n(), K(h, {
                 key: 2,
                 label: "原因",
-                value: D(a.value.reason)
+                value: P(i.value.reason)
               }, null, 8, ["value"])) : p("", !0),
-              a.value.segments.length ? (n(), z(M, {
+              i.value.segments.length ? (n(), K(h, {
                 key: 3,
                 label: "分段",
-                value: a.value.segments.map((R) => `第 ${R.index + 1} 段：${C[R.status] ?? R.status}${R.reason ? `（${D(R.reason)}）` : ""}`).join("；") || "—"
+                value: i.value.segments.map((V) => `第 ${V.index + 1} 段：${k[V.status] ?? V.status}${V.reason ? `（${P(V.reason)}）` : ""}`).join("；") || "—"
               }, null, 8, ["value"])) : p("", !0),
-              a.value.quote ? (n(), s("div", $a, "原文：" + y(a.value.quote), 1)) : p("", !0),
-              B.value || H.value ? (n(), s("div", Sa, [
-                H.value ? (n(), s("p", xa, "根据平台实际记录核实；确认送达后，该结果会作为后续写作依据。")) : p("", !0),
-                B.value ? (n(), s("button", {
+              i.value.quote ? (n(), s("div", Jl, "原文：" + g(i.value.quote), 1)) : p("", !0),
+              j.value || z.value ? (n(), s("div", Rl, [
+                z.value ? (n(), s("p", Fl, "根据平台实际记录核实；确认送达后，该结果会作为后续写作依据。")) : p("", !0),
+                j.value ? (n(), s("button", {
                   key: 1,
-                  disabled: i.value,
-                  onClick: $[1] || ($[1] = (R) => J(() => ne(W).cancelAction(a.value.id)))
-                }, y(i.value ? "处理中…" : "取消后续"), 9, Ca)) : p("", !0),
-                H.value ? (n(), s("button", {
+                  disabled: f.value,
+                  onClick: M[1] || (M[1] = (V) => R(() => ie(Q).cancelAction(i.value.id)))
+                }, g(f.value ? "处理中…" : "取消后续"), 9, zl)) : p("", !0),
+                z.value ? (n(), s("button", {
                   key: 2,
-                  disabled: i.value,
+                  disabled: f.value,
                   class: "ok",
-                  onClick: $[2] || ($[2] = (R) => J(() => ne(W).verifyAction(a.value.id, "delivered")))
-                }, "核实已送达", 8, Ma)) : p("", !0),
-                H.value ? (n(), s("button", {
+                  onClick: M[2] || (M[2] = (V) => R(() => ie(Q).verifyAction(i.value.id, "delivered")))
+                }, "核实已送达", 8, Hl)) : p("", !0),
+                z.value ? (n(), s("button", {
                   key: 3,
-                  disabled: i.value,
-                  onClick: $[3] || ($[3] = (R) => J(() => ne(W).verifyAction(a.value.id, "not-sent")))
-                }, "核实未发送", 8, Ia)) : p("", !0)
+                  disabled: f.value,
+                  onClick: M[3] || (M[3] = (V) => R(() => ie(Q).verifyAction(i.value.id, "not-sent")))
+                }, "核实未发送", 8, Ul)) : p("", !0)
               ])) : p("", !0)
             ], 64)) : (n(), s("button", {
               key: 2,
               class: "refresh",
-              onClick: (R) => I(v.id)
-            }, "重试读取详情", 8, Aa))
+              onClick: (V) => I(c.id)
+            }, "重试读取详情", 8, Kl))
           ])) : p("", !0)
         ], 2))), 128))
       ]),
-      k.value ? (n(), s("button", {
+      O.value ? (n(), s("button", {
         key: 4,
         class: "more",
-        disabled: u.value,
-        onClick: $[4] || ($[4] = (v) => T(!1))
-      }, y(u.value ? "读取中…" : "加载更多"), 9, Oa)) : p("", !0)
+        disabled: w.value,
+        onClick: M[4] || (M[4] = (c) => D(!1))
+      }, g(w.value ? "读取中…" : "加载更多"), 9, Wl)) : p("", !0)
     ]));
   }
-}), Na = /* @__PURE__ */ X(Pa, [["__scopeId", "data-v-3a8f7733"]]), ja = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
+}), Gl = /* @__PURE__ */ te(Yl, [["__scopeId", "data-v-3a8f7733"]]), Ql = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
   __proto__: null,
-  default: Na
-}, Symbol.toStringTag, { value: "Module" })), Da = { key: 0 }, qa = { class: "scope-controls" }, Ea = { class: "grid" }, Va = { class: "card" }, La = { class: "card" }, Ta = /* @__PURE__ */ ee({
+  default: Gl
+}, Symbol.toStringTag, { value: "Module" })), Xl = { key: 0 }, Zl = { class: "scope-controls" }, en = { class: "grid" }, tn = { class: "card" }, ln = { class: "card" }, nn = /* @__PURE__ */ ne({
   name: "DensityPage",
   __name: "DensityPage",
   props: {
     overview: {}
   },
   setup(t) {
-    const r = t, l = g("private"), k = { burst: "极高密度", high: "高密度", normal: "日常", low: "低密度", advance: "自动推进" }, u = F(() => {
-      var a, m, i, b, S, d, P, C;
-      const o = (b = (i = (m = (a = r.overview) == null ? void 0 : a.density) == null ? void 0 : m.scopes) == null ? void 0 : i[l.value]) == null ? void 0 : b.mode;
-      return o && o !== "inherit" ? o : ((d = (S = r.overview) == null ? void 0 : S.density) == null ? void 0 : d.globalMode) ?? ((C = (P = r.overview) == null ? void 0 : P.density) == null ? void 0 : C.mode) ?? "fixed";
-    }), f = F(() => {
-      var m, i, b;
-      const o = ((m = r.overview) == null ? void 0 : m.density) ?? {}, a = ((b = (i = o.scopes) == null ? void 0 : i[l.value]) == null ? void 0 : b.tiers) ?? {};
+    const u = t, a = _("private"), O = { burst: "极高密度", high: "高密度", normal: "日常", low: "低密度", advance: "自动推进" }, w = Y(() => {
+      var i, $, f, S, d, l, L, k;
+      const o = (S = (f = ($ = (i = u.overview) == null ? void 0 : i.density) == null ? void 0 : $.scopes) == null ? void 0 : f[a.value]) == null ? void 0 : S.mode;
+      return o && o !== "inherit" ? o : ((l = (d = u.overview) == null ? void 0 : d.density) == null ? void 0 : l.globalMode) ?? ((k = (L = u.overview) == null ? void 0 : L.density) == null ? void 0 : k.mode) ?? "fixed";
+    }), r = Y(() => {
+      var $, f, S;
+      const o = (($ = u.overview) == null ? void 0 : $.density) ?? {}, i = ((S = (f = o.scopes) == null ? void 0 : f[a.value]) == null ? void 0 : S.tiers) ?? {};
       return [
-        { label: "极高密度", tier: "burst", limit: a.burst, info: "近 5 分钟至少 4 条消息" },
-        { label: "高密度", tier: "high", limit: a.high, info: "近 5 分钟至少 2 条，或近 15 分钟至少 4 条消息" },
+        { label: "极高密度", tier: "burst", limit: i.burst, info: "近 5 分钟至少 4 条消息" },
+        { label: "高密度", tier: "high", limit: i.high, info: "近 5 分钟至少 2 条，或近 15 分钟至少 4 条消息" },
         { label: "日常", tier: "normal", limit: o.anchor, info: "使用 contextEntryLimit 作为日常档锚点" },
-        { label: "低密度", tier: "low", limit: a.low, info: "近 30 分钟没有新消息" },
-        { label: "自动推进", tier: "advance", limit: a.advance, info: "自动生活推进回合使用的档位" }
+        { label: "低密度", tier: "low", limit: i.low, info: "近 30 分钟没有新消息" },
+        { label: "自动推进", tier: "advance", limit: i.advance, info: "自动生活推进回合使用的档位" }
       ];
-    }), w = F(() => {
-      var a, m, i;
-      const o = u.value === "fixed" ? (m = (a = r.overview) == null ? void 0 : a.density) == null ? void 0 : m.anchor : (i = f.value.find((b) => {
-        var S, d;
-        return b.tier === ((d = (S = r.overview) == null ? void 0 : S.density) == null ? void 0 : d.tier);
-      })) == null ? void 0 : i.limit;
-      return u.value === "auto" && o != null ? Math.max(4, Math.min(200, Math.floor(o))) : o;
+    }), v = Y(() => {
+      var i, $, f;
+      const o = w.value === "fixed" ? ($ = (i = u.overview) == null ? void 0 : i.density) == null ? void 0 : $.anchor : (f = r.value.find((S) => {
+        var d, l;
+        return S.tier === ((l = (d = u.overview) == null ? void 0 : d.density) == null ? void 0 : l.tier);
+      })) == null ? void 0 : f.limit;
+      return w.value === "auto" && o != null ? Math.max(4, Math.min(200, Math.floor(o))) : o;
     });
-    return (o, a) => {
-      const m = le("router-link");
-      return t.overview ? (n(), s("div", Da, [
-        a[5] || (a[5] = e("div", { class: "pg-head" }, [
+    return (o, i) => {
+      const $ = ae("router-link");
+      return t.overview ? (n(), s("div", Xl, [
+        i[5] || (i[5] = e("div", { class: "pg-head" }, [
           e("div", null, [
             e("h2", null, "上下文预算"),
             e("div", { class: "sub" }, "近期原始剧本的保留预算。密度统计按当前故事计算，私聊与群聊可分别设置模式和档位。")
           ])
         ], -1)),
-        e("div", qa, [
+        e("div", Zl, [
           e("button", {
-            class: Q({ on: l.value === "private" }),
-            onClick: a[0] || (a[0] = (i) => l.value = "private")
+            class: Z({ on: a.value === "private" }),
+            onClick: i[0] || (i[0] = (f) => a.value = "private")
           }, "私聊预算", 2),
           e("button", {
-            class: Q({ on: l.value === "group" }),
-            onClick: a[1] || (a[1] = (i) => l.value = "group")
+            class: Z({ on: a.value === "group" }),
+            onClick: i[1] || (i[1] = (f) => a.value = "group")
           }, "群聊预算", 2),
-          A(m, { to: "/hdsi/config-center" }, {
-            default: re(() => [...a[2] || (a[2] = [
-              O("在配置中心调整 →", -1)
+          m($, { to: "/hdsi/config-center" }, {
+            default: le(() => [...i[2] || (i[2] = [
+              x("在配置中心调整 →", -1)
             ])]),
             _: 1
           })
         ]),
-        e("div", Ea, [
-          e("div", Va, [
-            a[3] || (a[3] = e("h3", null, [
+        e("div", en, [
+          e("div", tn, [
+            i[3] || (i[3] = e("h3", null, [
               e("span", { class: "sq" }),
-              O("当前档位")
+              x("当前档位")
             ], -1)),
-            A(M, {
+            m(h, {
               label: "模式",
-              value: u.value === "auto" ? "随密度自适应" : "固定预算",
+              value: w.value === "auto" ? "随密度自适应" : "固定预算",
               state: "acc",
               info: "fixed 使用锚点与时间窗；auto 按本页档位动态选择",
               range: "fixed | auto"
             }, null, 8, ["value"]),
-            A(M, {
+            m(h, {
               label: "档位",
-              value: `${u.value === "auto" ? k[t.overview.density.tier] ?? t.overview.density.tier : "固定"} → ${w.value ?? "—"} 条`,
+              value: `${w.value === "auto" ? O[t.overview.density.tier] ?? t.overview.density.tier : "固定"} → ${v.value ?? "—"} 条`,
               info: "当前密度对应的用户回合预算；fixed 可额外合并时间窗，auto 使用至少 4 条的档位硬上限。自动推进回合使用推进档。"
             }, null, 8, ["value"]),
-            A(M, {
+            m(h, {
               label: "近 5 分钟",
               value: `${t.overview.density.counts.count5} 条消息`,
               info: "入站消息计数——密度信号源之一（burst 判定窗）"
             }, null, 8, ["value"]),
-            A(M, {
+            m(h, {
               label: "近 15 分钟",
               value: `${t.overview.density.counts.count15} 条消息`,
               info: "入站消息计数——high 判定窗"
             }, null, 8, ["value"]),
-            A(M, {
+            m(h, {
               label: "近 30 分钟",
               value: `${t.overview.density.counts.count30} 条消息`,
               info: "入站消息计数——low 判定窗（轨迹重载归零）"
             }, null, 8, ["value"])
           ]),
-          e("div", La, [
-            a[4] || (a[4] = e("h3", null, [
+          e("div", ln, [
+            i[4] || (i[4] = e("h3", null, [
               e("span", { class: "sq" }),
-              O("档位表")
+              x("档位表")
             ], -1)),
-            (n(!0), s(L, null, Z(f.value, (i) => (n(), z(M, {
-              key: i.label,
-              class: Q(["row", { on: u.value === "auto" && t.overview.density.tier === i.tier }]),
-              label: i.label,
-              value: i.limit == null ? "未提供配置" : `${i.limit} 条`,
-              info: i.info
+            (n(!0), s(B, null, X(r.value, (f) => (n(), K(h, {
+              key: f.label,
+              class: Z(["row", { on: w.value === "auto" && t.overview.density.tier === f.tier }]),
+              label: f.label,
+              value: f.limit == null ? "未提供配置" : `${f.limit} 条`,
+              info: f.info
             }, null, 8, ["class", "label", "value", "info"]))), 128))
           ])
         ])
       ])) : p("", !0);
     };
   }
-}), Ra = /* @__PURE__ */ X(Ta, [["__scopeId", "data-v-f55a4e87"]]), Ba = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
+}), an = /* @__PURE__ */ te(nn, [["__scopeId", "data-v-f55a4e87"]]), sn = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
   __proto__: null,
-  default: Ra
+  default: an
 }, Symbol.toStringTag, { value: "Module" }));
 export {
-  Fa as default
+  vn as default
 };

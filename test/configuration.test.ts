@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { readFileSync } from 'node:fs'
 import { Config, version } from '../src/index'
 import { hasRequiredNarrativeScript, normalizeGroupVisibleReply, normalizeInteraction, requiresVisibleReplyRecovery, resolveBlindModeConfig, visibleReplyMode } from '../src/service'
 import { configuredProviders, withDeepSeekThinking, ZHIPU_FIRST_VISIBLE_TOKEN_TIMEOUT } from '../src/narrator'
@@ -111,7 +112,7 @@ test('ignored compatibility switches stay out of the active Console', () => {
 
 test('runtime and plugin exports share one version constant', () => {
   assert.equal(version, HDS_INTERLUDE_VERSION)
-  assert.equal(version, '1.0.1-rc60')
+  assert.equal(version, JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version)
 })
 
 test('layered colored logs are the Console default and remain optional', () => {

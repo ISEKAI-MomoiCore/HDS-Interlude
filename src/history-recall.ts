@@ -13,7 +13,7 @@ import { decodeStoryState, encodeStoryState } from './story-state'
 import { promptVisibleMessageContent, recentScriptOwnership } from './narrator'
 import type { ScriptEntry, RecalledMoment } from './types'
 
-export const RECALLABLE_ENTRY_KINDS = ['user-message', 'character-message', 'script', 'group-message', 'character-group-message']
+export const RECALLABLE_ENTRY_KINDS = ['user-message', 'character-message', 'script', 'prologue', 'group-message', 'character-group-message']
 
 export type HistoryVectorEntry = {
   spans?: RecallSpan[]
@@ -74,7 +74,7 @@ export async function recallHistory(svc: any,
       if (source === 0 && tagged === 0 && (semantic == null || semantic < 0.25) && lexical < 0.12) continue
       // Prose similarity alone often recalls a familiar gesture rather than
       // the event. Literal/source matches retain priority over writing style.
-      scored.push({ id, score: source * 2 + tagged + Math.max(0, semantic ?? 0) * (item.kind === 'script' ? 0.45 : 1) + lexical })
+      scored.push({ id, score: source * 2 + tagged + Math.max(0, semantic ?? 0) * (item.kind === 'script' || item.kind === 'prologue' ? 0.45 : 1) + lexical })
     }
     // Navigation belongs to the audience, not to this turn's excluded entries.
     const episodeKey = JSON.stringify([storyId, participantId ?? null, svc.sharedStoryConfig.shareParticipantDetails])

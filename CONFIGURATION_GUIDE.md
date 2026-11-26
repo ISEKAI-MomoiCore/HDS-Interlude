@@ -1,8 +1,8 @@
 # HDS Interlude 配置指南
 
-适用版本：`1.0.1-rc60`
+适用版本：`1.0.1`
 
-本指南包含当前工作区截至 2026-11-15 的未发布增量，已发布版本与工作区改动以更新记录为准。安装包需要包含最新服务端与 client-dist，并重载插件和刷新 Console 后生效。
+本指南对应 `1.0.1` 正式版安装包。升级后请重载插件并刷新 Console，以加载同版服务端和客户端资源。
 
 第一次安装先看 `BEGINNER_GUIDE.md`。本文件按配置依赖关系组织字段；下方先列出当前 Console 的实际顺序，旧版本已经移除或隐藏的字段集中列在末尾，不再混入正常配置流程。
 
@@ -55,7 +55,7 @@ Koishi 标准插件配置页继续提供完整入口；隐藏的旧兼容参数�
 
 ## 1. storyDefaults：故事档案（【必填 1】）
 
-这些字段只在创建新主剧本时写入 Canon。修改 Console 不会自动重写已经存在的故事。
+故事档案在创建新主剧本时提供初始 Canon。配置中心保存的前置剧本也会随下一份新故事导入。
 
 | 字段 | 说明 |
 | --- | --- |
@@ -67,14 +67,27 @@ Koishi 标准插件配置页继续提供完整入口；隐藏的旧兼容参数�
 | `world` | 时间、地点、社会与现实规则。 |
 | `supportingCast` | 重要配角及其与主角的关系。 |
 | `location` | 主角主要活动地点。 |
+| `prologue` | 新故事的前置剧本与可选的开场现场引文。 |
 | `style` | 当前故事文风，优先级高于全局 `model.stylePrompt`。 |
 | `timezone` | IANA 时区，例如 `Asia/Shanghai`。主模型以该时区生成权威 `nowLocal`、当前时段和日照预期。 |
+
+配置中的 `relationship` 是全局参与者关系兜底；每个故事的 Console「初始关系」是该故事的新参与者默认关系，白名单账号与参与者预设可分别覆盖。既有非空关系沿用当前关系，执行 `interlude.reset` 时会重建关系基线并保留故事级默认值。
 
 小幅补充无需维护。若大幅改变角色、Perspective、关系或世界前提，保存后执行对应的 `interlude.overlay.clear character|perspective|relationship|world`，避免旧 Overlay 与当前设定冲突。
 
 `perspective` 是独立于 Canon 的主角外壳人格层，不会重写 `characterProfile`。Console 的 `storyDefaults.perspective` 会写入新主剧本；已有故事可通过 `interlude.setup {"perspective":"..."}` 一次性设置基础 Perspective，再让长期剧情形成其 overlay。
 
 重载和长间隔不会沿用旧剧本中的钟点描述：当前 `nowLocal` 始终优先。时区无效时运行时回退到 UTC，因此发现上午/下午错误时应先检查这里是否为有效 IANA 名称。
+
+### 前置剧本
+
+在 HDSI **配置中心 → 故事档案 → 前置剧本** 中按时间顺序写 1–3 段正文，每段最多 2,000 字。最后一段用来交代主角正在哪里、做什么、和谁在一起。可以从一件小事写起，把性格和文风写在具体的动作与选择里。
+
+开场地点和活动可以直接摘自最后一段。填写在场人物时，给出包含这些名字的原文。独处时，可以只填明确说明独处的引文。能在原文中找到依据的字段会用于开场场景投影，其余信息由主叙事从正文理解。
+
+手动启动以启动时间为锚点，自动建档以触发消息时间为锚点。最后一段发生在锚点前 5 分钟，更早的段落依次前移 5 分钟。序章随故事写入一次，在第一轮叙事提交前保留于上下文中，之后按普通历史参与召回。已有故事继续使用已经落库的原文。范围删除和重置按剧本记录处理已导入内容，新建故事使用当时的配置。
+
+序章中的对白属于作者编写的故事背景，真实聊天、投递回执和履约状态仍由运行记录提供。导入过程只写入数据库，无需额外模型请求。
 
 ## 2. model：模型中心（【必填 2】）
 
@@ -152,7 +165,7 @@ Koishi 标准插件配置页继续提供完整入口；隐藏的旧兼容参数�
 - `mainMaxTokens`
 - `mainTimeout`
 - `mainResponseFormat`：主叙事唯一的输出格式设置
-- `mainStreamingMode`：实验性流式首条回复，默认 `off`
+- `mainStreamingMode`：保留的 JSON 首泡提前投递设置，默认 `off`。
 - `mainPayloadOrder`：主叙事 payload 字段顺序，默认 `cache-first`；遇到服务商兼容性或上下文质量问题时可切回 `legacy`
 - `specialization`：模型特化档位，默认 `off`（rc12 原始完整合约，行为与未特化一致）；可选 `lite`（flash 级小模型精简合约）/`standard`（content-only 协议标准合约）/`full`（完整合约），同时作用于主叙事与压缩/时间导演等侧端提示词，改配置后下回合生效
 - `specializationFamily`：特化家族，默认 `auto` 按模型名识别；中转自定义别名无法识别时可显式指定（gemini-flash/gemini/claude/gpt/glm/kimi/deepseek/grok/generic）
@@ -164,7 +177,7 @@ Koishi 标准插件配置页继续提供完整入口；隐藏的旧兼容参数�
 
 思考型模型或 Ollama 兼容网关若在 `json-object` 下出现空回复、字段缺失或反复触发恢复重写，可先切换为 `prompt-only`，并按模型实际推理长度适度提高 `mainMaxTokens`。确认模型能稳定输出结构化结果后，再使用 `json-object`。
 
-`mainStreamingMode=experimental` 只在 `json-object` 下尝试私聊首条提前投递。Chat Completions 要求标准 OpenAI SSE `choices[].delta.content`；rc12 的 Anthropic Messages 使用其原生 SSE text delta，thinking 不进入剧本。智谱官方 GLM 走已有 SSE 路径，其余兼容预设走实验性通用路径。未知中转站请先在低风险私聊测试，群聊仍等待完整结果。首条成功投递后，后续流式结果失败不会触发可见消息重试，而是只安排一次无 transport 的剧本补写，避免重复发言。
+`mainStreamingMode=experimental` 是保留的 JSON 首泡提前投递设置，需有提前投递回调。当前新私聊的即时文本采用逐泡合约，等待完整输出校验。智谱官方 GLM 仍使用自己的 SSE 接收路径。
 
 ### 2.4 failover 与提示词
 
@@ -219,7 +232,7 @@ Embedding 地址留空时，插件会尝试从标准 `/chat/completions` 地址�
 
 **先确认 Koishi 频道受理人**：受理人不等于当前机器人时，未 @ 的消息会在 Koishi 核心层被拦截，HDSI 无法落库或把它们加入上下文；这与私聊用户白名单无关，群友不需要加入 `userAccounts`。换机器人账号后，可在 Console → HDSI → QQ 接入 → 群聊白名单中，为目标群填写 `assignee` 并保存。这里只修改已启用且明确配置的 OneBot 群，不解除频道/用户忽略标记；留空、停用或删除配置不会撤销已经写入的受理人。一个频道只有一个受理人，多机器人实例不要为同一群配置冲突值。
 
-群聊不再调用独立快速筛选模型。普通消息合并后仍经过意愿与冷却判断，再交给主叙事。rc12 对可提取的音频文件/语音跳过意愿、冷却与仅 @ 门槛，直接进入合并写作队列，携带本批原生音频；仍由主叙事决定是否输出 `groupReply`。自本版起该"必定触发"改为每群可选项 `audioAlwaysTriggers`（默认开启保持旧行为）；关闭后语音回到普通消息的门控路径，但若本轮因其它原因触发，仍会尝试携带原生音频。群白名单、原生音频开关、数量及大小限制保留；音频读取失败会警告。使用 Messages 协议时，还需要服务商真正支持音频输入；必要时应准备兼容的 Chat Completions 故障转移连接。
+群聊不再调用独立快速筛选模型。普通消息合并后仍经过意愿与冷却判断，再交给主叙事。rc12 对可提取的音频文件/语音跳过意愿、冷却与仅 @ 门槛，直接进入合并写作队列，携带本批原生音频；仍由主叙事决定是否输出 `groupReply`。当前可通过每群配置项关闭该“必定触发”行为： `audioAlwaysTriggers`（默认开启保持旧行为）；关闭后语音回到普通消息的门控路径，但若本轮因其它原因触发，仍会尝试携带原生音频。群白名单、原生音频开关、数量及大小限制保留；音频读取失败会警告。使用 Messages 协议时，还需要服务商真正支持音频输入；必要时应准备兼容的 Chat Completions 故障转移连接。
 
 对 `responseMode=always` 的活跃群，可使用 `willingnessPreset` 选择 `quiet`、`reserved`、`normal`、`active`、`eager`、`auto` 或 `custom`。`off`（默认）只保留响应模式与冷却；`custom` 才使用下方旧数值对象。意愿门完全在本地运行，不增加模型调用。普通状态下 @ 通常绕过意愿概率；睡眠态例外，@ 不会立即直通，而交给后续主叙事自然处理。群音频默认仍独立绕过意愿和冷却门槛（每群 `audioAlwaysTriggers` 可关闭）。关键词与引用机器人消息可增加意愿，主角成功群发言后会扣除意愿。该功能只作用于当前群，不影响私聊、Alter、Agency、自动推进或主提示词。
 
@@ -277,21 +290,23 @@ Embedding 地址留空时，插件会尝试从标准 `/chat/completions` 地址�
 
 读取失败、资源标识缺失或达到预算时会保留占位事实，不根据卡片摘要猜测正文。转发节点中的第三方发言属于“被转交内容”，不会自动创建参与者或绕过现有白名单。
 | `narrativeRetryDelaySeconds` / `narrativeRetryMaxAttempts` | 叙事服务失败后的重试节奏，默认等待 15 秒、最多 6 次。 |
-| `cancelDelayedRepliesOnUserMessage` | 是否同时取消普通延迟回复和跨关系计划；未发送的 `<sep/>` 分段始终会被新消息截断。 |
+| `cancelDelayedRepliesOnUserMessage` | 是否同时取消普通延迟回复和跨会话发送计划；新私聊打断尚未交给平台的待发气泡（包括等待中的首泡）不受此开关控制。 |
 | `minimumDelayedReplySeconds` / `maximumDelayedReplyMinutes` | 模型允许计划的延迟范围。 |
 | `maxScriptCharacters` / `maxMessageCharacters` | 单回合剧本和单条可见消息的字符上限，默认分别为 1400 / 1500。 |
 
 ### 5.3 分段消息
 
-`splitReplyMessages` 开启后，模型可以用 `messageSeparator`（默认 `<sep/>`）拆分聊天气泡。`typingBaseDelaySeconds`、`typingCharactersPerSecond` 和 `typingMaxDelaySeconds` 控制后续气泡的模拟输入时间；`typingJitterRatio` 默认 `0.3`，会在理论延迟上下约 30% 抖动，填 `0` 可恢复固定时长。
+`splitReplyMessages` 开启后，模型可以用 `messageSeparator`（默认 `<sep/>`）拆分聊天气泡。`typingBaseDelaySeconds`、`typingCharactersPerSecond`、`typingMaxDelaySeconds` 与 `typingJitterRatio` 控制模拟打字时长；随机浮动默认 `0.3`，设为 `0` 可关闭浮动。
 
-后续气泡持久化为 `split-message` 意图，并按实际回执更新源剧本的分段账本；尚未送达的文字不是已确认的 `character-message`。同一参与者仍有 pending 分段（包括尚未到发送时间的分段）时，到期补写和对话后续写作先等待；全局生活推进（含手动推进）等待所有 pending 分段。其它参与者的独立到期任务、网页和 QQ 空间执行器不因此停机。新用户消息仍可打断未发送分段。
+新私聊触发的即时文本回复（含单泡）从首泡开始逐泡计算。模型为每泡输出 `bubbleDelaySeconds`，这是输出字段，不是配置项。首泡取完整输出耗时、模型指定的延迟和模拟打字时长中的最大值，已过去的时间不重算；后续泡从上一泡获平台确认起，等待模型指定的延迟和模拟打字时长中较长的一项。`typingMaxDelaySeconds` 只限制打字模拟，不限制模型指定的等待。群聊、主动联系和 `sendAt` 定时发送沿用原有行为。
 
-重启恢复只补偿已落库、仍为 pending 的消息 segment，不重新运行主叙事。已有分段意图的气泡仍交给原打字执行器，恢复扫描不会绕过延迟抢发。已 delivered/cancelled 的 segment 不再自动发送。
+逐泡私聊回复从首泡开始将整组登记为一个 `split-message` 意图，同一时刻只放行当前泡。普通后续分段仍走原有调度。两者都按平台回执更新源剧本的分段账本；回执未确认的文字不算已发送。同一参与者仍有 pending 分段（包括尚未到发送时间的分段）时，到期补写和对话后续写作先等待；全局生活推进（含手动推进）等待所有 pending 分段。其它参与者的独立到期任务、网页和 QQ 空间执行器不因此停机。新用户消息仍可打断未发送分段。
+
+重启恢复只补偿已落库、仍为 pending 的消息 segment，不重新运行主叙事。已有分段意图仍交给对应的打字调度，恢复扫描不会绕过延迟抢发。发送结果未知的逐泡私聊不会盲目重播或放行尾泡；已确认送达或已取消的气泡不再自动发送。
 
 `convertNewlineToSeparator`（默认关闭）是小模型适配开关：模型没有按合约输出 `<sep/>` 而是用换行分条时，把每个换行自动视作一条消息的分隔再发送。内容里已有 `<sep/>` 时不做转换；`splitReplyMessages` 关闭时该开关无效。Gemma 等不遵守分句合约的小模型建议开启。
 
-主模型尚未提交第一条回复时，新消息会废弃旧请求，并把旧、新消息合并后重新写作，不再受固定秒数窗口限制。第一条回复已经提交后，新消息会取消剩余分段；未发送文字以 `interruptedOutgoingDrafts` 进入替代提示词，表示主角想发送但被新消息打断，不能视为已送达内容。
+主模型尚未提交回复时，新消息会废弃旧请求，并把旧、新消息合并后重新写作，不把半截模型输出当作草稿。逐泡回复登记后，新私聊会取消所有尚未交给平台的气泡，即使首泡还没发；确定取消的原文以 `interruptedOutgoingDrafts` 交给下一轮，不算已送达，也不会自动续发。已交平台但回执未知的泡单独标明。
 
 ### 5.4 自动生活和通信动作
 
@@ -333,7 +348,7 @@ Embedding 地址留空时，插件会尝试从标准 `/chat/completions` 地址�
 | `frequency` | `medium` | `low/medium/high/custom`；只改变生活推进范围。 |
 | `advanced` | 折叠 | 安静、slow、对话密度半衰期、活动倍率和休息兜底倍率。 |
 
-旧版联系意愿门槛、contact burst、contact jitter、contactMin 和联系后确认已经完成迁移。Urge 只保留 `pace`、建议间隔、`rhythmAttention` 与 `basisQuote` 交接；通信动作和投递权限由 CONTACT ACTIONS、端点边界和 `deliveryPolicy` 负责。详见 [Urge 实现记录](docs/development/URGE_SYSTEM_IMPLEMENTATION.md)。
+旧版联系意愿门槛、contact burst、contact jitter、contactMin 和联系后确认已经完成迁移。Urge 只接受 `pace`、建议间隔和 `basisQuote` 的调度交接；它读取已保存的 `lifeRhythm.attention`，不再写入 Focus。Focus 由 `lifeHandoff.focus` 或压缩器的有效剧本证据更新，收到私聊不会改变或续期。通信动作和投递权限由 CONTACT ACTIONS、端点边界和 `deliveryPolicy` 负责。详见 [Urge 实现记录](docs/development/URGE_SYSTEM_IMPLEMENTATION.md)。
 ## 7. schedulePreplan：日程预排（【节奏 7】）
 
 Schedule Preplan 每天在后台空闲整理时检查主角近期日程。它复用 `useForCompaction` 模型，不增加独立模型选择；已有计划覆盖充足且没有新剧本证据时，程序直接保持原计划，不调用模型。首次尚无可靠规律时，插件会保存“已审查、暂无线索”的空日程记录，并等待后续新的生活证据，不会反复消耗压缩调用。
@@ -481,11 +496,13 @@ Alter 模型由上方 `useForAlter` 选择。`temperature`、`topP`、`maxTokens
 - `allowGroupTriggeredResearch`
 - `logObservationPreview`
 
+`navigationTimeout` 是单页导航上限（毫秒）；单次浏览的总预算为导航上限加 5 秒，涵盖等待浏览器槽位、建页、导航、提取和关页。读取超时按失败观察处理；如果 Chromium 没有完成清理，后续浏览可能在新页面获准创建前直接降级。到期观察在故事队列外等待，`maxResearchPerSweep` 只限制同轮最多处理的网页意图数。
+
 `allow-immediate` 会为少数私聊额外执行一次观察并重新请求主叙事，因此延迟和费用都更高。首次测试使用 `deferred-only`。
 
 ## 15. worldSeeder：世界事件播种器（【扩展 15】）
 
-后台低频生成与主角有关的外部事件（线下通道、NPC），到点以 `[世界事件]` 条目进入剧本。**模型选择在【必填 2】模型中心的连接上勾选"用于世界播种"**；未勾选任何连接时开关无效（视为关闭）。
+后台低频生成环境变化或直接涉及主角的外部事件，到点以 `[世界事件]` 条目进入剧本。**模型选择在【必填 2】模型中心的连接上勾选"用于世界播种"**；未勾选任何连接时开关无效（视为关闭）。
 
 | 键 | 默认 | 说明 |
 |---|---|---|
@@ -498,7 +515,7 @@ Alter 模型由上方 `useForAlter` 选择。`temperature`、`topP`、`maxTokens
 | `maxTokens` | `1000` | 单次输出预算 |
 | `timeout` | `60000` | 请求超时（毫秒） |
 
-机制要点：**每轮检查面向一个"世界切面"提问**（天象与环境/居所与近邻/生计与日常事务/亲近之人/途中与陌生人/小意外与际遇，按剧本+时间确定性轮换）——切面是世界的通用方面而非现代题材，异世界/古代世界观由各自 worldSetting 渲染具体面貌。已注入事件不进入播种器的灵感摘录（防自馈复读），自身产出仅作"近期已播"记忆。**多数检查应输出空**；这是正常形态，不是故障。详细设计见 `docs/WORLD_EVENT_SEEDER_DESIGN.md`。
+机制要点：**每轮检查面向一个"世界切面"提问**（天象与环境/居所与近邻/生计与日常事务/亲近之人/途中与陌生人/小意外与际遇，按剧本+时间确定性轮换）——切面是世界的通用方面而非现代题材，异世界/古代世界观由各自 worldSetting 渲染具体面貌。已注入事件不进入播种器的灵感摘录（防自馈复读），自身产出仅作"近期已播"记忆。**多数检查应输出空**；这是正常形态，不是故障。播种器在同一次输出中提供 `importance: low | medium | high` 和 `involvement: environment | involved`。宿主只对已纳入主叙事请求的事件按两项乘积计算 T 档，不按 T 档改变排期或注入。详见[世界事件播种器](docs/WORLD_EVENT_SEEDER_DESIGN.md)。
 
 ## 17. longHorizon：长线叙事指导（【扩展 17】）
 
@@ -543,7 +560,7 @@ Alter 模型由上方 `useForAlter` 选择。`temperature`、`topP`、`maxTokens
 
 ## 16. weather：运行时天气（【扩展 16】）
 
-从 Open-Meteo（免费、无需 API Key）拉取真实天气，以 `[世界事件]` 剧本条目注入当前温度与天况，默认关闭。注入走世界事件管线：滚动替换（时间线上只保留最新一条天气事件）、内容不变不重复注入。
+从 Open-Meteo（免费、无需 API Key）拉取真实天气，以 `[世界事件]` 剧本条目注入当前温度与天况，默认关闭。注入走世界事件管线：滚动替换（只保留最新的有效天气事件）、内容不变不重复注入。天气注意度使用原始天气码、未取整风速（强风 ≥50 km/h）和同地点采样变化，只标注原本会进入本轮的天气条目；仅风速变化不会新增事件。注意度规则无需新增配置，概览显示的是天气基础档，不是上一轮最终档位。
 
 | 键 | 默认 | 说明 |
 | --- | --- | --- |
@@ -564,19 +581,20 @@ Alter 模型由上方 `useForAlter` 选择。`temperature`、`topP`、`maxTokens
 
 | 字段 | 说明 |
 | --- | --- |
-| `level` | 错误级别阈值；日常使用 `info`。 |
-| `verbosity` | `summary`、`standard`、`diagnostic` 三档运行信息量。 |
+| `level` | HDSI 的日志级别阈值；日常使用 `info`，`silent` 关闭普通 HDSI 日志。盲区模式的健康心跳单独控制，Koishi 全局日志过滤仍适用。 |
+| `verbosity` | `summary` 显示关键结果；`standard` 追加模型和后台任务；`diagnostic` 追加计时器、队列、上下文统计等。诊断中的 `debug` 记录还需把 `level` 设为 `debug`。 |
 | `format` | 默认 `layered` 彩色任务时间线；也可使用 compact 或兼容旧版的 detailed。 |
 | `colors` | 为阶段、完成、Alter、警告和错误添加 ANSI 语义颜色。 |
 | `colorTheme` | `dark` 使用深色界面的柔亮调色板；`light` 使用明亮界面的深色高对比调色板。由用户按 Console 主题手动选择。 |
 | `kaomoji` | 使用固定颜文字；关闭后改用简洁符号。 |
-| `logScriptPreview` | 是否记录剧本正文预览。 |
-| `logMessageContent` | 是否记录用户和主角可见消息。 |
+| `logScriptPreview` | 是否记录生成的剧本正文预览，不表示剧本已落库；默认关闭。 |
+| `logMessageContent` | 是否允许诊断日志输出入站消息及待提交给适配器的消息预览；默认关闭。 |
+| `logModelResponse` | 是否允许输出模型无效 JSON 和被拒绝字段的预览；默认关闭，还需 `verbosity=diagnostic`、`level=debug`。 |
 | `previewLength` | 内容预览字符上限。 |
 
-**向量检索日志（分级）**：standard 档可见——回合向量完成行（用途/模型/维度/耗时）、请求失败警告（"语义检索本轮降级为规则排序"）、启动时"Embedding 已启用但无可用连接"的静默降级警告，以及事实/历史/贴纸三种后台向量补齐的批次行（补齐数/剩余/耗时，全部补齐升 summary）。diagnostic 档追加——事实语义重排统计（候选/有向量/语义命中/最高相似度）、历史语义召回行（缓存/进入评分/向量可用/召回数）与贴纸语义过滤行（目录/过滤后）。排障语义检索时把 `verbosity` 调到 `diagnostic` 即可完整观测。
+**向量检索日志（分级）**：standard 档可见——回合向量完成行（用途/模型/维度/耗时）、请求失败警告（"语义检索本轮降级为规则排序"）、启动时"Embedding 已启用但无可用连接"的静默降级警告，以及事实/历史/贴纸三种后台向量补齐的批次行（补齐数/剩余/耗时，全部补齐升 summary）。diagnostic 档追加——事实语义重排统计（候选/有向量/语义命中/最高相似度）、历史语义召回行（缓存/进入评分/向量可用/召回数）与贴纸语义过滤行（目录/过滤后）。排障语义检索时可把 `verbosity` 调到 `diagnostic`、`level` 调到 `debug`。
 
-标准档只保留直观业务事件；扫描、队列、计时器和 SQLite 临时重试进入诊断档。内容开关可能记录私聊和网页文本，排障结束后应关闭。
+私聊逐泡日志依次区分输出校验、剧本与计划提交、适配器调用和已记账结果。超时只表示结果未知，不等于安排了重发。计时器细节进入诊断档，非预期的到期唤醒失败默认可见。内容预览可能记录私聊和网页文本，排障结束后应关闭。
 
 ## 21. modelCapture：主叙事微调数据采集（【维护 21】· 实验性，默认关闭）
 

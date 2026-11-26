@@ -85,7 +85,7 @@ export async function worldSeederSweep(svc: any) {
           storyId: story.id, summary: draft.summary, importance: draft.importance,
           occursAt: draft.occursAt, status: 'scheduled',
           ...(draft.expiresAt ? { expiresAt: draft.expiresAt } : {}),
-          subjects: draft.subjects, sourcePayload: { rationale: draft.rationale },
+          subjects: draft.subjects, sourcePayload: { rationale: draft.rationale, involvement: draft.involvement },
           createdAt: now, updatedAt: now,
         })
         pendingCount += 1
@@ -177,6 +177,7 @@ export async function drainDueSeededEvents(svc: any, story: InterludeStory, now:
         .sort((left: any, right: any) => left.occursAt.getTime() - right.occursAt.getTime())
       for (const row of due) {
         const weather = row.sourcePayload?.weather === true
+        const involvement = row.sourcePayload?.involvement
         if (weather ? !weatherEnabled : !svc.worldSeederRuntime.enabled) continue
         if (row.expiresAt && row.expiresAt.getTime() <= now.getTime()) {
           await svc.dbSet('interlude_seeded_event', { id: row.id }, { status: 'expired', updatedAt: now })
@@ -192,7 +193,18 @@ export async function drainDueSeededEvents(svc: any, story: InterludeStory, now:
             kind: 'world-event', actor: 'system',
             content: `[世界事件] ${row.summary}`,
             occurredAt: row.occursAt.toISOString(),
-            metadata: { seededEventId: row.id, importance: row.importance },
+            metadata: {
+              seededEventId: row.id, importance: row.importance,
+              ...(weather ? {
+                eventSource: 'weather',
+                ...(typeof row.sourcePayload.weatherCode === 'number' ? { weatherCode: row.sourcePayload.weatherCode } : {}),
+                ...(typeof row.sourcePayload.windSpeedKmh === 'number' ? { windSpeedKmh: row.sourcePayload.windSpeedKmh } : {}),
+                weatherChanged: row.sourcePayload.weatherChanged === true,
+              } : {
+                eventSource: 'world-seeder',
+                ...(involvement === 'environment' || involvement === 'involved' ? { involvement } : {}),
+              }),
+            },
           }, now)
           await svc.dbSet('interlude_seeded_event', { id: row.id }, { status: 'injected', injectedEntryId: entry.id, updatedAt: now })
         } catch (error) {

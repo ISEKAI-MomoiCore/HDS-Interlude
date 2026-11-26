@@ -6,5 +6,5 @@ export function liveNarrativeIntents(intents: NarrativeIntent[]) {
 }
 
 export function consumedLiveIntentIds(intents: NarrativeIntent[]) {
-  return liveNarrativeIntents(intents).filter(intent => intent.type !== 'follow-up-commitment').map(intent => intent.id)
+  return liveNarrativeIntents(intents).filter(intent => intent.type !== 'follow-up-commitment' && intent.type !== 'qzone-action').map(intent => intent.id)
 }

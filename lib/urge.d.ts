@@ -26,8 +26,6 @@ export interface UrgeState {
     suggested?: number;
     sourceEntryId?: number;
     reason?: string;
-    /** 主叙事轻量节奏覆盖(五档;commitUrge 从模型 urge 交接提取)。 */
-    rhythmAttention?: string;
 }
 export declare function resolveUrgeConfig(raw?: UrgeConfig): {
     enabled: boolean;
@@ -59,11 +57,9 @@ export declare function planUrge(state: UrgeState, now: number, c: ResolvedUrgeC
         suggested?: number;
         sourceEntryId?: number;
         reason?: string;
-        /** 主叙事轻量节奏覆盖(五档;commitUrge 从模型 urge 交接提取)。 */
-        rhythmAttention?: string;
     };
     nextAdvanceAt: string;
     minutes: number;
     reason: string;
 };
-export declare function urgeInstruction(enabled: boolean, phase: string): "\nAfter writing the full script and its actions, optionally return urge:{pace:\"normal\"|\"slow\", suggestedDelayMinutes:number, rhythmAttention:\"phone-focused|available|occupied|resting|asleep\", basisQuote:\"exact sentence from this script\"}. Reflect the protagonist's natural next opportunity to continue life; slow suits sleep or sustained focus. rhythmAttention is her current life rhythm judged from the script you just wrote (phone-focused = actively using her phone, occupied = busy with a task, resting = lying down or low-energy, asleep = sleeping). This is only a scheduling handoff, not speech, a future event, or a contact decision — outbound contact belongs to the CONTACT ACTIONS contract." | "";
+export declare function urgeInstruction(enabled: boolean, phase: string): "" | "\nAfter writing the full script and its actions, optionally return urge:{pace:\"normal\"|\"slow\", suggestedDelayMinutes:number, basisQuote:\"exact sentence from this script\"}. Reflect the protagonist's natural next opportunity to continue life; slow suits sleep or sustained focus. This is only a scheduling handoff, not speech, a future event, or a contact decision — outbound contact belongs to the CONTACT ACTIONS contract.";

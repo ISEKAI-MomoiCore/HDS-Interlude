@@ -49,7 +49,7 @@ export function isConfigSection(value: string): value is ConfigSection {
 // 对应关系，新增配置节忘挂菜单时测试会红。
 
 export interface ConfigCenterSectionMeta {
-  /** Config Schema 顶层键（与 koishi.yml 字段同名）。 */
+  /** Config Schema 顶层键；mainPrompt 页面同时映射全局提示词和新故事默认文风。 */
   id: string
   label: string
   description: string
@@ -68,7 +68,7 @@ export const CONFIG_CENTER_MENU: ConfigCenterGroupMeta[] = [
     { id: 'presetSync', label: '预设同步', description: '从 typ0.space 导入故事档案与配置；可选择同步范围。', stage: 1 },
   ] },
   { id: 'required', label: '故事与接入', sections: [
-    { id: 'storyDefaults', label: '故事档案', description: '主角、世界、默认关系、地点、时区与叙事风格（新故事的默认档案）。', stage: 1 },
+    { id: 'storyDefaults', label: '故事档案', description: '新故事的主角、世界、默认关系、地点、时区与前置剧本。写作规则在「写作提示词」中设置。', stage: 1 },
     { id: 'model', label: '模型中心', description: '模型连接与用途勾选、主叙事参数、视觉与音频理解。', stage: 1 },
     { id: 'onebot', label: 'QQ 接入', description: '机器人账号、私聊用户白名单、群聊白名单与群规则。', stage: 1 },
   ] },
@@ -76,6 +76,7 @@ export const CONFIG_CENTER_MENU: ConfigCenterGroupMeta[] = [
     { id: 'sharedStory', label: '共享主剧本', description: '多人参与、跨账号行为与管理员权限。', stage: 1 },
   ] },
   { id: 'rhythm', label: '写作与推进', sections: [
+    { id: 'mainPrompt', label: '写作提示词', description: '主叙事系统指令、长期规则、输出补充规则、全局文风与新故事默认文风。', stage: 1 },
     { id: 'runtime', label: '上下文与运行时', description: '消息合并、打字模拟、失败重试、上下文预算与自动推进。', stage: 1 },
     { id: 'urge', label: 'Urge 弹性推进', description: '根据生活节奏与对话密度安排补写时机。', stage: 1 },
     { id: 'schedulePreplan', label: '日程预排', description: '近期稳定日程与变化颗粒度。', stage: 1 },
@@ -93,17 +94,16 @@ export const CONFIG_CENTER_MENU: ConfigCenterGroupMeta[] = [
   ] },
   { id: 'extensions', label: '扩展能力', sections: [
     { id: 'browser', label: '网页观察', description: 'Puppeteer 只读浏览与安全边界。', stage: 1 },
-    { id: 'worldSeeder', label: '世界播种器', description: '外部事件的生成与注入。', stage: 1 },
-    { id: 'weather', label: '运行时天气', description: '真实天气 → [世界事件] 注入。', stage: 1 },
+    { id: 'worldSeeder', label: '世界播种器', description: '外部事件的生成与注入；重要性和涉及程度共同决定注意度标注。', stage: 1 },
+    { id: 'weather', label: '运行时天气', description: '真实天气 → [世界事件]；天气数据用于注意度标注，不改变注入条件。', stage: 1 },
     { id: 'longHorizon', label: '长线叙事催化器', description: '潜在张力与首次微表达许可（实验）。', stage: 1 },
     { id: 'qzone', label: 'QQ 空间', description: '说说/评论/点赞通道（需 SnowLuma）。', stage: 1 },
     { id: 'research', label: '考据 Agent', description: '资料案头：经核实的写作参考（实验）。', stage: 1 },
   ] },
   { id: 'maintenance', label: '维护与诊断', sections: [
     { id: 'blindMode', label: '盲区模式', description: '稳定运行后关闭管理命令与运行日志，保留低频健康心跳。', stage: 1 },
-    { id: 'logging', label: '日志', description: '级别、信息密度、布局与隐私预览。', stage: 1 },
+    { id: 'logging', label: '日志', description: '日志级别、信息密度、布局，以及独立的消息、剧本与模型响应预览开关。', stage: 1 },
     { id: 'modelCapture', label: '模型数据采集', description: '实验性主叙事微调数据 JSONL 落盘。', stage: 1 },
-    { id: 'mainPrompt', label: '主提示词（高级）', description: '自定义写作系统提示词；留空使用内置模板，适合高级调试。', stage: 1 },
   ] },
 ]
 
@@ -190,5 +190,7 @@ export interface ConfigCenterReadResult {
 
 export interface ConfigCenterSaveResult {
   ok: boolean
+  values?: Record<string, unknown>
+  maskedFields?: string[]
   error?: string
 }

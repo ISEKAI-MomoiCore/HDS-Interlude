@@ -25,11 +25,13 @@ import { type AttentionWordState, type AttentionWord } from './narrative/attenti
 import { type LongArcGuidanceRecord, type LongArcProgressRow } from './long-arc';
 import { type PreparedCompaction, type PreparedCompactionRun } from './compaction/pipeline';
 import { type GroupDeliveryResult } from './delivery/pipeline';
+import { type PrologueConfig } from './script/prologue';
+import { type InterludeLogSink } from './logging';
 import { ForwardReadResult } from './forward-message';
 import { type SchedulePreplanConfig } from './schedule-preplan';
 import { ScriptDeliveryReference, ScriptDeliverySegmentStatus } from './script/delivery-ledger';
 import { DeliveryPolicyConfig } from './script/delivery-policy';
-import { CompactionDecision, IntentDraft, InterludeArc, InterludeScene, InterludeParticipant, InterludeStory, NarrativeDecision, NarrativeFact, NarrativeIntent, GroupMessageContext, NarrativeHistoricalImage, NarrativeInteraction, NarrativeProvider, NarrativeRequest, NarrativeCompactor, NarrativeEmbedder, OutgoingMessageDraft, ParticipantState, ScriptEntry, StatePatchDraft, StatePatchProposal, StorySetting, StoryState, BrowserIntentDraft, NarrativeAudio, NarrativeImage, OverlaySnapshot, WebObservation, AlterSystemConfig, ChatRhythmConfig, AgencyConfig, ChatActionCapabilities, ChatReactionName, FollowUpCommitmentDraft, FollowUpResolutionDraft, LocalMediaDraft, MessageReactionDraft, NativeFaceSemantic, StickerAsset, StickerCatalogEntry, EarlyNarrativeReply, QuotedMessageContext, SchedulePreplanRecord, SchedulePreplanReviewRequest, RecalledMoment, NarrativeEndpointOption } from './types';
+import { CompactionDecision, IntentDraft, InterludeArc, InterludeScene, InterludeParticipant, InterludeStory, NarrativeDecision, NarrativeFact, NarrativeIntent, GroupContext, GroupMessageContext, NarrativeHistoricalImage, NarrativeInteraction, NarrativeProvider, NarrativeRequest, NarrativeCompactor, NarrativeEmbedder, OutgoingMessageDraft, ParticipantState, ScriptEntry, StatePatchDraft, StatePatchProposal, StorySetting, StoryState, BrowserIntentDraft, NarrativeAudio, NarrativeImage, OverlaySnapshot, WebObservation, AlterSystemConfig, ChatRhythmConfig, AgencyConfig, ChatActionCapabilities, ChatReactionName, FollowUpCommitmentDraft, FollowUpResolutionDraft, LocalMediaDraft, MessageReactionDraft, NativeFaceSemantic, StickerAsset, StickerCatalogEntry, EarlyNarrativeReply, QuotedMessageContext, SchedulePreplanRecord, SchedulePreplanReviewRequest, RecalledMoment, NarrativeEndpointOption } from './types';
 import type { DesktopInboundEvent, DesktopRuntimePhase } from './desktop-bridge';
 export type DesktopTimelineTrack = 'script' | 'messages' | 'system' | 'scenes' | 'facts' | 'preplan' | 'alter' | 'compaction';
 export interface DesktopTimelineRangeRequest {
@@ -483,6 +485,7 @@ export interface StoryDefaults {
     perspective: string;
     perspectives?: string[];
     supplementaryFacts?: string[];
+    prologue?: PrologueConfig;
     userProfile: string;
     relationship: string;
     world: string;
@@ -505,6 +508,8 @@ export interface LoggingConfig {
     logScriptPreview: boolean;
     /** Emit user-visible incoming/outgoing message bodies to the plugin log. */
     logMessageContent?: boolean;
+    /** Emit otherwise private raw model-response previews at diagnostic debug level. */
+    logModelResponse?: boolean;
     previewLength: number;
 }
 export interface StoryStartReadiness {
@@ -629,6 +634,7 @@ export declare class InterludeService extends Service {
     deliveryExecutors: Set<string>;
     /** Known platform successes survive a local confirmation failure in this process. */
     private acceptedDeliveries;
+    private warnedMissingPrivateBubblePlans;
     private pendingDeliveryRecoveryBackoff;
     private blindModeHealthIssue;
     /** Console reload creates a new service instance, so normalized config can
@@ -732,6 +738,7 @@ export declare class InterludeService extends Service {
      * its transport action is still pending, and replaying the intent would run a
      * second model turn. DeliveryActions are the outbox truth. */
     private recoverPendingDeliveries;
+    private warnMissingPrivateBubblePlans;
     private pendingOutgoingDeliveryCandidates;
     private pendingDeliveryRecoveryKey;
     private deferPendingDeliveryRecovery;
@@ -761,6 +768,7 @@ export declare class InterludeService extends Service {
     setDesktopOnebotActionHandler(handler?: InterludeService['desktopOnebotActionHandler']): void;
     getDesktopRuntimePhase(): DesktopRuntimePhase;
     setDesktopRuntimePhase(phase: DesktopRuntimePhase): Promise<void>;
+    private rearmPrivateBubbleWakes;
     /** Snapshot is intentionally small; detailed timeline uses desktopTimelineSnapshot below. */
     desktopRuntimeSnapshot(): Promise<{
         phase: DesktopRuntimePhase;
@@ -1026,7 +1034,7 @@ export declare class InterludeService extends Service {
     private getCanonicalStory;
     findParticipant(session: Session, story?: InterludeStory): Promise<any>;
     participants(storyId: string, includePaused?: boolean): Promise<any[]>;
-    createStory(session: Session, name?: string): Promise<any>;
+    createStory(session: Session, name?: string, receivedAt?: Date): Promise<any>;
     /** Read-only preflight for manually starting a runtime story from Console defaults. */
     storyStartReadiness(session: Session): Promise<StoryStartReadiness>;
     /**
@@ -1312,6 +1320,8 @@ export declare class InterludeService extends Service {
      * 同名薄委托，既有调用点与全部测试零改动。 */
     private flushBufferedNarrative;
     advanceStory(story: InterludeStory, force?: boolean): Promise<OutgoingMessageDraft[]>;
+    private deferredAdvanceRunning;
+    private runDeferredAdvanceWork;
     /** Used by commands/tests to deliver a mixed set of account-targeted actions safely. */
     deliverMessages(story: InterludeStory, messages: OutgoingMessageDraft[], session?: Session): Promise<OutgoingMessageDraft[]>;
     compactStory(story: InterludeStory, force?: boolean): Promise<any>;
@@ -1335,7 +1345,7 @@ export declare class InterludeService extends Service {
      */
     offlineGroupCatchup(): Promise<void>;
     sweep(): Promise<void>;
-    /** I-2 待叙事显著度（内存态，重载即清——与 groupWillingness 同生命周期）：
+    /** I-2 待叙事显著度（内存态，随 invalidateBufferedNarratives / purge 失效）：
      * storyId → groupId → 状态。纯函数模块见 narrative/narrative-salience.ts。
      * 惰性初始化以兼容原型测试宿主（issue #5 桩防御惯例）。 */
     private groupNarrativeSalience?;
@@ -1437,6 +1447,7 @@ export declare class InterludeService extends Service {
     private isTimelineDirectorFused;
     /** Persist director health independently from the narrative cursor. */
     private persistTimelineRetry;
+    usesPrivateBubbleDelay(phase: NarrativeRequest['phase'], participant: InterludeParticipant | null, groupContext?: GroupContext): boolean;
     private tryDecide;
     private persistDecision;
     /** Keep the active-scene anchor in sync with the host ledger immediately,
@@ -1482,6 +1493,8 @@ export declare class InterludeService extends Service {
     private scheduleAlterAnalysis;
     private analyzeAlterSystem;
     private appendEntry;
+    private createScriptEntry;
+    private cacheScriptEntry;
     private appendMemory;
     /**
      * Retrieves the smallest useful slice of durable facts. When an embedding
@@ -1539,7 +1552,7 @@ export declare class InterludeService extends Service {
      * marks the future plan complete regardless of success. A failed browser is
      * still an event (the character could not access the page), but it never
      * blocks later dialogue or background life updates. */
-    executeDeferredBrowserIntent(story: InterludeStory, intent: NarrativeIntent, now: Date): Promise<WebObservation>;
+    executeDeferredBrowserIntent(story: InterludeStory, intent: NarrativeIntent, now: Date): Promise<any>;
     /** Read a page through Koishi Puppeteer. This is intentionally read-only:
      * it rejects non-public destinations, extracts visible text only, and closes
      * the page after every observation. */
@@ -1548,13 +1561,14 @@ export declare class InterludeService extends Service {
     /** Immediate browser reads are intentionally held in memory until the
      * final narrator result survives the stale-request check. This prevents an
      * obsolete two-second message burst from leaving a durable web event behind. */
-    private persistCollectedWebObservation;
+    persistCollectedWebObservation(observation: WebObservation, reuseCached?: boolean): Promise<WebObservation>;
     /** Issue #14：网页观察是旁路增强信息——单条落库失败只降级为 warn 并继续
      * 其余观察，绝不否决本轮已生成、可能已计费的回复投递。抽成独立方法以便
      * 直接回归（dbCreate 注入抛错 → 不上抛、逐条继续、留下可定位日志）。 */
     /** D3a：经 narrative/turn-executor 以宿主身份调用，可见性放宽。 */
     persistImmediateObservations(story: InterludeStory, participantId: string, observations: WebObservation[], phase: NarrativeRequest['phase']): Promise<void>;
     private findCachedWebObservation;
+    withBrowserPage<T>(timeoutMs: number, task: (page: any, step: <R>(operation: () => Promise<R>) => Promise<R>) => Promise<T>): Promise<T>;
     private withBrowserSlot;
     /** Persist a bounded retry so a transient provider failure cannot strand a user turn. */
     /** 用户回合成功后的清理：遗留的 narrative-retry 已无意义——其入站消息早已
@@ -1583,7 +1597,7 @@ export declare class InterludeService extends Service {
     /** 为最早的未到期唤醒意图补排计时器（keep-earliest 仲裁，重复调用安全）。
      *  只看严格未来的 notBefore——已到期的行属于 wakeDueIntents/sweep 的消费范围，
      *  补排指过去只会空转。 */
-    scheduleNextPendingWake(storyId: string): Promise<void>;
+    scheduleNextPendingWake(storyId: string, includeDue?: boolean): Promise<void>;
     /** Deliver already-decided <sep/> segments without invoking the narrator. */
     deliverDueSplitSegments(storyId: string): Promise<void>;
     /** Pending spoken promises are intentionally tiny and relationship-local. */
@@ -1659,12 +1673,6 @@ export declare class InterludeService extends Service {
     private get urgeConfig();
     private get effectiveUrgeRuntime();
     private scheduleUrgeAdvance;
-    /** 入站消息→节奏提升:asleep/resting → phone-focused(source: incoming)。
-     * 已是 phone-focused 但评估过期（>2h 无更新）时仅续期 assessedAt——消息
-     * 到达即"仍在看手机"的最新证据；不续期会让持续对话在 2 小时后节奏 stale，
-     * Urge 推进无端退化到兜底因子（phone-focused 1.4 → 1.0，间隔慢 40%）。
-     * 仅私聊路径调用：群消息的节奏由压缩器与主叙事交接维护。 */
-    elevateRhythmOnIncoming(storyId: string, now: Date): Promise<void>;
     private dueConversationFollowUps;
     /** Remove elapsed short passes after their single writing turn. The next
      * remaining pass stays persisted, so reloads never restart the 10/20-minute
@@ -2056,6 +2064,9 @@ export declare class InterludeService extends Service {
     backfillFactEmbeddings(storyId: string, batchSize: number): Promise<void>;
     persistStatePatch(story: InterludeStory, draft: StatePatchDraft, entries: ScriptEntry[], now: Date): Promise<void>;
     private developmentForPrompt;
+    /** Adapter for startup/Console and auxiliary components; all use the service's logger policy. */
+    readonly operationLogger: InterludeLogSink;
+    private modelResponseLogLimit;
     private report;
     /** Emit an operational record only when the selected verbosity includes it.
      * Summary is for outcomes, standard is for scheduler/model activity, and

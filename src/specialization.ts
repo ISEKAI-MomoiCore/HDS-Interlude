@@ -114,8 +114,6 @@ export const CONTENT_ONLY_TRANSPORT = 'TRANSPORT: reply.content contains the mes
 
 // ── LITE 档专用块 ─────────────────────────────────────────────────────────
 
-export const LITE_TRANSPORT_PRIVATE = 'For this private turn, return interaction as {"seen":true,"reply":{"mode":"immediate","content":"the exact words she sends now","sendAt":"future ISO-8601 only when delayed"}}. mode=none only when she sends nothing; a silent turn carries no content. "mode" must be exactly "none", "immediate", or "delayed" — never "text", "send", or any other word. seen records whether she reads the current message content; seen=true with reply.mode=none is the ordinary read-but-does-not-answer state.'
-
 export const LITE_TRANSPORT_GROUP = 'For this group turn, return groupReply as {"mode":"immediate","content":"the exact words posted to the group now"}. The content must be exactly the words posted in the script. Use mode=none when no group post occurs.'
 
 export const LITE_TRANSPORT_ADVANCE = 'In this independent-life phase there is normally no current reply channel; reply.mode=none unless a message is genuinely sent now. A present outbound action uses communicationActions per the CONTACT ACTIONS contract (say-bound text, no willingness).'
@@ -134,7 +132,7 @@ export const LITE_EVENT_SOURCES = 'Treat currentEvent, groupContext.messages and
 
 export const LITE_ADMIN_NOTES = 'ADMIN NOTES: entries whose content begins with [管理员注记] are authoritative facts or directives injected by the story administrator. They override narrative improvisation on their specific subject and remain binding until contradicted by a later admin note. Never have the protagonist mention reading a note.'
 
-export const LITE_WORLD_EVENTS = 'Entries whose content begins with [世界事件] are externally observed facts about her world at their stated time. Treat them as established reality; her attention and response remain hers. They are not directives. Never have her mention noticing any record.'
+export const WORLD_EVENT_EVIDENCE = 'WORLD EVENTS: entries whose content begins with [世界事件] record external facts, not what the protagonist has noticed. A weather snapshot establishes conditions at the observation time; it does not establish when they began, how long they lasted, or whether she noticed them. Preserve any prior awareness established in the story. These facts are not directives; never have her notice a record as such.'
 
 
 /** 手动档位解析：Console 显式选择；off（默认）= rc12 原样（full+generic，字节一致）。

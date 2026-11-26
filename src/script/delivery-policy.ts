@@ -27,6 +27,8 @@ export interface PolicyActionRecord {
   occurredAt: Date
   /** pending/delivered/partial/unknown 计占用；failed/cancelled 已释放。 */
   settled: boolean
+  /** Explicit user-message replies are excluded from the daily proactive cap. */
+  userInitiated?: boolean
 }
 
 export type DeliveryPolicyReason =
@@ -83,6 +85,8 @@ export function policyActionRecordsFromLedger(
         participantId: action.participantId,
         occurredAt: at,
         settled: occupiesQuota(action.status),
+        // Missing means a legacy ledger row: preserve its historical quota impact.
+        userInitiated: action.userInitiated === true,
       })
     }
   }
@@ -123,8 +127,9 @@ export function evaluateDeliveryPolicy(input: {
   }
   const settled = records.filter(record => record.settled && record.participantId === targetId
     && now.getTime() - record.occurredAt.getTime() < windowMs)
-  if (config.proactivePerTargetDailyCap > 0 && settled.length >= config.proactivePerTargetDailyCap) {
-    return { ...base, allowed: false, reason: 'policy-daily-cap', reasonText: '滚动 24 小时额度已满', counted: settled.length }
+  const proactiveSettled = settled.filter(record => record.userInitiated !== true)
+  if (config.proactivePerTargetDailyCap > 0 && proactiveSettled.length >= config.proactivePerTargetDailyCap) {
+    return { ...base, allowed: false, reason: 'policy-daily-cap', reasonText: '滚动 24 小时额度已满', counted: proactiveSettled.length }
   }
   if (!input.intervalExempt && config.minimumRunIntervalMinutes > 0) {
     const last = settled.reduce<Date | undefined>((latest, record) =>
@@ -133,11 +138,11 @@ export function evaluateDeliveryPolicy(input: {
       const eligibleAt = new Date(last.getTime() + config.minimumRunIntervalMinutes * 60_000)
       if (now < eligibleAt) {
         return { ...base, allowed: false, reason: 'policy-run-interval', reasonText: '命中最短运行间隔',
-          counted: settled.length, nextEligibleAt: eligibleAt.toISOString() }
+          counted: proactiveSettled.length, nextEligibleAt: eligibleAt.toISOString() }
       }
     }
   }
-  return { ...base, allowed: true, reason: 'policy-available', reasonText: '运行策略放行', counted: settled.length }
+  return { ...base, allowed: true, reason: 'policy-available', reasonText: '运行策略放行', counted: proactiveSettled.length }
 }
 
 export interface LegacyRunLimits {

@@ -1,6 +1,7 @@
-import { normalizeFollowUpSummary, clip, isRecord, toDate, normalizeIntentUpdates, isActiveConsequence, isActiveConsequenceDraft, consequenceExpiresAt, consequenceStrength, normalizeBrowserIntentDraft, browserIntentFromPayload, followUpDeadline, followUpDeferredChecks, MAX_FOLLOW_UP_DEFERRED_CHECKS, automaticDeliveryFromPayload, followUpExpiresAt } from './narrative-normalizers'
+import { runStorySerialized, normalizeFollowUpSummary, clip, isRecord, toDate, normalizeIntentUpdates, isActiveConsequence, isActiveConsequenceDraft, consequenceExpiresAt, consequenceStrength, normalizeBrowserIntentDraft, browserIntentFromPayload, followUpDeadline, followUpDeferredChecks, MAX_FOLLOW_UP_DEFERRED_CHECKS, automaticDeliveryFromPayload, followUpExpiresAt } from './narrative-normalizers'
 import type { NarrativeIntent, InterludeStory, ScriptEntry, IntentDraft, BrowserIntentDraft, WebObservation, OutgoingMessageDraft, FollowUpCommitmentDraft, FollowUpResolutionDraft, NarrativeInteraction } from './types'
 import { currentDesktopProcessingContext, persistedDesktopProcessingContext } from './processing-context'
+import { deliverPrivateBubbleGroup, privateBubbleBusy, privateBubblePlan } from './delivery/private-bubbles'
 import { restoreMessageEvent, restoreDesktopContext } from './delivery'
 import { formatLogTime } from './time'
 import { ResearchDesk, effectiveSearchBackend } from './research/desk'
@@ -115,7 +116,10 @@ export function researchProvider(svc: any) {
 /** P7 自 service.ts 意图簿记区迁出（2026-10-29），行为不变；宿主经 service 同名委托传入。 */
 export async function appendIntent(svc: any, storyId: string, intent: IntentDraft, now: Date, participantId = '') {
     const notBefore = toDate(intent.notBefore)
-    const payload = isRecord(intent.payload) ? intent.payload : {}
+    const payload = isRecord(intent.payload) ? { ...intent.payload } : {}
+    // Only the timed private delivery writer may create this host-owned plan.
+    delete payload.privateBubblePlan
+    delete payload.privateBubbleInterruption
     const context = currentDesktopProcessingContext()
     // Persist the bridge correlation at the intent boundary as a last line of
     // defence. Most visible messages already carry it through attachMessageEvent,
@@ -286,18 +290,34 @@ export function researchStatusLines(svc: any) {
 
 /** P7 自 service.ts 意图簿记区迁出（2026-10-29），行为不变；宿主经 service 同名委托传入。 */
 export async function executeDeferredBrowserIntent(svc: any, story: InterludeStory, intent: NarrativeIntent, now: Date) {
-    const payload = browserIntentFromPayload(intent.payload)
+    const task = captureStoryTask(svc, story.id)
+    const query = { id: intent.id, storyId: story.id, status: 'pending' }
+    const current = await runStorySerialized(svc, story.id, async () => {
+      if (!task.taskCurrent()) return undefined
+      return (await svc.dbGet('interlude_intent', query))[0] as NarrativeIntent | undefined
+    })
+    if (!current || !task.taskCurrent()) return undefined
     let observation: WebObservation | undefined
+    let failure: unknown
     try {
-      observation = await svc.collectWebObservation(story, payload, intent.participantId, intent.id, now)
+      observation = await svc.collectWebObservation(story, browserIntentFromPayload(current.payload), current.participantId, current.id, now)
     } catch (error) {
-      // Issue #14：观察执行/落库失败不得让 browser intent 永远停在 pending
-      //（那会变成每个 sweep 重撞一次的无限重试）。按失败完成并留可定位日志。
-      svc.reportOperation('standard', 'warn', story, 'advance',
-        '延迟网页观察执行失败，意图按失败完成 意图=%s 错误=%s', intent.id, error instanceof Error ? error.message : String(error))
+      failure = error
     }
-    await svc.dbSet('interlude_intent', { id: intent.id }, { status: 'completed', updatedAt: new Date() })
-    return observation
+    return runStorySerialized(svc, story.id, async () => {
+      if (!task.taskCurrent() || !(await svc.dbGet('interlude_intent', query)).length || !task.taskCurrent()) return undefined
+      let result: WebObservation | undefined
+      try {
+        if (failure) throw failure
+        if (observation) result = await svc.persistCollectedWebObservation(observation, true)
+      } catch (error) {
+        // Issue #14: an observation failure is terminal, not an endless browser retry.
+        svc.reportOperation('standard', 'warn', story, 'advance',
+          '延迟网页观察执行失败，意图按失败完成 意图=%d 错误=%s', intent.id, error)
+      }
+      if (task.taskCurrent()) await svc.dbSet('interlude_intent', query, { status: 'completed', updatedAt: new Date() })
+      return result
+    })
   }
 
 
@@ -441,29 +461,39 @@ export async function deferDueIntentsBehindPendingSplits(svc: any, story: Interl
   }
 
 
-/** P7 自 service.ts 意图簿记区迁出（2026-10-29），行为不变；宿主经 service 同名委托传入。 */
-export async function scheduleNextPendingWake(svc: any, storyId: string) {
+/** Restore the earliest timer. Cancellation can leave an already-due survivor. */
+export async function scheduleNextPendingWake(svc: any, storyId: string, includeDue = false) {
+    const now = new Date()
     const pending = await svc.dbGet('interlude_intent', {
       storyId, status: 'pending',
       type: { $in: WAKE_DRIVEN_INTENT_TYPES },
-      notBefore: { $gt: new Date() },
+      ...(includeDue ? {} : { notBefore: { $gt: now } }),
     }, { sort: { notBefore: 'asc' }, limit: 1 })
     const next = pending[0]
-    if (next) svc.scheduleDueIntentWake(storyId, next.notBefore)
+    if (next) svc.scheduleDueIntentWake(storyId, next.notBefore < now ? now : next.notBefore)
   }
 
 
-/** P7 自 service.ts 意图簿记区迁出（2026-10-29），行为不变；宿主经 service 同名委托传入。 */
+/** Wake legacy segments and validated private bubble groups through their respective delivery paths. */
 export async function deliverDueSplitSegments(svc: any, storyId: string) {
+    let privateIntentId: number | undefined
     const generation = svc.taskGeneration(storyId)
     await svc.serial(storyId, async () => {
       if (!svc.taskGenerationCurrent(storyId, generation)) return
       const story = await svc.getStory(storyId)
       const now = new Date()
-      const due = await svc.dbGet('interlude_intent', {
+      const rows = await svc.dbGet('interlude_intent', {
         storyId, status: 'pending', type: 'split-message', notBefore: { $lte: now },
-      }, { sort: { notBefore: 'asc' }, limit: 20 })
+      }, { sort: { notBefore: 'asc' } }) as NarrativeIntent[]
+      // A split blocked by an inbound cancellation or an in-flight send must
+      // not hide another participant's due split. Those paths rearm on exit.
+      const due = rows.filter(intent => !privateBubbleBusy(svc, intent)
+        && (!intent.participantId || !svc.interruptedTypingParticipants.has(intent.participantId)))
       const next = due[0]
+      if (next && privateBubblePlan(next)) {
+        privateIntentId = next.id
+        return
+      }
       if (next) {
         const intent = next
         const content = clip(intent.payload?.content, svc.config.runtime.maxMessageCharacters)
@@ -518,7 +548,8 @@ export async function deliverDueSplitSegments(svc: any, storyId: string) {
       }
       // When several segments became overdue together, restore a fresh
       // typing interval instead of immediately draining the backlog.
-      const remaining = due.slice(1)
+      const remaining = due.slice(1).filter(intent => !privateBubblePlan(intent))
+      if (due.slice(1).some(intent => privateBubblePlan(intent))) svc.scheduleDueIntentWake(storyId, new Date())
       if (remaining.length) {
         const following = remaining[0]
         if (following.notBefore <= now) {
@@ -532,6 +563,7 @@ export async function deliverDueSplitSegments(svc: any, storyId: string) {
       }
       await svc.scheduleNextPendingWake(storyId)
     })
+    if (privateIntentId !== undefined) await deliverPrivateBubbleGroup(svc, storyId, privateIntentId)
   }
 
 

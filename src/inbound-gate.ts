@@ -52,9 +52,11 @@ export async function receiveGroup(svc: any, session: Session, receivedAt?: Date
     // "at 缺失"与"at 存在但 id 不符"）。审计修正：走 reportStandaloneOperation
     // （经 verbosity 门控，与其它诊断行一致），群号同样脱敏。
     const dropAtCollectionGate = (reason: string): false => {
-      svc.reportStandaloneOperation?.('diagnostic', 'debug', '群消息被采集门丢弃（先于故事查找，不落库） 群=%s 原因=%s @机器人=%s 引用=%s 音频=%d 图片=%d 预览=%s',
-        maskQqIds(groupId), reason, mentionedBot, quotedBot, audioSources.length, imageSources.length,
-        maskQqIds(String(session.content ?? '')).slice(0, 60))
+      const logging = svc.config.logging
+      const preview = logging?.logMessageContent ? maskQqIds(String(session.content ?? '')).slice(0, Math.min(60, logging.previewLength ?? 60)) : undefined
+      svc.reportStandaloneOperation?.('diagnostic', 'debug', '群消息被采集门丢弃（先于故事查找，不落库） 群=%s 原因=%s @机器人=%s 引用=%s 音频=%d 图片=%d'
+        + (preview === undefined ? '' : ' 预览=%s'),
+        maskQqIds(groupId), reason, mentionedBot, quotedBot, audioSources.length, imageSources.length, ...(preview === undefined ? [] : [preview]))
       return false
     }
     const hasForwardNode = /<forward[\s>]/i.test(String(session.content ?? ''))
@@ -63,7 +65,7 @@ export async function receiveGroup(svc: any, session: Session, receivedAt?: Date
     })
     if (collectionDrop) return dropAtCollectionGate(collectionDrop)
     let story = await svc.findStory(session)
-    if (!story && svc.config.runtime.autoCreate) story = await svc.createStory(session)
+    if (!story && svc.config.runtime.autoCreate) story = await svc.createStory(session, undefined, receivedAt)
     if (!story || story.status !== 'active') return false
     const now = receivedAt
     const senderId = normalizeAccountId(session.userId)
@@ -149,7 +151,7 @@ export async function receive(svc: any, session: Session, receivedAt?: Date) {
     // model nor create a persistent story by merely sending a private message.
     if (!svc.canHandleSession(session)) return false
     let story = await svc.findStory(session)
-    if (!story && svc.config.runtime.autoCreate) story = await svc.createStory(session)
+    if (!story && svc.config.runtime.autoCreate) story = await svc.createStory(session, undefined, receivedAt)
     if (!story || story.status !== 'active') {
       svc.reportStandaloneOperation('diagnostic', 'debug', '私聊未处理：故事不存在或已暂停 平台=%s 机器人ID=%s 用户ID=%s', session.platform, session.selfId, session.userId)
       return false
@@ -185,9 +187,6 @@ export async function receive(svc: any, session: Session, receivedAt?: Date) {
     // This lets an arriving message invalidate a model request that is about
     // to persist, and lets a due split segment stop before transport begins.
     svc.signalIncomingInterruption(story, participant)
-    // 用户消息到达=她显然在看手机:asleep/resting 立即提升为 phone-focused,
-    // 不等主叙事或压缩器——节奏变化应与触发事件同步(推进密度立刻跟上)。
-    svc.elevateRhythmOnIncoming(story.id, receivedAt)
     const forward = await svc.readForward(session)
     const userInput = svc.describeUserEvent(story, session, forward)
     // M1a 端点层（解析在故事队列外）：注册表命中才标注通道上下文/刷新端点状态，
@@ -267,7 +266,7 @@ export async function receive(svc: any, session: Session, receivedAt?: Date) {
     if (userInput.audioSources.length) {
       svc.reportOperation('standard', 'info', accepted.story, 'user-message', '当前事件包含语音附件 数量=%d 原生音频=%s', userInput.audioSources.length, svc.audioConfig.enabled ? '开启' : '关闭')
     }
-    svc.reportOperation('standard', 'info', accepted.story, 'user-message', '用户回合已入队 参与者=%s 已取消旧计划=%d', accepted.participant.id, accepted.superseded.length)
+    svc.reportOperation('standard', 'info', accepted.story, 'user-message', '用户回合已入队 参与者=%s 旧计划打断记录=%d', accepted.participant.id, accepted.superseded.length)
     return true
   }
 

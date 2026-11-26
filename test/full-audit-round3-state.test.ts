@@ -7,41 +7,56 @@ import { assembleGroupBackground } from '../src/narrative/group-background'
 import { InterludeService } from '../src/service'
 const noop = () => {}
 const now = new Date('2026-11-13T12:00:00Z')
-function rhythmFixture(attention = 'asleep', assessedAt = new Date(now.getTime() - 3 * 3600000)) {
-  let stored: any = { ...emptyStoryState(), lifeRhythm: { attention, basis: 'old basis', assessedAt: assessedAt.toISOString(), source: 'narrator' } }
+const quote = '她还在专心写报告。'
+const evidence = { id: 11, storyId: 's', kind: 'script', actor: 'narrator', content: quote, metadata: {}, occurredAt: now }
+function rhythmFixture(attention = 'asleep', assessedAt = new Date(now.getTime() - 3 * 3600000), sourceEntryId?: number) {
+  let stored: any = { ...emptyStoryState(), lifeRhythm: { attention, basis: 'old basis', assessedAt: assessedAt.toISOString(), sourceEntryId, source: 'narrator' } }
+  let latest = evidence
   const host: any = {
     memoryConfig: { sceneHookCharacters: 100, sceneSummaryCharacters: 300, arcSummaryCharacters: 300 },
-    dbGet: async () => [], dbSet: async (table: string, _query: any, patch: any) => { if (table === 'interlude_story' && patch.state) stored = patch.state },
+    dbGet: async (table: string, query: any) => table === 'interlude_script_entry' ? (query.kind === 'script' ? [latest] : []) : [],
+    dbSet: async (table: string, _query: any, patch: any) => { if (table === 'interlude_story' && patch.state) stored = patch.state },
     getStory: async () => ({ id: 's', state: stored }), activeArc: async () => ({ id: 1 }), reportOperation: noop,
   }
-  return { host, state: () => decodeStoryState(stored), decision: (attention: string, basis: string) => ({ scene: { summary: '生活继续' }, arc: { summary: '弧摘要' }, lifeRhythm: { attention, basis } }) }
+  return { host, state: () => decodeStoryState(stored), setLatest: (entry: typeof evidence) => { latest = entry } }
 }
-const entries: any[] = [{ id: 1, storyId: 's', kind: 'script', content: '她仍在休息。', metadata: {}, occurredAt: now }]
-async function assess(f: ReturnType<typeof rhythmFixture>, attention: string, at: Date, basis = 'new basis') {
-  await persistCompactionOutputs(f.host, { id: 's' } as any, { id: 1, entryCount: 0 } as any, f.decision(attention, basis) as any, entries, at)
+async function assess(f: ReturnType<typeof rhythmFixture>, attention = 'busy-work', sourceEntryId = evidence.id, draftQuote = quote) {
+  const decision = { scene: { summary: '生活继续' }, arc: { summary: '弧摘要' }, lifeRhythm: { attention, quote: draftQuote, sourceEntryId } }
+  await persistCompactionOutputs(f.host, { id: 's' } as any, { id: 1, entryCount: 0 } as any, decision as any, [evidence] as any, new Date(now.getTime() + 5000))
 }
-for (const attention of ['asleep', 'occupied']) test(`F10 renewed ${attention} refreshes basis/time and downstream freshness`, async () => {
-  const f = rhythmFixture(attention)
+test('F10 compaction fills missing focus using the script timestamp and evidence id', async () => {
+  const f = rhythmFixture('busy-work', undefined, 10)
   assert.equal(lifeRhythmStale(f.state().lifeRhythm, now.getTime()), true)
-  await assess(f, attention, now)
-  assert.equal(f.state().lifeRhythm?.assessedAt, now.toISOString())
-  assert.equal(f.state().lifeRhythm?.basis, 'new basis')
-  assert.equal(f.state().lifeRhythm?.source, 'compactor')
-  assert.equal(lifeRhythmStale(f.state().lifeRhythm, now.getTime()), false)
+  await assess(f)
+  assert.deepEqual(f.state().lifeRhythm, { attention: 'busy-work', basis: quote, assessedAt: now.toISOString(), sourceEntryId: 11, source: 'compactor' })
+  await assess(f, 'busy-play')
+  assert.equal(f.state().lifeRhythm?.attention, 'busy-work', 'same entry does not get reassessed')
 })
-for (const attention of ['asleep', 'available']) test(`F10 stale ${attention} assessment preserves newer rhythm`, async () => {
-  const f = rhythmFixture('asleep', now)
-  await assess(f, attention, new Date(now.getTime() - 1000), 'stale basis')
-  assert.equal(f.state().lifeRhythm?.attention, 'asleep')
-  assert.equal(f.state().lifeRhythm?.assessedAt, now.toISOString())
-  assert.equal(f.state().lifeRhythm?.basis, 'old basis')
+test('F10 compaction preserves a later legacy assessment without an evidence id', async () => {
+  const laterAssessment = new Date(now.getTime() + 1000)
+  const f = rhythmFixture('rest-conscious', laterAssessment)
+  await assess(f)
+  assert.equal(f.state().lifeRhythm?.attention, 'rest-conscious')
+  assert.equal(f.state().lifeRhythm?.assessedAt, laterAssessment.toISOString())
 })
-test('F10 valid attention change still commits, invalid draft preserves last assessment', async () => {
+test('F10 compaction result from an older snapshot is ignored even if latest script omitted focus', async () => {
   const f = rhythmFixture()
-  await assess(f, 'occupied', now)
-  assert.equal(f.state().lifeRhythm?.attention, 'occupied')
-  await assess(f, 'unknown', new Date(now.getTime() + 1000))
-  assert.equal(f.state().lifeRhythm?.assessedAt, now.toISOString())
+  f.setLatest({ ...evidence, id: 12 })
+  await assess(f)
+  assert.equal(f.state().lifeRhythm?.attention, 'asleep')
+})
+test('F10 compaction respects a grounded narrator handoff on the same entry', async () => {
+  const f = rhythmFixture()
+  f.setLatest({ ...evidence, metadata: { lifeHandoff: { focus: { attention: 'busy-work', quote } } } })
+  await assess(f, 'busy-play')
+  assert.equal(f.state().lifeRhythm?.attention, 'asleep')
+})
+test('F10 compaction rejects invalid attention, an unknown source, and an ungrounded quote', async () => {
+  const f = rhythmFixture()
+  await assess(f, 'occupied')
+  await assess(f, 'busy-work', 99)
+  await assess(f, 'busy-work', evidence.id, '她睡着了。')
+  assert.equal(f.state().lifeRhythm?.attention, 'asleep')
 })
 function background(content: string, truncated = false, perEntryCharacters = 200) {
   return assembleGroupBackground({

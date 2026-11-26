@@ -14,6 +14,8 @@ export interface PolicyActionRecord {
     occurredAt: Date;
     /** pending/delivered/partial/unknown 计占用；failed/cancelled 已释放。 */
     settled: boolean;
+    /** Explicit user-message replies are excluded from the daily proactive cap. */
+    userInitiated?: boolean;
 }
 export type DeliveryPolicyReason = 'policy-off' | 'policy-available' | 'policy-run-interval' | 'policy-daily-cap' | 'policy-deferral-expired';
 export interface DeliveryPolicyEvaluation {

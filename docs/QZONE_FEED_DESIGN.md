@@ -63,12 +63,12 @@ SnowLuma qzone API ─┤ 好友动态轮询 → 过滤/去重/正文对齐     
 
 1. **提示词**（narrator 合约两条规则行）：qzone-action 意图教学（post 内容 ≤120 字她的口吻、评论 ≤60 字随手打的语气、目标字段从 [好友动态] 条目复制、不得在正文宣称动作、不得重复排期）+ SOCIAL SURFACE 规则（[空间动态]/[好友动态] 均为既成事实）。
 2. **回合内决策**：主作者在任意相位（user-message/advance/follow-up/due）输出 `intents: [{type: 'qzone-action', notBefore, payload}]`，走通用意图校验与持久化，参与 pending 投影（模型能看到自己已排期的动作，保证不重复）。
-3. **到期执行**（`executeQzoneIntent`，排水里 browser-research 之后）：
+3. **到期执行**（`executeQzoneIntent`，在同轮网页任务之后、主叙事推进之前）：
    - payload 白名单校验（非法 → 完成意图，不卡排水）
    - **目标来源绑定**：评论/点赞的 tid 必须命中审计表里已入账的动态（feed-seen）或自己已发表的说说（confirmed post）——模型编造的 tid 一律拒绝
    - `qzoneExecute`：限流门 + pending 预留（在故事串行队列内原子完成，网络调用留外）→ SnowLuma 动作 → 回写
    - 发帖/评论成功写 `[空间动态]` 条目；点赞不单独入账（过细）
-   - 成败都完成意图，**绝不作为未来计划回流叙事**
+   - 发起外部动作前先持久化完成该一次性意图，防止重载后再次执行；动作的真实结果由单独的审计行记录。原生 OneBot 等待回执最多 30 秒，桌面桥沿用其回执超时；如果发送结果不明，记为 `unknown` 并计入配额，不自动重试。
 
 ## 六、感知侧管线（qzoneFeedSweep）
 

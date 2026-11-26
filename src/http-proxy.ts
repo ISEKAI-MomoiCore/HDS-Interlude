@@ -1,3 +1,5 @@
+import { providerSafeErrorText } from './provider-response'
+
 /** Keep a provider's proxy alive until the streaming body has been consumed. */
 export async function withProviderStream<T>(proxyAgent: string | undefined, task: (request: typeof fetch) => Promise<T>): Promise<T> {
   if (!proxyAgent) return task(fetch)
@@ -83,8 +85,10 @@ export function describeFetchFailure(error: unknown): string {
  * still attached, so `error.message` alone turns a useful 400 into just
  * "Bad Request". Keep the body bounded because gateways sometimes echo large
  * validation payloads (or request fragments). */
-export function describeHttpError(error: unknown): string {
+export function describeHttpError(error: unknown, includeResponseBody = true): string {
   if (!(error instanceof Error)) return String(error)
+  const safeText = !includeResponseBody ? providerSafeErrorText(error) : undefined
+  if (safeText) return safeText
   const response = (error as { response?: unknown }).response
   if (!response || typeof response !== 'object') return describeFetchFailure(error)
 
@@ -95,6 +99,7 @@ export function describeHttpError(error: unknown): string {
   }
   const status = typeof raw.status === 'number' && Number.isFinite(raw.status) ? raw.status : undefined
   if (!status) return describeFetchFailure(error)
+  if (!includeResponseBody) return `HTTP ${status}`
 
   const statusText = typeof raw.statusText === 'string' && raw.statusText.trim()
     ? raw.statusText.trim()

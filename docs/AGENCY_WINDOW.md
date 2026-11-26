@@ -1,6 +1,6 @@
 # Agency Window
 
-适用版本：`1.0.1-rc60`
+适用版本：`1.0.1`
 
 ## 定位
 
@@ -25,6 +25,8 @@ Agency Window 是主角生活条件的证据投影。它记录日程负荷、隐
 - `sourceEntryIds`
 - `updatedAt`
 
+`deviceAccess` 与 `lifeRhythm.attention`（Focus）彼此独立：前者描述能否接触并查看设备，后者用于已有事件的注意度标注。首版 T 档不按设备可达性过滤消息；Console 分别放在「当前行动条件」和「Focus 与事件注意度」。
+
 每个状态都绑定真实剧本条目，并受到 `maxWindowMinutes` 限制。证据过期后以“未知”进入概览和提示词，下一次生活回合可以重新建立条件。
 
 ## 联系动作
@@ -42,11 +44,13 @@ Agency Window 是主角生活条件的证据投影。它记录日程负荷、隐
 
 统一策略位于 `deliveryPolicy`：
 
-- `proactivePerTargetDailyCap`：每目标滚动 24 小时逻辑主动动作上限。
+- `proactivePerTargetDailyCap`：每目标滚动 24 小时逻辑主动动作上限；`user-message` 回合的响应性出站不占此额度。
 - `minimumRunIntervalMinutes`：逻辑主动动作的最短运行间隔。
 - `deferralValidityMinutes`：明确延期动作的有效期限。
 
 总开关、白名单、端点健康、端点发起资格、设备和真实平台能力在各自边界执行。额度从投递账本派生，稳定的脚本事件身份贯穿重启、回执、人工核实和取消。
+
+最短运行间隔仍以全部已结算出站为锚点；旧账本缺少来源印章时，按主动动作计入日额度。
 
 ## 历史兼容
 

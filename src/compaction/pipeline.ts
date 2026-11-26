@@ -10,10 +10,11 @@
  * embedder）与状态字段留守 service，经宿主引用访问。 */
 /** D4：时间常量本地化（原 koishi Time），叙事侧去 koishi 运行时依赖。 */
 const Time = { second: 1_000, minute: 60_000, hour: 3_600_000, day: 86_400_000 } as const
-import { normalizeLifeRhythmDraft } from '../narrator'
+import { normalizeFocusDraft } from '../life-rhythm'
+import { entryLifeHandoff } from '../script/life-handoff'
 import { advanceAttentionWords, type AttentionWordState } from '../narrative/attention-words'
 import { SCHEDULE_PREPLAN_RETRY_BACKOFF } from '../schedule-preplan'
-import { decodeStoryState, encodeStoryState } from '../story-state'
+import { decodeStoryState, encodeStoryState, lifeRhythmFromScript } from '../story-state'
 import { compactionPrefix, assertContinuityReview } from '../script/continuity-checkpoint'
 import { promptReadyDevelopment, developmentDimension, reviewedDevelopmentSupport } from '../script/development'
 import { groundedEpisodeTags } from '../script/episode-index'
@@ -496,27 +497,24 @@ export async function persistCompactionOutputs(svc: any, story: InterludeStory, 
     })
     const scenePatch = decision.scene ?? {}
     const presenceUpdates = normalizeScenePresenceDrafts(scenePatch.presence, entries, now)
-    // 压缩器附带的主角节奏（五档）——生活节奏唯一事实源（7.1.4 统一）；
-    // 旧三值 lifeStatus 已并入 lifeRhythm（加载迁移），不再单独落库。
-    const rhythmDraft = normalizeLifeRhythmDraft(decision.lifeRhythm)
-    if (rhythmDraft) {
-      const current = await svc.getStory(story.id)
-      const state = decodeStoryState(current.state)
-      // A renewed assessment refreshes freshness even when attention is unchanged.
-      // An older compaction snapshot yields to a newer narrator/incoming assessment.
-      if (!state.lifeRhythm || Date.parse(state.lifeRhythm.assessedAt) <= now.getTime()) {
-        await svc.dbSet('interlude_story', { id: current.id }, {
-          state: encodeStoryState({
-            ...state,
-            lifeRhythm: {
-              attention: rhythmDraft.attention as 'phone-focused' | 'available' | 'occupied' | 'resting' | 'asleep',
-              basis: rhythmDraft.basis || '压缩器评估',
-              assessedAt: now.toISOString(),
-              source: 'compactor' as const,
-            },
-          }), updatedAt: now,
-        })
-        svc.reportOperation('diagnostic', 'debug', story, 'advance', '生活节奏已更新 节奏=%s', rhythmDraft.attention)
+    const focusDraft = decision.lifeRhythm
+    const evidence = focusDraft && entries.find(entry => entry.id === focusDraft.sourceEntryId && entry.kind === 'script' && entry.actor === 'narrator')
+    const focus = evidence && normalizeFocusDraft(focusDraft, evidence.content)
+    if (focus && evidence) {
+      // The model runs outside the story queue and can see only a prefix of the scene.
+      const [latest] = await svc.dbGet('interlude_script_entry', { storyId: story.id, kind: 'script', actor: 'narrator' }, { limit: 1, sort: { id: 'desc' } }) as ScriptEntry[]
+      if (latest?.id === evidence.id && !entryLifeHandoff(latest)?.focus && normalizeFocusDraft(focus, latest.content)) {
+        const current = await svc.getStory(story.id)
+        const state = decodeStoryState(current.state)
+        const assessmentAfterEvidence = !!state.lifeRhythm?.assessedAt
+          && Date.parse(state.lifeRhythm.assessedAt) > latest.occurredAt.getTime()
+        if ((state.lifeRhythm?.sourceEntryId ?? 0) < evidence.id && !assessmentAfterEvidence) {
+          const lifeRhythm = lifeRhythmFromScript(focus, latest, 'compactor')
+          await svc.dbSet('interlude_story', { id: current.id }, {
+            state: encodeStoryState({ ...state, lifeRhythm }), updatedAt: now,
+          })
+          svc.reportOperation('diagnostic', 'debug', story, 'advance', '补记生活节奏 节奏=%s 剧本=%d', focus.attention, evidence.id)
+        }
       }
     }
     if (presenceUpdates.length) {

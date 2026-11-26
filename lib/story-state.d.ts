@@ -1,4 +1,5 @@
-import { AutomaticDeliverySummary, ContinuitySnapshot, ScenePresenceState, StoryState, WorkingDetail, DialogueBurstState, SceneFrame } from './types';
+import { type FocusDraft } from './life-rhythm';
+import { AutomaticDeliverySummary, ContinuitySnapshot, ScenePresenceState, ScriptEntry, StoryState, WorkingDetail, DialogueBurstState, SceneFrame } from './types';
 /**
  * Version 1 is the first state envelope that is decoded and encoded in one
  * place. Older beta10 rows have no version and are upgraded on read.
@@ -35,8 +36,9 @@ export declare function normalizeLifeStatus(value: unknown): {
     status: 'busy' | 'asleep' | 'idle';
     updatedAt: string;
 } | undefined;
-/** 五档节奏归一化：合法档位+有效时间戳+合法来源才保留。 */
+/** Load detailed focus and pre-upgrade rhythm without guessing a subtype. */
 export declare function normalizeLifeRhythm(value: unknown): StoryState['lifeRhythm'];
+export declare function lifeRhythmFromScript(focus: FocusDraft, entry: Pick<ScriptEntry, 'id' | 'occurredAt'>, source: 'narrator' | 'compactor'): NonNullable<StoryState['lifeRhythm']>;
 /** 节奏过期判定（>2h 无更新视为 stale，退回 restWindows 兜底）。
  * 7.1.4：该窗口是生活节奏唯一时效口径——Urge 与群聊意愿 auto 档共用。 */
 export declare const LIFE_RHYTHM_STALE_MS: number;

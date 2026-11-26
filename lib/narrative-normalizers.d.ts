@@ -22,7 +22,7 @@ export declare function requiresVisibleReplyRecovery(phase: NarrativeRequest['ph
 export declare function visibleReplyMode(decision: NarrativeDecision, phase: NarrativeRequest['phase'], groupContext?: GroupContext): string;
 /** Compact JSON for diagnostic logs: never throws, bounded length. */
 /** Compact JSON for diagnostic logs: never throws, bounded length. */
-export declare function safeJsonPreview(value: unknown): string;
+export declare function safeJsonPreview(value: unknown, limit?: number): string;
 export declare function sanitizeAndClampVisibleContent(value: unknown, maxCharacters: number, separator?: string): string;
 /** 可见回复的气泡拆分（纯函数，可单测）。
  * 小模型适配开关：模型没有按合约输出 <sep/> 而是用换行分条时，把换行运行

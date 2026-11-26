@@ -1,7 +1,10 @@
 import { NarrativePhase } from './types';
 export type InterludeLogLevel = 'error' | 'warn' | 'info' | 'debug';
+export type InterludeLogSink = Record<InterludeLogLevel, (message: string, ...args: unknown[]) => void>;
+export declare function allowsLogLevel(configured: InterludeLogLevel | 'silent', level: InterludeLogLevel): boolean;
+export declare function communicationLogAction(event: CommunicationEventLog, level: InterludeLogLevel): InterludeLogAction;
 export type InterludeLogColorTheme = 'dark' | 'light';
-export type InterludeLogAction = 'receive' | 'send' | 'processing' | 'complete' | 'trigger' | 'emotion' | 'memory' | 'advance' | 'agency' | 'group' | 'error' | 'retry' | 'warning' | 'waiting' | 'system';
+export type InterludeLogAction = 'receive' | 'send' | 'processing' | 'complete' | 'trigger' | 'emotion' | 'memory' | 'advance' | 'agency' | 'group' | 'error' | 'retry' | 'warning' | 'waiting' | 'cancelled' | 'system';
 export interface LayeredLogInput {
     level: InterludeLogLevel;
     phase?: NarrativePhase;
@@ -41,3 +44,9 @@ export declare function renderLogMessage(message: string, args?: unknown[]): str
 export declare function detectLogAction(message: string, level: InterludeLogLevel): InterludeLogAction;
 export declare function formatLayeredLog(input: LayeredLogInput): string;
 export declare function phaseLabel(phase?: NarrativePhase): string;
+/** 结构化载荷中值得进入文本渲染的字段（§13.2：策略修订与动作身份供诊断，
+ * 其余经事件对象供 Console/桌面消费）。 */
+export declare function communicationLogFields(communication: CommunicationEventLog | undefined): {
+    label: string;
+    value: string;
+}[];

@@ -88,6 +88,7 @@ function harness(rows: NarrativeIntent[] = []) {
     },
     scheduleNextAutomaticAdvance: async () => {}, completeConversationFollowUps: async () => false,
     pauseAutomaticAdvanceAfterDelayedReply: async () => {},
+    canHandleStory: () => true,
     executeDeferredBrowserIntent: async (_story: any, item: any) => { rows.find(row => row.id === item.id)!.status = 'completed' },
     executeQzoneIntent: async (_story: any, item: any) => { rows.find(row => row.id === item.id)!.status = 'completed' },
     reportOperation: () => {}, reportStandalone: () => {}, report: (...args: any[]) => errors.push(args),
@@ -101,6 +102,7 @@ function harness(rows: NarrativeIntent[] = []) {
     accept: (value: boolean) => { acceptTransport = value },
     onDelivery: (callback: () => void) => { afterDelivery = callback },
     advance: async (at = now, force = false) => {
+      await methods.runDeferredAdvanceWork.call(host, story.id, at, host.taskGeneration(story.id))
       const result = await methods.advanceUnlocked.call(host, structuredClone(story), at, force)
       assert.deepEqual(errors, []); return result
     },

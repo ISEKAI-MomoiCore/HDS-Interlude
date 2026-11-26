@@ -1,3 +1,5 @@
+import { legacyRhythmAttention } from './life-rhythm'
+
 /** Scheduling metadata only: never a contact decision or a memory source.
  * P3.2（设计 §9）：Urge 收敛为生活推进调度——联系专用状态（value 意愿值、
  * armed/burst/spent、contactMin、意愿抖动与 extremeChance）退役；保留对话
@@ -24,8 +26,6 @@ export interface UrgeState {
   suggested?: number
   sourceEntryId?: number
   reason?: string
-  /** 主叙事轻量节奏覆盖(五档;commitUrge 从模型 urge 交接提取)。 */
-  rhythmAttention?: string
 }
 const minute = 60_000
 const record = (v: unknown): Record<string, unknown> => v && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, unknown> : {}
@@ -57,7 +57,6 @@ export function normalizeUrgeState(raw: unknown, now: number): UrgeState {
     pace: r.pace === 'slow' ? 'slow' : 'normal', suggested: typeof r.suggested === 'number' ? finite(r.suggested, 120, 1, 1440) : undefined,
     sourceEntryId: typeof r.sourceEntryId === 'number' ? r.sourceEntryId : undefined,
     reason: typeof r.reason === 'string' ? r.reason.slice(0, 160) : undefined,
-    rhythmAttention: typeof r.rhythmAttention === 'string' && ATTENTION_MULTIPLIERS[r.rhythmAttention] !== undefined ? r.rhythmAttention : undefined,
   }
 }
 export function urgeUserEvent(state: UrgeState, now: number): UrgeState {
@@ -78,10 +77,7 @@ export function commitUrge(state: UrgeState, raw: unknown, script: string, entry
   // A missing/invalid handoff cannot perpetuate an old slow phase.
   if (!quote || !script.includes(quote)) return { ...state, pace: 'normal', suggested: undefined }
   const pace = r.pace === 'slow' ? 'slow' : 'normal'
-  const rhythmAttention = typeof r.rhythmAttention === 'string' && ATTENTION_MULTIPLIERS[r.rhythmAttention] !== undefined
-    ? r.rhythmAttention : undefined
   return { ...state, sourceEntryId: entryId,
-    ...(rhythmAttention ? { rhythmAttention } : {}),
     pace, suggested: typeof r.suggestedDelayMinutes === 'number' ? finite(r.suggestedDelayMinutes, 120, 1, 1440) : undefined }
 }
 /** 五档生活节奏 → 推进密度倍率。与 activeMultiplier 相乘决定最终间隔。 */
@@ -113,9 +109,10 @@ export function planUrge(state: UrgeState, now: number, c: ResolvedUrgeConfig, r
     const density = urgeDensity(state, now, c)
     const densityFactor = 1 + density * (c.activeMultiplier - 1)
     let rhythmFactor: number
-    if (rhythm?.attention && !rhythm.stale && ATTENTION_MULTIPLIERS[rhythm.attention] !== undefined) {
-      rhythmFactor = ATTENTION_MULTIPLIERS[rhythm.attention]
-      reason = `rhythm:${rhythm.attention}`
+    const legacyAttention = !rhythm?.stale && legacyRhythmAttention(rhythm?.attention)
+    if (legacyAttention) {
+      rhythmFactor = ATTENTION_MULTIPLIERS[legacyAttention]
+      reason = `rhythm:${rhythm?.attention}`
     } else {
       rhythmFactor = restMinutes > 0 ? c.restMultiplier : 1.0
       reason = restMinutes > 0 ? 'rest-window-fallback' : 'conversation-density-decay'
@@ -128,5 +125,5 @@ export function planUrge(state: UrgeState, now: number, c: ResolvedUrgeConfig, r
 }
 export function urgeInstruction(enabled: boolean, phase: string) {
   return enabled && ['advance', 'conversation-follow-up', 'intent-due'].includes(phase)
-    ? '\nAfter writing the full script and its actions, optionally return urge:{pace:"normal"|"slow", suggestedDelayMinutes:number, rhythmAttention:"phone-focused|available|occupied|resting|asleep", basisQuote:"exact sentence from this script"}. Reflect the protagonist\'s natural next opportunity to continue life; slow suits sleep or sustained focus. rhythmAttention is her current life rhythm judged from the script you just wrote (phone-focused = actively using her phone, occupied = busy with a task, resting = lying down or low-energy, asleep = sleeping). This is only a scheduling handoff, not speech, a future event, or a contact decision — outbound contact belongs to the CONTACT ACTIONS contract.' : ''
+    ? '\nAfter writing the full script and its actions, optionally return urge:{pace:"normal"|"slow", suggestedDelayMinutes:number, basisQuote:"exact sentence from this script"}. Reflect the protagonist\'s natural next opportunity to continue life; slow suits sleep or sustained focus. This is only a scheduling handoff, not speech, a future event, or a contact decision — outbound contact belongs to the CONTACT ACTIONS contract.' : ''
 }

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { InterludeService } from '../src/service'
+import { lifeRhythmStale } from '../src/story-state'
 
 /** P8-S5 特征测试：入站入口仅靠注释约束的时序契约，搬迁前后必须逐位成立。
  * 全部针对原型方法 + 假宿主（房屋既有形态），不构造真实 InterludeService。 */
@@ -33,7 +34,6 @@ function privateHost(overrides: Record<string, unknown> = {}) {
     describeUserEvent: () => ({ content: 'hello', sources: [], audioSources: [], quote: undefined }),
     describeVisionEvent: () => ({ content: 'hello', sources: [], audioSources: [] }),
     tryHarvestStickers: () => {},
-    elevateRhythmOnIncoming: () => {},
     readForward: async () => undefined,
     getParticipant: async () => ({ id: 'p1', status: 'active', personId: 'u1' }),
     recordIncomingMessage: async (p: any) => p,
@@ -92,6 +92,24 @@ test('私聊空内容（无文本无语音）不产生回合', async () => {
   assert.equal(ok, false)
   assert.equal(host.buffered, undefined)
   assert.equal(host.densityLog.length, 0)
+})
+
+test('私聊仍触发叙事，入站不切换 focus 或刷新过期评估', async () => {
+  const assessedAt = new Date(Date.now() - 3 * 3_600_000).toISOString()
+  for (const attention of ['phone-focused', 'device-focus-chat', 'asleep', 'rest-dazed'] as const) {
+    const lifeRhythm = { attention, basis: '上一段剧本的评估', assessedAt, source: 'narrator' as const }
+    const state = { lifeRhythm: { ...lifeRhythm } }
+    const story = { id: 's1', status: 'active', selfId: '10001', platform: 'onebot', state, setting: { character: { name: '主角' } } }
+    const host = privateHost({
+      findStory: async () => story, getStory: async () => story,
+      elevateRhythmOnIncoming: () => assert.fail('incoming must not call a focus writer'),
+      dbSet: async () => assert.fail('incoming must not write focus'),
+    })
+    assert.equal(await methods.receive.call(host, baseSession()), true)
+    assert.equal(host.buffered, 1)
+    assert.deepEqual(state.lifeRhythm, lifeRhythm)
+    assert.equal(lifeRhythmStale(state.lifeRhythm), true)
+  }
 })
 
 function groupHost(overrides: Record<string, unknown> = {}) {
@@ -229,6 +247,7 @@ test('I-18 采集门丢弃留痕：判定依据 + 脱敏预览（diagnostic 级�
   const host = groupHost()
   host.reportStandaloneOperation = (...args: unknown[]) => { standalone.push(args.map(String).join(' ')) }
   host.groupRule = () => ({ groupId: '123', enabled: true, responseMode: 'mention-only', debounceSeconds: 1 })
+  host.config.logging = { logMessageContent: true, previewLength: 60 }
   // 未 @ 纯文本被采集门丢弃（先于故事查找）——此前完全静默。
   const dropped = await methods.receiveGroup.call(host, groupSession({ content: '晚上好呀 <at id="2990937744"/>', messageId: 'g-14' }))
   assert.equal(dropped, false)
@@ -238,6 +257,11 @@ test('I-18 采集门丢弃留痕：判定依据 + 脱敏预览（diagnostic 级�
   assert.ok(line.includes('false false 0 0'), '判定依据（@/引用/音频/图片）可见')
   // 脱敏预览：QQ 号被遮但 at 元素结构保留——上游桥缺 at 段时一眼可辨。
   assert.ok(line.includes('<at id="••••••7744"/>'), '预览保留 at 元素结构且数字脱敏')
+  standalone.length = 0
+  host.config.logging.logMessageContent = false
+  await methods.receiveGroup.call(host, groupSession({ content: 'PRIVATE-PREVIEW-SENTINEL', messageId: 'g-hidden' }))
+  assert.match(standalone.join(' '), /仅定向采集/)
+  assert.doesNotMatch(standalone.join(' '), /PRIVATE-PREVIEW-SENTINEL|预览=/)
   // @ 命中的消息照常通过，不产生该日志。
   standalone.length = 0
   const host2 = groupHost()

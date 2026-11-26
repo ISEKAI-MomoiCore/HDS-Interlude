@@ -13,16 +13,26 @@ function read(relativePath: string) {
 test('release-facing files share the runtime version', () => {
   const manifest = JSON.parse(read('package.json')) as { version: string, files: string[] }
   assert.equal(manifest.version, HDS_INTERLUDE_VERSION)
+  const version = HDS_INTERLUDE_VERSION.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const exactVersion = new RegExp(`(?<![\\d.])${version}(?![\\d+-])`)
+  assert.match(read('docs/CHANGELOG.md'), new RegExp(`^## ${version}(?:（|$)`, 'm'))
   for (const file of [
     'README.md', 'CONFIGURATION_GUIDE.md', 'BEGINNER_GUIDE.md', 'DEPLOYMENT_GUIDE.md', 'command.md',
     'docs/ARCHITECTURE.md', 'docs/AGENCY_WINDOW.md', 'docs/ALTER_SYSTEM.md', 'docs/SCHEDULE_PREPLAN.md', 'docs/README.md', 'docs/SECURITY.md',
-    'docs/development/logging/LAYERED_LOG_IMPLEMENTATION.md',
+    'docs/development/logging/LAYERED_LOG_IMPLEMENTATION.md', 'docs/CONSOLE_CONFIG_CENTER_DESIGN.md',
+    'docs/experiments/2026-11-25-focus-driven-event-library-design.md',
+    'docs/experiments/2026-11-25-per-bubble-send-delay-design.md',
   ]) {
-    assert.match(read(file), new RegExp(HDS_INTERLUDE_VERSION.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), file)
+    assert.match(read(file), exactVersion, file)
   }
-  const guide = readdirSync(pluginRoot).find(name => name.endsWith('.html') && name.includes(HDS_INTERLUDE_VERSION))
-  assert.ok(guide, `missing deployment HTML for ${HDS_INTERLUDE_VERSION}`)
-  assert.match(read(guide!), new RegExp(`koishi-plugin-hds-interlude-${HDS_INTERLUDE_VERSION.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\.tgz`))
+  const guide = `新人上手一条龙配置服务v${HDS_INTERLUDE_VERSION}.html`
+  assert.ok(readdirSync(pluginRoot).includes(guide), `missing deployment HTML for ${HDS_INTERLUDE_VERSION}`)
+  assert.deepEqual(manifest.files.filter(file => file.endsWith('.html')), [`./${guide}`])
+  assert.ok(read('README.md').includes(`(${guide})`), 'README points to the deployment HTML')
+  const packageFilename = `koishi-plugin-hds-interlude-${HDS_INTERLUDE_VERSION}.tgz`
+  for (const file of ['README.md', 'DEPLOYMENT_GUIDE.md', guide]) {
+    assert.ok(read(file).includes(packageFilename), `${file} points to the current local package`)
+  }
 })
 
 test('published documentation includes every README-linked design index and current setup wording', () => {

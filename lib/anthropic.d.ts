@@ -28,6 +28,7 @@ export declare function anthropicResponse(response: any): {
         message: {
             content: any;
         };
+        finish_reason: any;
     }[];
     usage: {
         prompt_tokens_details?: {

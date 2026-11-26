@@ -16,6 +16,8 @@ export interface ScriptDeliveryAction {
     eventId: string;
     eventKind: ScriptEventDraft['kind'];
     participantId?: string;
+    /** User-message replies share the delivery ledger but do not consume proactive quota. */
+    userInitiated?: boolean;
     /** Authored route, retained so a restart can retry the same endpoint. */
     endpointId?: string;
     status: ScriptDeliveryStatus;

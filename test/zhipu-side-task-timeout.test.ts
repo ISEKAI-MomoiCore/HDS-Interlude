@@ -24,7 +24,7 @@ test('Zhipu side tasks honor the total timeout even after the first visible SSE 
     const narrator: any = Object.create(OpenAICompatibleNarrator.prototype)
     const provider = { endpoint: 'http://127.0.0.1:' + address.port, zhipuOfficial: true, protocol: 'chat-completions', extraHeaders: '' }
     const start = Date.now()
-    await assert.rejects(narrator.sideTaskJson(provider, 'glm-test', 'Alter 分析', 1000, () => ({}), JSON.parse, []), /Zhipu task total timeout exceeded 1000ms/)
+    await assert.rejects(narrator.sideTaskJson(provider, 'glm-test', 'Alter 分析', 1000, () => ({}), JSON.parse, []), { name: 'ProviderResponseError', kind: 'timeout', message: /Zhipu task total timeout exceeded \d+ms/ })
     assert.ok(Date.now() - start < 2400, 'the total deadline must beat the remaining stream')
     assert.equal(requests, 1, 'a total timeout is not a parse-error recovery retry')
   } finally {

@@ -49,7 +49,7 @@ test('LITE contract trims to the core and applies the gemini-flash family blocks
   // 防幻觉三件套与协议保留
   assert.match(s, /Never invent an incoming message/)
   assert.match(s, /ownership label that is authoritative/)
-  assert.match(s, /TRANSPORT: reply.content/)
+  assert.match(s, /SENT BY NOW:.*"mode":"immediate"/)
   assert.match(s, /Return one JSON object with a continuous prose field named script first/)
   // gemini-flash 特化块;"朴素具体"register 块已删(与 length 块同义反复)
   assert.match(s, /plain nouns and specific verbs carry the scene/)
@@ -123,7 +123,7 @@ test('LITE group turns get the groupReply channel and grok gets the single-focus
   const liteClaude = systemPrompt('user-message', '', '', '', '', '', false, false, false, false, false, undefined, false, undefined, false, false, false, false, undefined,
     { tier: 'lite', family: 'claude', source: 'auto', probe: 'claude-opus-5' })
   assert.match(liteClaude, /A send always travels as a pair/)
-  assert.match(liteClaude, /TRANSPORT: reply\.content/)
+  assert.match(liteClaude, /SENT BY NOW:.*"mode":"immediate"/)
 })
 
 test('decide() applies the manually selected tier with family auto-detection', async () => {

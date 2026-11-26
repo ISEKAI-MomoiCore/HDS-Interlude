@@ -21,7 +21,7 @@ const parsers = [
   { name: 'OpenAI', run: (onText?: any, usage?: any) => openai('http://test.invalid', {}, {}, 1500, onText, usage) },
   { name: 'Zhipu', run: (onText?: any, usage?: any) => zhipu('http://test.invalid', {}, {}, onText, usage, 1500) },
 ]
-const event = (content: string, usage?: any) => `data: ${JSON.stringify({ choices: [{ delta: { content } }], ...(usage ? { usage } : {}) })}\r\n\r\n`
+const event = (content: string, usage?: any, finishReason?: string) => `data: ${JSON.stringify({ choices: [{ delta: { content }, ...(finishReason ? { finish_reason: finishReason } : {}) }], ...(usage ? { usage } : {}) })}\r\n\r\n`
 
 for (const parser of parsers) {
   for (const terminal of ['DONE-open', 'EOF-final'] as const) {
@@ -29,7 +29,7 @@ for (const parser of parsers) {
       const originalFetch = globalThis.fetch
       let cancelled = 0
       const usage: any[] = [], visible: string[] = []
-      const data = new TextEncoder().encode(event('小林', { total_tokens: 5 }) + (terminal === 'DONE-open' ? 'data: [DONE]\r\n\r\n' : event('来了').trimEnd()))
+      const data = new TextEncoder().encode(event('小林', { total_tokens: 5 }) + (terminal === 'DONE-open' ? 'data: [DONE]\r\n\r\n' : event('来了', undefined, 'stop').trimEnd()))
       const stream = new ReadableStream<Uint8Array>({ start(controller) {
         // Deliberately split JSON, SSE delimiters and Chinese UTF-8 bytes.
         for (let i = 0; i < data.length; i += 7) controller.enqueue(data.slice(i, i + 7))
@@ -38,8 +38,9 @@ for (const parser of parsers) {
       globalThis.fetch = (async () => new Response(stream)) as typeof fetch
       try {
         const result = await parser.run(async (text: string) => { visible.push(text) }, (value: any) => usage.push(value))
-        assert.equal(result, terminal === 'DONE-open' ? '小林' : '小林来了')
-        assert.equal(visible.at(-1), result)
+        assert.equal(result.text, terminal === 'DONE-open' ? '小林' : '小林来了')
+        assert.equal(result.finishReason, terminal === 'EOF-final' ? 'stop' : undefined)
+        assert.equal(visible.at(-1), result.text)
         assert.deepEqual(usage, [{ total_tokens: 5 }])
         if (terminal === 'DONE-open') assert.equal(cancelled, 1)
       } finally { globalThis.fetch = originalFetch; await stream.cancel().catch(() => {}) }
@@ -59,7 +60,7 @@ for (const parser of parsers) {
 test('C11 OpenAI ordinary JSON fallback is retained for gateways ignoring stream:true', async () => {
   const original = globalThis.fetch
   globalThis.fetch = (async () => new Response(JSON.stringify({ choices: [{ message: { content: '普通响应' } }] }))) as typeof fetch
-  try { assert.equal(await openai('http://test.invalid', {}, {}, 1500), '普通响应') } finally { globalThis.fetch = original }
+  try { assert.equal((await openai('http://test.invalid', {}, {}, 1500)).text, '普通响应') } finally { globalThis.fetch = original }
 })
 
 function mainFixture(strategy = 'ordered', failover = true) {
@@ -144,8 +145,8 @@ test('C12 OpenAI, Zhipu, Anthropic streams and embedding all traverse an explici
   })
   const endpoint = await listen(target), proxyAgent = await listen(proxy)
   try {
-    assert.equal(await openai(endpoint + '/openai', {}, {}, 3000, undefined, undefined, proxyAgent), '通过代理')
-    assert.equal(await zhipu(endpoint + '/zhipu', {}, {}, undefined, undefined, 3000, proxyAgent), '通过代理')
+    assert.equal((await openai(endpoint + '/openai', {}, {}, 3000, undefined, undefined, proxyAgent)).text, '通过代理')
+    assert.equal((await zhipu(endpoint + '/zhipu', {}, {}, undefined, undefined, 3000, proxyAgent)).text, '通过代理')
     assert.equal(await requestAnthropicStreaming(endpoint + '/anthropic', {}, {}, 3000, undefined, undefined, proxyAgent), '通过代理')
     const provider: any = { id: 'embed', enabled: true, endpoint: endpoint + '/chat/completions', model: 'embed-model', useForEmbedding: true, apiKey: 'test-secret', proxyAgent, extraHeaders: '' }
     const embedder = new OpenAICompatibleEmbedder({ http: { post: async () => { throw Error('direct HTTP must not run') } } } as any, {
@@ -169,3 +170,16 @@ test('C12 unproxied embedding still uses the Koishi HTTP path and validates vect
   await assert.rejects(embedder.embed('事实'), /invalid vector/)
   assert.equal(calls, 1)
 })
+
+
+for (const parser of parsers) {
+  test('P2 ' + parser.name + ' EOF without completion evidence is incomplete and preserves usage', async () => {
+    const originalFetch = globalThis.fetch
+    const usage: any[] = []
+    globalThis.fetch = (async () => new Response(event('完整文本', { total_tokens: 5 }))) as typeof fetch
+    try {
+      await assert.rejects(parser.run(undefined, (value: any) => usage.push(value)), (error: any) => error.kind === 'stream-incomplete')
+      assert.deepEqual(usage, [{ total_tokens: 5 }])
+    } finally { globalThis.fetch = originalFetch }
+  })
+}

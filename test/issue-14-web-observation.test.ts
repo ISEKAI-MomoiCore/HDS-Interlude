@@ -74,6 +74,7 @@ test('C: 延迟浏览意图执行失败 → intent 按失败完成，不重试�
   const { host, intentUpdates, reports } = makeHost()
   host.collectWebObservation = async () => { throw new Error('UNIQUE constraint failed: interlude_web_observation.id') }
   const intent: any = { id: 42, storyId: 's', participantId: 'alice', type: 'browser-research', payload: {}, status: 'pending' }
+  host.dbGet = async () => [intent]
   const observation = await host.executeDeferredBrowserIntent(story, intent, now)
   assert.equal(observation, undefined)
   assert.equal(intentUpdates.length, 1, '意图必须恰好完成一次')

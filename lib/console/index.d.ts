@@ -6,6 +6,7 @@ import { Context } from 'koishi';
 import type { Schema } from 'koishi';
 import { DataService } from '@koishijs/console';
 import type { InterludeService } from '../service';
+import type { AttentionTier, FixedAttentionEvent } from '../script/event-attention';
 /** 快照形状（客户端与服务端共享的唯一契约）。 */
 export interface HdsiOverview {
     version: string;
@@ -17,6 +18,19 @@ export interface HdsiOverview {
         status: string;
         cursorLocal: string;
         rhythm: string;
+        /** Read-only estimate at overview time; not a record of a narrative request. */
+        eventAttention?: {
+            status: 'current' | 'missing' | 'stale' | 'legacy';
+            assessedAtLocal?: string;
+            tiers: Record<FixedAttentionEvent, AttentionTier>;
+        };
+        location?: string;
+        activity?: string;
+        focus?: string;
+        timezone?: string;
+        nextAdvanceLocal?: string;
+        lastAdvanceLocal?: string;
+        followUpCount?: number;
     };
     models: Array<{
         task: string;
@@ -60,6 +74,18 @@ export interface HdsiOverview {
         };
         tier: string;
         effectiveLimit: number;
+        budgets?: {
+            private: {
+                count: number;
+                minutes: number;
+                mode: string;
+            };
+            group: {
+                count: number;
+                minutes: number;
+                mode: string;
+            };
+        };
         mode: string;
         anchor: number;
         globalMode: string;

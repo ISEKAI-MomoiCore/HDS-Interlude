@@ -1,3 +1,4 @@
+import { ProviderResponseError } from './provider-response'
 /** Google Gemini Interactions API 传输适配（v1beta）。
  *
  * 背景：Gemini 的 OpenAI 兼容层（/v1beta/openai/chat/completions）对部分
@@ -110,11 +111,16 @@ export function geminiInteractionsUsage(usage: any) {
 /** Interaction 资源 → OpenAI choices 形态。失败/未完成显式抛错（与
  * anthropicResponse 同语义：宁可触发服务商重试，不静默接受截断输出）。 */
 export function geminiInteractionsResponse(response: any) {
-  if (!response || typeof response !== 'object') throw new Error('Gemini Interactions 响应为空。')
-  if (response.error) throw new Error(`Gemini Interactions error: ${response.error.status ?? response.error.code ?? 'unknown'} ${response.error.message ?? ''}`)
+  if (!response || typeof response !== 'object') throw new ProviderResponseError('empty-response', 'Gemini Interactions 响应为空。')
+  if (response.error) throw new ProviderResponseError('provider-error', `Gemini Interactions error: ${response.error.status ?? response.error.code ?? 'unknown'} ${response.error.message ?? ''}`, undefined, geminiInteractionsUsage(response.usage))
   const status = String(response.status ?? '')
-  if (status === 'failed') throw new Error(`Gemini Interactions 交互失败：${String(response.error?.message ?? '未知错误')}`)
-  if (status === 'incomplete') throw new Error(`Gemini Interactions 输出未完成（${String(response.incomplete_reason ?? response.error?.message ?? '未知')}）——可能被 max_output_tokens 截断。`)
+  if (status === 'failed') throw new ProviderResponseError('provider-error', `Gemini Interactions 交互失败：${String(response.error?.message ?? '未知错误')}`, status, geminiInteractionsUsage(response.usage))
+  if (status === 'incomplete') {
+    const reason = String(response.incomplete_reason ?? 'unknown')
+    const budget = ['MAX_OUTPUT_TOKENS', 'MAX_TOKENS', 'max_output_tokens', 'max_tokens'].includes(reason)
+    throw new ProviderResponseError(budget ? 'budget-truncated' : 'stream-incomplete',
+      'Gemini Interactions 输出未完成（' + reason + '）。', reason, geminiInteractionsUsage(response.usage))
+  }
   const chunks: string[] = []
   for (const step of Array.isArray(response.steps) ? response.steps : []) {
     if (String(step?.type ?? '') !== 'model_output') continue
@@ -123,6 +129,6 @@ export function geminiInteractionsResponse(response: any) {
     }
   }
   const text = chunks.join('')
-  if (!text) throw new Error('Gemini Interactions provider returned an empty text response.')
+  if (!text) throw new ProviderResponseError('empty-response', 'Gemini Interactions provider returned an empty text response.', status, geminiInteractionsUsage(response.usage))
   return { choices: [{ message: { content: text } }], usage: geminiInteractionsUsage(response.usage) }
 }

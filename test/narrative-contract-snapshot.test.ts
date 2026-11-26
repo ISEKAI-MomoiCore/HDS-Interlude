@@ -4,8 +4,7 @@ import { createHash } from 'node:crypto'
 import { systemPrompt } from '../src/narrator'
 
 /** D2.5 合约快照矩阵（解耦设计 §4.5 / §6 D2.5 验收）：
- * 六个场景的 systemPrompt 渲染与参数化改造**之前**的基线逐字节一致
- * （sha256 于 2026-10-30 改造前捕获）。任何无意改动合约文本的提交都会
+ * 初始基线在 2026-10-30 参数化改造之前捕获，后随有意调整更新。任何无意改动合约文本的提交都会
  * 在此变红；有意的合约变更须同步更新哈希并在 CHANGELOG 说明。
  * 平台词汇经 PlatformWording 参数注入——override 测试证明注入点生效。
  * 2026-11-10 有意变更后重算五个 full 档基线：II-2 回复时机元语言段 +
@@ -39,14 +38,14 @@ const build = (v: Vars) => systemPrompt(
 const sha = (value: string) => createHash('sha256').update(value).digest('hex')
 const caps = { quoteReply: true, reactions: [] as string[], nativeFaces: ['smile'], expressionThreshold: 0.7 } as any
 
-/** P3.2 后基线（2026-11-13 重算；diff 摘要见文件头注释）。 */
+/** 2026-11-25 有意更新：事件事实与注意度语义、私聊草稿/发送/计划示例。 */
 const BASELINE: Record<string, { length: number, sha256: string }> = {
-  single: { length: 26658, sha256: '2c1cf5631d63d679c31e7496fcfb3a2982918a230e6b4db1efc5cc4528962da1' },
-  dual: { length: 27561, sha256: '8d6de7d51bbf6242cbd115f6fec93a0f66eeeb748b139acb9cd71d734738a3c6' },
-  dualCacheFirst: { length: 28420, sha256: '27ac85c77694bfa1fd38f48ed9115c119d944e3081fc65a9868b6ea4d09bd3cb' },
-  dualSelection: { length: 28443, sha256: '01b43898eb486653f9e915d155b4781c0e47907e44e6592c9316537d59d8d64d' },
-  withFaces: { length: 28373, sha256: '2eca3502681845d60d8e444e7efccb9ab5a50ff186e1201860650fade56e9254' },
-  liteDual: { length: 8212, sha256: '8849b68ac784fa317722a676164029d795c1aaaefc3f2a846a576fd4d31b636a' },
+  single: { length: 27687, sha256: '0385618f5b45dde5cc0eba1bf88253b3145b4cb2c1c78d6b3462aab7e829d66d' },
+  dual: { length: 28590, sha256: 'a795c6fb0d41f479ba7c93a4d51a1355131d315bf919047eba7452713ae15214' },
+  dualCacheFirst: { length: 29449, sha256: '37378c39698365f55fb2fe808eb0cc7e2d9df17bd3b9c22d7d2f8fa117898081' },
+  dualSelection: { length: 29472, sha256: '0db928fb5345f7f816d266c6a0d4812cefb4d9a214bfd715cac5c14e74883b96' },
+  withFaces: { length: 29402, sha256: 'e3c1b8a7c0e95252602f630809e941bcbdf8000e962e5d3e93ad020929cd8c9e' },
+  liteDual: { length: 9986, sha256: 'bb56b213ec2a86e97f4c1a08fc33d9853270efe1110cebce9cb4280639d4372a' },
 }
 
 const scenarios: Record<string, string> = {
@@ -58,7 +57,7 @@ const scenarios: Record<string, string> = {
   liteDual: build({ specialty: { tier: 'lite', family: 'generic' } as any, features: {} }),
 }
 
-test('D2.5 合约快照：六个场景与参数化前基线逐字节一致', () => {
+test('D2.5 合约快照：六个场景与当前合约基线逐字节一致', () => {
   for (const [name, prompt] of Object.entries(scenarios)) {
     const base = BASELINE[name]
     assert.equal(prompt.length, base.length, `${name} 长度应与基线一致`)
@@ -96,4 +95,32 @@ test('D2.5 词汇注入：自定义 wording 只替换对应措辞，其余文本
   // 与自定义词等长的默认渲染对照：默认文本中的 QQ 字面量在 custom 中全部消失。
   assert.ok(!custom.includes('QQ and WeChat'), '自定义平台对不应再出现默认 QQ 字面量')
   assert.ok(!custom.includes('native QQ face'), '表情措辞应被替换')
+})
+
+
+test('world and social records do not establish character perception in any contract tier', () => {
+  for (const tier of ['full', 'standard', 'lite']) {
+    const specialty = { tier, family: 'generic' }
+    const prompt = build({ specialty, features: { worldEvents: true, qzone: true } })
+    assert.match(prompt, /A weather snapshot establishes conditions at the observation time; it does not establish when they began, how long they lasted, or whether she noticed them/)
+    assert.match(prompt, /\[好友动态\] records platform activity, not that she saw it or that her device notified her/)
+    assert.match(prompt, /A record of new comments does not establish that she saw or read them/)
+    assert.doesNotMatch(prompt, /feed activity she has noticed/)
+    assert.doesNotMatch(build({ specialty, features: { qzone: false } }), /SOCIAL SURFACE/)
+  }
+})
+
+test('private reply examples follow split settings without leaking into group or advance turns', () => {
+  for (const tier of ['full', 'standard', 'lite']) {
+    const specialty = { tier, family: 'generic' }
+    const buildSend = (v: Vars) => build({ specialty, ...v }).split('\n').find(line => line.startsWith('SENT BY NOW:'))
+    assert.match(buildSend({ writingOptions: { messageSeparator: '[bubble]' } })!, /"mode":"immediate","content":"行\[bubble\]几点啊？"/)
+    assert.match(buildSend({ writingOptions: { splitReplyMessages: false } })!, /"mode":"immediate","content":"行"/)
+    assert.match(buildSend({ phase: 'conversation-follow-up' })!, /"seen":false/)
+    assert.equal(buildSend({ groupTurn: true }), undefined)
+    assert.equal(buildSend({ phase: 'advance' }), undefined)
+  }
+  const streaming = build({ streaming: true })
+  assert.match(streaming, /SCRIPT-FIRST TRANSPORT MIRROR/)
+  assert.match(streaming, /SENT BY NOW:.*"mode":"immediate"/)
 })

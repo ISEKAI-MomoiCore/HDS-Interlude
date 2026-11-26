@@ -30,3 +30,8 @@ release/smoke-*/
 dist/
 rc60.tgz
 dbfile_*
+# 文风拟真度测试的运行产物（设计文档 docs/experiments/2026-11-22-style-realism-test-design.md）
+test/realism/out/
+test/realism/report/
+test/realism/ui-dist/
+test/realism/ui/node_modules/

@@ -314,3 +314,44 @@ test('C08 pause/reset after owner lookup prevents obsolete terminal-ledger recon
   assert.equal(f.source.metadata.deliveryActions[0].segments[0].status, 'pending')
   assert.equal(f.sent.length, 0)
 })
+
+test('periodic outbox recovery delivers a pending group segment without a participant row', async () => {
+  for (const endpointId of ['group:123', 'registered-route']) {
+    const f = fixture('group:123', 3)
+    const events = f.source.metadata.scriptEvents
+    const actions = f.source.metadata.deliveryActions
+    events[0].kind = 'group-message'
+    events[0].endpointId = endpointId
+    events[0].occurredAt = new Date().toISOString()
+    delete events[0].participantId
+    delete actions[0].participantId
+    actions[0].status = 'partial'
+    actions[0].segments[0].status = 'delivered'
+    actions[0].segments[1].status = 'delivered'
+    f.host.endpointRows = [{ id: 'registered-route', ownerKind: 'group', ownerId: '123', groupId: '123' }]
+    f.host.ensureEndpointRegistry = async () => {}
+    f.host.reportStandaloneOperation = () => {}
+    f.host.pendingDeliveryRecoveryBackoff = new Map()
+    f.host.warnedMissingPrivateBubblePlans = new Set()
+    f.host.getParticipant = async () => assert.fail('group recovery looked up a private participant')
+    f.host.recoverPendingDeliveries = proto.recoverPendingDeliveries
+    f.host.warnMissingPrivateBubblePlans = proto.warnMissingPrivateBubblePlans
+    const dbGet = f.host.dbGet
+    f.host.dbGet = async (table: string, query: any, opts: any) => table === 'interlude_script_entry' && query.id?.$gt !== undefined
+      ? query.id.$gt < 1 ? [structuredClone(f.source)] : [] : dbGet(table, query, opts)
+    groupTransport(f)
+    const send = f.host.sendGroupMessage
+    f.host.sendGroupMessage = async (...args: any[]) => {
+      assert.equal(args[1], '123')
+      assert.equal(args[5], endpointId === 'registered-route' ? endpointId : undefined)
+      return send(...args)
+    }
+    await f.host.recoverPendingDeliveries(false, f.story.id)
+    await f.host.recoverPendingDeliveries(true, f.story.id)
+    assert.deepEqual(f.sent, ['bubble-2'])
+    assert.equal(f.receipts.length, 1)
+    assert.equal(f.receipts[0].kind, 'character-group-message')
+    assert.deepEqual(f.receipts[0].metadata.deliverySegmentIndexes, [2])
+    assert.equal(f.source.metadata.deliveryActions[0].status, 'delivered')
+  }
+})

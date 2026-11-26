@@ -8,19 +8,21 @@
 
 | 当前版本 | 适用平台 | 开发语言 | 许可证 |
 | --- | --- | --- | --- |
-| [1.0.1-rc60](https://gitee.com/MomoiCore/HDS-Interlude/releases) | [Koishi 4](https://koishi.chat/) | [TypeScript](https://www.typescriptlang.org/) | [AGPL-3.0](LICENSE) |
+| [1.0.1](https://gitee.com/MomoiCore/HDS-Interlude/releases) | [Koishi 4](https://koishi.chat/) | [TypeScript](https://www.typescriptlang.org/) | [AGPL-3.0](LICENSE) |
 
-**[快速开始](BEGINNER_GUIDE.md) · [一条龙向导](新人上手一条龙配置服务v1.0.1-rc60.html) · [下载发行版](https://gitee.com/MomoiCore/HDS-Interlude/releases) · [更新记录](docs/CHANGELOG.md)**
+**[快速开始](BEGINNER_GUIDE.md) · [一条龙向导](新人上手一条龙配置服务v1.0.1.html) · [下载发行版](https://gitee.com/MomoiCore/HDS-Interlude/releases) · [更新记录](docs/CHANGELOG.md)**
 
 交流群：421430402，群主24小时解答，欢迎来玩！
 
 HDS Interlude 是一个面向 Koishi 一对一与多参与者场景的持续叙事聊天框架。它让用户消息、角色的沉默、延迟回复、主动联系和自动推进，都成为同一段生活剧本中自然可见的部分，并由一次主叙事写作连贯地决定。
 
-当前文档已同步至 2026-10-27 的 rc58，累计变更以 rc57 发布包为基线。已完成源码构建、类型检查、回归测试与 rc58 安装包打包；发布包与校验信息见发行记录。旧安装包不会自动获得这些修改，运行实例须安装并重载后才生效。
+### 1.0.1 正式版
 
-rc58 相对 rc57 汇总：修复主动消息在 proactive-check 相位被静默撤回（Issue #10）、网页观察连续落库回归（Issue #14）与主动推进短分段被正文绑定唯一性否决误杀（Issue #15）；新增实验性主叙事微调数据采集 `modelCapture`——按天 JSONL 记录解析成功往返的原始输入/输出。全套版本串、构建产物与发布包对齐 rc58。详见 [更新记录](docs/CHANGELOG.md)。
+- **私聊逐泡恢复更可靠**：剧本和待发计划同事务提交；新消息取消一组气泡后，不会漏掉同故事其他参与者的到期消息。
+- **后台任务不再占住故事队列等待外部服务**：到期网页与 QQ 空间操作在队列外等待；浏览器有总时限，原生 QQ 空间回执超时记为「结果未知」且不盲目重试，天气轮询不重复入队。
+- **群投递补偿与日志更准确**：补偿不再把群当成私聊账户；日志区分剧本提交、回复排程、发送开始和平台确认，默认不展开模型响应正文。
 
-沿用 rc57 及此前能力：Overlay 普通演化支持单场景长故事按回合数积累证据；Console 首位预设同步可从 typ0.space 直接拉取人设/配置；部署向导（一条龙页）自 rc52 起的脚本报错已修复。分享码同步会将 `storyDefaults` 同步写入配置模板；清库重建或新故事不会回退到旧人设；`interlude.preset.sync` 可强制重新应用预设；`database clear` 会重置同步状态；群音频可以直接触发携带原生音频的写作；跨会话投递能力继续保留。
+`1.0.1` 由 `1.0.1-rc63` 直接升为正式版，运行行为与默认配置不变。九档 Focus、T1–T5 事件注意度标注、世界播种涉入标签和私聊逐泡延迟继续保留。完整增量见 [更新记录](docs/CHANGELOG.md)。使用本地包升级后，请重载插件并刷新 Koishi Console。
 
 历史兼容说明：rc12 起支持可选的 Anthropic Messages 自定义协议。该协议仍属于 `openai-compatible` 自定义连接，不是独立的官方 Provider 模式。详见 [rc12 适配说明](docs/development/ANTHROPIC_MESSAGES_RC12.md)、[更新记录](docs/CHANGELOG.md) 与 [文档索引](docs/README.md)。
 
@@ -109,12 +111,12 @@ flowchart TD
         ↓
 即时消息 → 端点门控 → 模拟打字与分段投递 → 成功回写账本
 延迟或分段 → 保存到期意图，到期经同一管线投递
-被拦截 → 记“从未发送”条目并进入端点冷却，待投递补偿稍后重试
+被拦截 → 记录未投递状态，按动作类型和账本状态决定是否补偿
         ↓
 未回复时生活继续：自动推进、Urge 与世界事件播种驱动后续轮次
 ```
 
-新消息遵循“首条回复提交”边界：主模型尚未提交第一条消息时，新输入会接管本轮，并与旧消息批次合并后重新写作；第一条已经提交后，新输入会截断尚未发送的 `<sep/>` 后续气泡。被截断的文字会作为“主角本来想发送，但还没打完字，新消息就到了”的未完成意图交给替代写作，清晰地区分已说出口的对话与被打断的念头。
+新私聊到达时，如果上一轮仍在生成、尚未形成已登记的发送动作，宿主会淘汰旧结果并合并消息重新写作。发送动作登记后，新私聊会取消所有尚未交给平台的气泡，包括等待中的首泡。下一轮通过 `interruptedOutgoingDrafts` 获知已确认发出的泡、确定取消的原文和回执未知的泡。
 
 ## 主叙事模型的职责
 
@@ -132,26 +134,19 @@ flowchart TD
   "seen": true,
   "reply": {
     "mode": "immediate",
-    "content": "怎么了"
+    "content": "怎么了",
+    "bubbleDelaySeconds": [0]
   }
 }
 ```
 
-模型输出可使用 `<sep/>` 拆分消息。插件会按下一段文字长度模拟短暂输入时间；用户在等待期间继续发言时，旧分段计划会被取消并重新写作。
+模型可以用 `<sep/>` 拆分消息。当前私聊的即时文本回复为每个气泡附一个延迟值。首泡取完整输出耗时、模型给出的等待和模拟打字时长的最大值。后续泡从上一泡获得平台确认时开始计时，取模型等待和模拟打字时长中较长的一项。
 
-`typingJitterRatio` 默认是 `0.3`：同样长度的后续气泡会在理论延迟上下约 30% 随机浮动，减少机械感；填写 `0` 可恢复固定延迟。
+`typingJitterRatio` 默认是 `0.3`，控制模拟打字时长的随机浮动。设为 `0` 可关闭浮动。
 
-### 实验性流式首条回复
+### 私聊投递与流式接收
 
-`model.mainStreamingMode=experimental` 可让支持 OpenAI Chat Completions SSE 的模型在输出完整私聊 `interaction.reply` 后，先发送这条首泡，再继续接收后面的 `script`。默认关闭；它只在 `mainResponseFormat=json-object` 下生效，群聊仍等待完整结果。
-
-| 支持层级 | 模型/接口 |
-| --- | --- |
-| 已有 SSE 接收路径 | `zhipu-official` 的 GLM 官方模型，例如 GLM-5.3-Flash。开启实验开关后可尝试首条提前投递。 |
-| 实验性通用路径 | OpenAI 官方、DeepSeek 官方、Moonshot、百炼、硅基流动、OpenRouter、Gemini OpenAI 兼容模式，以及任意 `openai-compatible` 服务；前提是端点同时支持 `stream:true`、标准 `choices[].delta.content` 和 JSON 对象输出。 |
-| 不适用 | `prompt-only`、不支持 SSE 的模型/中转站、只返回思维链但没有可见 `delta.content` 的接口。 |
-
-未知中转站请先保持关闭；手动开启后观察日志中的“实验性流式首条回复已提前投递”。一旦首条已发送，若后续 JSON 断流或无效，插件保留已发送内容、记录 `stream-finalization-failed`，且不会自动 failover 重发第二条可见回复；后续只会以无 transport 的短恢复任务补写缺失剧本。
+当前私聊的即时文本回复需要完整输出并通过校验后才投递。`model.mainStreamingMode=experimental` 是保留的提前投递设置，普通私聊逐泡路径不会启用该回调。当前智谱官方 GLM 的 SSE 接收仍可使用，模型流式接收和气泡投递是两个独立步骤。详细规则见 [逐气泡发送延迟](docs/experiments/2026-11-25-per-bubble-send-delay-design.md)。
 
 ### 主叙事 payload 顺序与前缀缓存
 
@@ -171,25 +166,27 @@ flowchart TD
 
 **对话密度因子**：最近 15 分钟的用户消息桶数归一化后映射到 1.0 ~ `activeMultiplier`（默认 1.4）。密集对话时推进加速，沉默时按基础节奏。密度按半衰期（默认 90 分钟）指数衰减——对话结束后高密度推进仍会持续一段时间，而非立即回落。
 
-**生活节奏因子（五档）**：由三个来源写入，按即时性排序：
+**生活节奏与 Focus**：主叙事用 `lifeHandoff.focus` 提交剧本结尾的注意力档位和原句，正式保存剧本后才更新；压缩器可为最新、缺少交接的剧本补写。收到私聊可以触发推进，但不会把 Focus 改成关注消息，也不会延长有效期。
 
-| 来源 | 触发时机 | 效果 |
-|---|---|---|
-| 用户消息到达 | 收到消息那一刻 | asleep/resting 立即提升为 phone-focused |
-| 主叙事交接 | 每轮模型回复的 urge 字段 | 比等压缩器更即时 |
-| 压缩器 | 每轮后台整理 | 最全面的叙事上下文判定 |
-
-五档节奏与默认倍率：
+Urge 把九档 Focus 映射到既有五档倍率，群聊意愿同样沿用原来的兼容映射：
 
 | 节奏 | 倍率 | 含义 |
 |---|---|---|
-| phone-focused | ×1.4 | 正在使用手机/等待回复 |
-| available | ×1.0 | 空闲 |
-| occupied | ×0.7 | 上课/工作/沉浸爱好 |
-| resting | ×0.5 | 躺着/低能量但清醒 |
-| asleep | ×0.15 | 睡眠 |
+| `phone-focused` | ×1.4 | `device-focus-chat`、`device-focus-other` |
+| `available` | ×1.0 | `avaliable-relax`、`avaliable-tense` |
+| `occupied` | ×0.7 | `busy-work`、`busy-play` |
+| `resting` | ×0.5 | `rest-conscious`、`rest-dazed` |
+| `asleep` | ×0.15 | `asleep` |
 
 节奏数据超过 2 小时未更新视为过期，自动退回休息窗口兜底倍率（`restMultiplier` 默认 0.6，乘法而非替换——不再因时钟到达 23:00 就从 10 分钟跳到 180 分钟）。
+
+### 事件注意度（T1–T5）
+
+主叙事为原本就会纳入请求的私聊、群聊入站、群聊背景、实况天气、播种世界事件和社交动态添加注意度标注。**不换顺序、不删材料**；T1 最容易被主角注意到，T5 最不容易，不表示已读或必须回应。
+
+私聊、群聊、社交动态和天气基础档随 Focus 变化。播种世界事件由生成器同时提供 `importance` 与 `involvement`（环境事件 `environment` / 直接涉及主角的 `involved`），再由宿主计算档位。实况天气只按天气码、风速和快照变化调整，不调用模型分档。
+
+在 **Koishi Console → HDSI → 概览 → Focus 与事件注意度** 可以查看已存 Focus、有效性和当前规则预览。缺失、过期或未细分的旧档使用中性行（基础档 T3），与 Urge 的休息窗口兜底不同。设备可达性见「当前行动条件」，不参与本功能的消息过滤。完整规则见[事件注意度设计](docs/experiments/2026-11-25-focus-driven-event-library-design.md)。
 
 ### 自动推进读取的材料
 
@@ -349,37 +346,25 @@ OneBot 模式采用显式白名单：启用后，绑定的机器人 QQ 账号和
 
 ### 从 npm 安装
 
-发布到 npm 后，可在 Koishi 项目根目录执行：
+如果所用 npm 源已提供 `1.0.1`，可在 Koishi 项目根目录按包管理器选择其一：
 
 ```bash
-npm install koishi-plugin-hds-interlude@beta
-# 或使用 corepack yarn（Koishi 官方推荐）：
-corepack yarn add "koishi-plugin-hds-interlude@file:./koishi-plugin-hds-interlude-1.0.1-rc60.tgz" --exact
+npm install --save-exact koishi-plugin-hds-interlude@1.0.1
+# 使用 Yarn 4 的 Koishi Desktop 实例请改用：
+corepack yarn add --exact koishi-plugin-hds-interlude@1.0.1
 ```
 
-稳定版发布后可省略 `@beta`。然后在 Koishi Console 添加 `hds-interlude` 插件并完成配置。
+若所用源尚未提供本版，请使用下面的本地安装方式。然后在 Koishi Console 添加 `hds-interlude` 插件并完成配置。
 
 ### 本地 tgz 安装
 
-rc57 安装包由发布流程生成；安装前请确认实际 tgz 路径，必要时核对同目录的 SHA-256 校验文件。使用本地预发布包时，Koishi Desktop 实例必须使用 Yarn 4 更新 package.json 与 yarn.lock；不要用 npm 安装：
-
-```bash
-node .yarn/releases/yarn-4.12.0.cjs add "koishi-plugin-hds-interlude@file:C:/absolute/path/to/koishi-plugin-hds-interlude-1.0.1-rc60.tgz" --exact
-```
-
-Windows 示例：
+安装前请确认 `koishi-plugin-hds-interlude-1.0.1.tgz` 的实际位置，并用随包的 SHA-256 清单校验。Koishi Desktop 实例请在实例目录使用项目的 Yarn 4 更新 `package.json` 和 `yarn.lock`，不要混用 npm：
 
 ```powershell
-node .yarn/releases/yarn-4.12.0.cjs add "koishi-plugin-hds-interlude@file:C:/dev/HDS-Interlude/plugins/hds-interlude/release/koishi-plugin-hds-interlude-1.0.1-rc60.tgz" --exact
+corepack yarn add --exact "koishi-plugin-hds-interlude@file:C:/Downloads/koishi-plugin-hds-interlude-1.0.1.tgz"
 ```
 
-Koishi Desktop 的实例使用 Yarn 4。请在实例目录执行以下命令，并在完成后重载插件或重启 Desktop：
-
-```powershell
-node .yarn/releases/yarn-4.12.0.cjs add "koishi-plugin-hds-interlude@file:C:/dev/HDS-Interlude/plugins/hds-interlude/release/koishi-plugin-hds-interlude-1.0.1-rc60.tgz" --exact
-```
-
-安装后重新加载 Koishi，再在 Console 启用插件。
+将 `C:/Downloads` 换成安装包的实际目录。安装后重载插件或重启 Desktop，并刷新 Koishi Console。
 
 ### 开发实例
 
@@ -395,7 +380,7 @@ OneBot / NapCat 未启动时可能出现 `ECONNREFUSED`，表示适配器正在�
 
 ## Console 配置顺序
 
-HDSI 专属工作台现提供「概览 / 配置中心 / 当前故事 / 考据案头 / 通信动作 / 上下文预算」。配置中心支持全部 25 个可见配置节的搜索、保存本节、保存并重载和重新读取；当前故事设定单独保存到数据库。Koishi 标准插件配置页继续共用同一份 Schema。此项为工作区未发布增量，使用时需加载最新服务端与客户端构建。
+HDSI 专属工作台现提供「概览 / 配置中心 / 当前故事 / 考据案头 / 通信动作 / 上下文预算」。配置中心支持全部 25 个可见配置节的搜索、保存本节、保存并重载和重新读取；当前故事设定单独保存到数据库。Koishi 标准插件配置页继续共用同一份 Schema。发布包已包含对应的服务端与 Console 客户端构建；升级后请刷新页面。
 
 建议按以下顺序配置，以更快建立可验证的互动闭环：
 

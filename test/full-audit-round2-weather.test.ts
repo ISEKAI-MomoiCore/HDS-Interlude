@@ -132,3 +132,61 @@ test('F06 host-weather rows stay outside the model seeder budget', async t => {
   await worldSeederSweep(svc)
   assert.ok(!calls.includes('payload'), 'seeder-sourced budget is still enforced')
 })
+
+test('weather attention metadata follows the existing sweep and drain without creating wind-only events', async t => {
+  const f = fixture()
+  const start = new Date('2026-11-25T04:00:00.000Z')
+  t.mock.timers.enable({ apis: ['Date'], now: start })
+  let code = 0, wind = 0, temperature = 22, fetches = 0
+  f.svc.ctx.http.get = async (_: string, options: any) => {
+    assert.equal(options.params.wind_speed_unit, 'kmh')
+    assert.equal(options.params.timeformat, 'unixtime')
+    fetches++
+    return { current: { temperature_2m: temperature, weather_code: code, wind_speed_10m: wind, time: Date.now() / 1_000 } }
+  }
+  await weatherSweep(f.svc)
+  await weatherSweep(f.svc)
+  assert.equal(fetches, 1)
+  assert.equal(f.rows.length, 1)
+  assert.equal(f.rows[0].sourcePayload.weatherChanged, false)
+  t.mock.timers.tick(30 * 60_000)
+  code = 61; wind = 49.99
+  await weatherSweep(f.svc)
+  assert.equal(f.rows.length, 2)
+  assert.equal(f.rows[1].sourcePayload.weatherChanged, true)
+  assert.equal(f.rows[1].summary, '环境：22°C 小雨。')
+  await drainDueSeededEvents(f.svc, f.story, new Date(), false)
+  assert.equal(f.entries.length, 0)
+  await drainDueSeededEvents(f.svc, f.story, new Date(), true)
+  assert.deepEqual(f.entries[0].metadata, {
+    seededEventId: f.rows[1].id, importance: 'low', eventSource: 'weather', weatherCode: 61, windSpeedKmh: 49.99, weatherChanged: true,
+  })
+  t.mock.timers.tick(30 * 60_000)
+  wind = 60
+  await weatherSweep(f.svc)
+  assert.equal(f.rows.length, 2, 'wind-only changes do not bypass text deduplication')
+  assert.equal(f.rows[1].sourcePayload.windSpeedKmh, 49.99, 'existing evidence is not rewritten')
+  t.mock.timers.tick(30 * 60_000)
+  temperature = 23
+  await weatherSweep(f.svc)
+  assert.equal(f.rows.length, 3)
+  assert.equal(f.rows[2].sourcePayload.windSpeedKmh, 60)
+  assert.equal(f.rows[2].sourcePayload.weatherChanged, false)
+})
+
+test('drain carries involvement for seeded events without changing their text or admitting low-priority events', async () => {
+  const f = fixture()
+  f.svc.worldSeederRuntime.enabled = true
+  const now = new Date()
+  for (const [id, importance, involvement] of [[1, 'medium', 'involved'], [2, 'high', undefined], [3, 'low', 'environment']] as const) {
+    f.rows.push({ id, storyId: f.story.id, summary: `播种事件 ${id}`, importance, occursAt: now, status: 'scheduled',
+      subjects: [], sourcePayload: { involvement }, updatedAt: now })
+  }
+  await drainDueSeededEvents(f.svc, f.story, now, false)
+  assert.deepEqual(f.entries.map(e => e.content), ['[世界事件] 播种事件 1', '[世界事件] 播种事件 2'])
+  assert.deepEqual(f.entries.map(e => e.metadata), [
+    { seededEventId: 1, importance: 'medium', involvement: 'involved', eventSource: 'world-seeder' },
+    { seededEventId: 2, importance: 'high', eventSource: 'world-seeder' },
+  ])
+  assert.equal(f.rows[2].status, 'scheduled')
+})

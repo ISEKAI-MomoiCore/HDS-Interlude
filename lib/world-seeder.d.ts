@@ -9,10 +9,12 @@
 import type { Context } from 'koishi';
 import { type ModelConfig, type ProviderConfig, type TokenUsageRecord } from './narrator';
 export type SeedImportance = 'low' | 'medium' | 'high';
+export type SeedInvolvement = 'environment' | 'involved';
 /** 模型输出经解析与校验后的候选事件（尚未入库）。 */
 export interface WorldSeedEventDraft {
     summary: string;
     importance: SeedImportance;
+    involvement: SeedInvolvement;
     occursAt: Date;
     expiresAt?: Date;
     subjects: string[];

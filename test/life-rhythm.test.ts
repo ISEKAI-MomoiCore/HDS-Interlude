@@ -3,7 +3,7 @@
  * - planUrge 乘法公式(base / (densityFactor × rhythmFactor))
  * - 节奏过期(stale)走 restMultiplier 兜底
  * - normalizeLifeRhythm / lifeRhythmStale / lifeRhythmFromLegacyStatus
- * - commitUrge 的 rhythmAttention 提取 */
+ * - 旧 Urge 字段兼容和剧本 focus 补写 */
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { ATTENTION_MULTIPLIERS, planUrge, commitUrge, urgeUserEvent, resolveUrgeConfig, normalizeUrgeState, type UrgeState } from '../src/urge'
@@ -129,21 +129,18 @@ test('7.1.4 迁移：已有 lifeRhythm 不被旧 lifeStatus 覆盖；无效旧�
   assert.equal(invalid.extensions ? 'lifeStatus' in invalid.extensions : false, false)
 })
 
-test('commitUrge 提取 rhythmAttention(合法五档才带)', () => {
-  const script = '她躺在床上翻看手机。'
-  const raw = { value: 0.8, basisQuote: '她躺在床上', rhythmAttention: 'phone-focused' }
-  const committed = commitUrge(fresh(), raw, script, 1, undefined, now, c, () => 0.5)
-  assert.equal(committed.rhythmAttention, 'phone-focused')
-  const invalid = commitUrge(fresh(), { ...raw, rhythmAttention: 'surfing' }, script, 1, undefined, now, c, () => 0.5)
-  assert.equal(invalid.rhythmAttention, undefined)
-  const none = commitUrge(fresh(), { value: 0.8, basisQuote: '她躺在床上' }, script, 1, undefined, now, c, () => 0.5)
-  assert.equal(none.rhythmAttention, undefined)
+test('commitUrge ignores the retired model rhythmAttention field', () => {
+  const script = '她躺在床上，闭目养神。'
+  const raw = { pace: 'slow', basisQuote: '她躺在床上', rhythmAttention: 'phone-focused' }
+  const committed = commitUrge(fresh(), raw, script, 1, undefined, now, c)
+  assert.equal(committed.pace, 'slow')
+  assert.equal(committed.rhythmAttention, undefined)
 })
 
-test('normalizeUrgeState 保留 rhythmAttention', () => {
+test('normalizeUrgeState drops the retired rhythmAttention handoff field', () => {
   const state: UrgeState = { ...fresh(), rhythmAttention: 'occupied' }
   const restored = normalizeUrgeState(JSON.parse(JSON.stringify({ ...state, mode: '{}' })), now)
-  assert.equal(restored.rhythmAttention, 'occupied')
+  assert.equal(restored.rhythmAttention, undefined)
 })
 
 test('7.1.4 压缩器只写 lifeRhythm：不再派生/写入 lifeStatus（含经迁移的旧存档）', async () => {
@@ -151,22 +148,22 @@ test('7.1.4 压缩器只写 lifeRhythm：不再派生/写入 lifeStatus（含经
   let stored: any = { schemaVersion: 4, lifeStatus: { status: 'idle', updatedAt: new Date(now).toISOString() } }
   const host: any = {
     memoryConfig: { sceneHookCharacters: 100, sceneSummaryCharacters: 300, arcSummaryCharacters: 300 },
-    dbGet: async () => [],
+    dbGet: async (table: string, query: any) => table === 'interlude_script_entry' ? (query.kind === 'script' ? entries : []) : [],
     dbSet: async (table: string, _q: any, patch: any) => { if (table === 'interlude_story') stored = patch.state },
     getStory: async () => ({ id: 's', state: stored }),
     activeArc: async () => ({ id: 1 }),
     reportOperation: () => {},
   }
-  const decision = { scene: { summary: '生活继续' }, arc: { summary: '原剧情弧' }, lifeRhythm: { attention: 'occupied', basis: '她在工作' } }
-  const entries: any[] = [{ id: 1, storyId: 's', kind: 'script', actor: 'narrator', content: '生活继续。', occurredAt: new Date(now), metadata: {}, createdAt: new Date(now) }]
+  const decision = { scene: { summary: '生活继续' }, arc: { summary: '原剧情弧' }, lifeRhythm: { attention: 'busy-work', quote: '她专心写着报告。', sourceEntryId: 1 } }
+  const entries: any[] = [{ id: 1, storyId: 's', kind: 'script', actor: 'narrator', content: '她专心写着报告。', occurredAt: new Date(now), metadata: {}, createdAt: new Date(now) }]
   await (InterludeService.prototype as any).persistCompactionOutputs.call(host, { id: 's' }, { id: 1, entryCount: 0 }, decision, entries, new Date(now))
   const first = decodeStoryState(stored)
-  assert.equal(first.lifeRhythm?.attention, 'occupied')
+  assert.equal(first.lifeRhythm?.attention, 'busy-work')
   assert.equal(first.lifeRhythm?.source, 'compactor')
   assert.equal('lifeStatus' in first, false, '旧三值不再落库')
   assert.equal(first.schemaVersion, CURRENT_STORY_STATE_VERSION)
-  // 重复评估保持合法存档；新时间下的相同节奏续期由第三轮回归覆盖。
+  // 同一段证据的重复评估不刷新证据时间。
   await (InterludeService.prototype as any).persistCompactionOutputs.call(host, { id: 's' }, { id: 1, entryCount: 0 }, decision, entries, new Date(now))
-  assert.equal(decodeStoryState(stored).lifeRhythm?.attention, 'occupied')
+  assert.equal(decodeStoryState(stored).lifeRhythm?.attention, 'busy-work')
   assert.equal('lifeStatus' in decodeStoryState(stored), false)
 })

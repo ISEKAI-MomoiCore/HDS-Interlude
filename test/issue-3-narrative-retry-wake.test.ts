@@ -132,9 +132,8 @@ test('issue-3: cancelPendingOutgoingMessages 后 scheduleNextPendingWake 为幸�
     dbGet: async (_table: string, query: any) => {
       if (query?.type?.$in) {
         wakeQueries.push(query)
-        // 忠实执行白名单 + 严格未来过滤（模拟数据库语义）
-        const filterAfter = query.notBefore.$gt.getTime()
-        return rows.filter(row => query.type.$in.includes(row.type) && row.status === 'pending' && row.notBefore.getTime() > filterAfter)
+        assert.equal(query.notBefore, undefined, '取消后的补排应覆盖已到期意图')
+        return rows.filter(row => query.type.$in.includes(row.type) && row.status === 'pending')
       }
       return rows.filter(row => row.storyId === query.storyId && row.participantId === query.participantId && row.status === query.status)
     },

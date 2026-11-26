@@ -11,7 +11,8 @@
 import { Time } from 'koishi'
 import { callQzoneAction, evaluateQzoneGate, matchQzoneFeedContent, normalizeQzoneFeedEntry, normalizeQzoneMsgEntry, probeQzoneAvailable, qzoneFeedCandidates, qzoneIntentFromPayload, qzoneReactionDeltas, qzoneRecordsForEndpoint, qzoneVisibilityLabel, QzoneActionError, type QzoneActionCaller, type QzoneActionKind, type QzoneFeedEntry, type QzoneMsgEntry, type QzonePostRecord } from './qzone'
 import { runStorySerialized, clip } from './narrative-normalizers'
-import { isOneBotPlatform } from './session-platform'
+import { captureStoryTask } from './task-lifecycle'
+import { isOneBotPlatform, withTransportTimeout } from './session-platform'
 import { endpointAccountKey } from './endpoints'
 import type { InterludeStory, NarrativeIntent } from './types'
 
@@ -34,12 +35,15 @@ export function qzoneCaller(svc: any, preferSelfId?: string) {
       : svc.ctx.bots.find((item: any) => isOneBotPlatform(item.platform))
     const internal = (bot as any)?.internal
     if (!internal || typeof internal._request !== 'function') return undefined
-    return (action: string, params?: Record<string, unknown>) => internal._request(action, params)
+    return (action: string, params?: Record<string, unknown>) => withTransportTimeout(Promise.resolve().then(() => internal._request(action, params)), `qzone:${action}`)
   }
 
 
 /** P3 自 service.ts QQ 空间执行区迁出（2026-10-29），行为不变；宿主经 service 同名委托传入。 */
 export async function qzoneExecute(svc: any, story: InterludeStory, kind: QzoneActionKind, input: { content?: string, tid?: string, targetUin?: string, ugcRight?: number }, preferSelfId?: string) {
+    const task = captureStoryTask(svc, story.id)
+    const retired = { ok: false, error: '故事任务已失效，已停止处理 QQ 空间动作。' }
+    if (!task.taskCurrent()) return retired
     if (!svc.qzoneRuntime.enabled) return { ok: false, error: 'QQ 空间通道未启用（Console → 扩展 → QQ 空间）。' }
     // M1a（路径 7）+ qzone 账号选择——显式指定 preferSelfId 时按 accountKey
     // 精确匹配本故事的角色端点，找不到直接失败（绝不自动切到其他端点）；
@@ -61,10 +65,10 @@ export async function qzoneExecute(svc: any, story: InterludeStory, kind: QzoneA
     const now = new Date()
     // 门控与 pending 预留在故事串行队列内完成：并发动作串行过门，杜绝双双
     // 通过限流检查后各插一行而突破日上限/最小间隔（快照模式与 flush 相同）。
-    // advance/proactive-check 已持有队列——嵌套再排队会互相等待造成死锁，
-    // 复用调用方的串行域（同 runStorySerialized 语义）。
     const pending = await runStorySerialized(svc, story.id, async () => {
+      if (!task.taskCurrent()) return undefined
       const recent = (await svc.dbGet('interlude_qzone_post', { createdAt: { $gte: new Date(now.getTime() - 48 * Time.hour) } })) as unknown as QzonePostRecord[]
+      if (!task.taskCurrent()) return undefined
       const gate = evaluateQzoneGate(qzoneRecordsForEndpoint(recent, qzoneEndpointId), svc.qzoneRuntime, { kind, now })
       if (!gate.allowed) return { blocked: gate.reason as string, gate, row: undefined as undefined | { id: number } }
       const row = await svc.dbCreate('interlude_qzone_post', {
@@ -76,51 +80,65 @@ export async function qzoneExecute(svc: any, story: InterludeStory, kind: QzoneA
       })
       return { blocked: undefined as string | undefined, gate, row: { id: row.id } }
     })
+    if (!pending) return retired
     if (pending.blocked || !pending.row) {
       const gate = pending.gate
       svc.reportOperation('diagnostic', 'debug', story, 'user-message', 'QQ 空间动作被限流门拦下 类型=%s 原因=%s 今日=%d/%d', kind, pending.blocked, gate.usedToday, gate.cap)
       return { ok: false, error: pending.blocked === 'daily-cap' ? `今日${kind === 'post' ? '发帖' : kind === 'comment' ? '评论' : '点赞'}已达上限（${gate.usedToday}/${gate.cap}）。` : `距离上一条空间动作不足最小间隔（${svc.qzoneRuntime.minIntervalMinutes} 分钟）。` }
     }
     const pendingId = pending.row.id
+    const commit = (patch: object, fact?: { content: string, metadata: Record<string, unknown> }) => runStorySerialized(svc, story.id, async () => {
+      // A confirmed result remains a fact across pause, but never writes into a reset story.
+      if (!task.contentCurrent()) return
+      await svc.dbSet('interlude_qzone_post', { id: pendingId, status: 'pending' }, patch)
+      if (fact && task.contentCurrent()) await svc.appendEntry(story.id, {
+        kind: 'qzone-post', actor: 'character', content: fact.content,
+        occurredAt: now.toISOString(), metadata: fact.metadata,
+      }, now)
+    })
+    if (!task.taskCurrent()) {
+      await commit({ status: 'failed', error: 'QQ 空间动作发送前已停止。' })
+      return retired
+    }
+    let platformConfirmed = false
     try {
       if (kind === 'post') {
         const data = await callQzoneAction<{ tid?: string | number }>(caller, 'send_qzone_msg', { content: input.content ?? '', ugc_right: input.ugcRight ?? 4 })
         const tid = String(data.tid ?? '')
         if (!tid) {
-          // 成功帧却拿不到 tid：帖子可能已发出但无法追踪——记 unknown，不宣称已确认。
-          await svc.dbSet('interlude_qzone_post', { id: pendingId }, { status: 'unknown', error: '服务端未返回 tid，结果未知。' }).catch((): undefined => undefined)
+          await commit({ status: 'unknown', error: '服务端未返回 tid，结果未知。' })
           svc.reportStandalone('warn', 'QQ 空间说说发表结果未知（无 tid），已按保守计入配额且不自动重试')
           return { ok: false, error: '发表结果未知：服务端未返回说说 tid，为避免重复发帖不会自动重试。' }
         }
-        await svc.dbSet('interlude_qzone_post', { id: pendingId }, { tid, status: 'confirmed', postedAt: new Date() })
-        // 已发布的事实进剧本：她自己会记得发过什么（[空间动态] 前缀走 SOCIAL SURFACE 规则）。
-        await svc.appendEntry(story.id, {
-          kind: 'qzone-post', actor: 'character',
+        platformConfirmed = true
+        await commit({ tid, status: 'confirmed', postedAt: new Date() }, {
           content: `[空间动态] 她发表了说说：${clip(input.content ?? '', 120)}（${qzoneVisibilityLabel(input.ugcRight ?? 4)}）`,
-          occurredAt: now.toISOString(), metadata: { qzoneKind: 'post', tid, ugcRight: input.ugcRight ?? 4 },
-        }, now)
+          metadata: { qzoneKind: 'post', tid, ugcRight: input.ugcRight ?? 4 },
+        })
         svc.reportOperation('standard', 'info', story, 'user-message', 'QQ 空间说说已发表 tid=%s 可见性=%s', tid, input.ugcRight ?? 4)
         return { ok: true, tid }
       }
       if (kind === 'comment') {
         await callQzoneAction(caller, 'comment_qzone', { tid: input.tid ?? '', content: input.content ?? '', ...(input.targetUin ? { target_uin: Number(input.targetUin) } : {}) })
-        await svc.dbSet('interlude_qzone_post', { id: pendingId }, { status: 'confirmed', postedAt: new Date() })
-        await svc.appendEntry(story.id, {
-          kind: 'qzone-post', actor: 'character',
+        platformConfirmed = true
+        await commit({ status: 'confirmed', postedAt: new Date() }, {
           content: `[空间动态] 她评论了${input.targetUin ? ` QQ ${input.targetUin}` : ''}的说说：${clip(input.content ?? '', 80)}`,
-          occurredAt: now.toISOString(), metadata: { qzoneKind: 'comment', tid: input.tid ?? '' },
-        }, now)
+          metadata: { qzoneKind: 'comment', tid: input.tid ?? '' },
+        })
         return { ok: true }
       }
       await callQzoneAction(caller, 'like_qzone', { tid: input.tid ?? '', ...(input.targetUin ? { target_uin: Number(input.targetUin) } : {}) })
-      await svc.dbSet('interlude_qzone_post', { id: pendingId }, { status: 'confirmed', postedAt: new Date() })
+      platformConfirmed = true
+      await commit({ status: 'confirmed', postedAt: new Date() })
       return { ok: true }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      // ambiguous=true 表示请求可能已到达服务端（超时/断连）：记 unknown 而非
-      // failed——unknown 保守计入配额（可能已发生），语义上禁止自动重试。
-      const ambiguous = error instanceof QzoneActionError && error.ambiguous
-      await svc.dbSet('interlude_qzone_post', { id: pendingId }, { status: ambiguous ? 'unknown' : 'failed', error: message.slice(0, 500) }).catch((): undefined => undefined)
+      if (platformConfirmed) {
+        svc.reportStandalone('warn', 'QQ 空间动作已获平台确认，但本地回执写入失败 类型=%s 错误=%s', kind, message)
+        return { ok: false, error: `平台已确认，但本地记录失败；不会自动重试：${message}` }
+      }
+      const ambiguous = !(error instanceof QzoneActionError) || error.ambiguous
+      await commit({ status: ambiguous ? 'unknown' : 'failed', error: message.slice(0, 500) }).catch((): undefined => undefined)
       svc.reportStandalone('warn', 'QQ 空间动作%s 类型=%s 错误=%s', ambiguous ? '结果未知' : '失败', kind, message)
       return { ok: false, error: ambiguous ? `${message}（结果未知：请求可能已生效，为避免重复不会自动重试。）` : message }
     }
@@ -137,25 +155,35 @@ export async function qzoneAvailable(svc: any, preferSelfId?: string) {
 
 /** P3 自 service.ts QQ 空间执行区迁出（2026-10-29），行为不变；宿主经 service 同名委托传入。 */
 export async function executeQzoneIntent(svc: any, story: InterludeStory, intent: NarrativeIntent, now: Date) {
-    const request = qzoneIntentFromPayload(intent.payload)
-    const finish = async (note: string) => {
-      await svc.dbSet('interlude_intent', { id: intent.id }, { status: 'completed', updatedAt: now }).catch((): undefined => undefined)
-      svc.reportOperation('diagnostic', 'debug', story, 'intent-due', 'QQ 空间意图已处理 意图=%d 结果=%s', intent.id, note)
+    const task = captureStoryTask(svc, story.id)
+    const claim = await runStorySerialized(svc, story.id, async () => {
+      if (!task.taskCurrent()) return undefined
+      const query = { id: intent.id, storyId: story.id, status: 'pending' }
+      const current = (await svc.dbGet('interlude_intent', query))[0] as NarrativeIntent | undefined
+      if (!current || !task.taskCurrent()) return undefined
+      const request = qzoneIntentFromPayload(current.payload)
+      let reason = request ? undefined : 'payload-invalid'
+      if (request && request.action !== 'post') {
+        // Only posts actually observed by HDSI are valid write targets.
+        const targets = await svc.dbGet('interlude_qzone_post', { tid: request.tid ?? '' }) as QzonePostRecord[]
+        if (!targets.some(row => row.status === 'confirmed' && (row.kind === 'feed-seen' || row.kind === 'post'))) reason = 'target-unknown'
+      }
+      if (!task.taskCurrent()) return undefined
+      // This intent is one-shot even if the worker dies during transport; the
+      // qzone audit row separately records the actual outcome or uncertainty.
+      await svc.dbSet('interlude_intent', query, { status: 'completed', updatedAt: now })
+      return { request, reason }
+    })
+    if (!claim) return
+    let note = claim.reason ?? 'retired-before-transport'
+    if (!claim.reason && claim.request && task.taskCurrent()) {
+      const request = claim.request
+      const result = await svc.qzoneExecute(story, request.action, {
+        content: request.content, tid: request.tid, targetUin: request.targetUin, ugcRight: request.ugcRight,
+      }, story.selfId)
+      note = result.ok ? 'ok' : `failed:${clip(result.error ?? '', 80)}`
     }
-    if (!request) return finish('payload-invalid')
-    if (request.action !== 'post') {
-      // 目标来源绑定：评论/点赞的 tid 必须来自本账号实际读到并入账的好友动态
-      // （feed-seen 行）或她自己已发表的说说（confirmed post 行）——模型编造
-      // 的 tid 一律拒绝，防止对任意帖子执行写操作。
-      const targets = (await svc.dbGet('interlude_qzone_post', { tid: request.tid ?? '' })) as unknown as QzonePostRecord[]
-      const known = targets.some(row => row.status === 'confirmed' && (row.kind === 'feed-seen' || row.kind === 'post'))
-      if (!known) return finish('target-unknown')
-    }
-    const result = await svc.qzoneExecute(story, request.action, {
-      content: request.content, tid: request.tid, targetUin: request.targetUin, ugcRight: request.ugcRight,
-    }, story.selfId)
-    // 点赞成功不单独进剧本（过细）；发帖/评论的条目由 qzoneExecute 写入。
-    return finish(result.ok ? 'ok' : `failed:${clip(result.error ?? '', 80)}`)
+    svc.reportOperation('diagnostic', 'debug', story, 'intent-due', 'QQ 空间意图已处理 意图=%d 结果=%s', intent.id, note)
   }
 
 

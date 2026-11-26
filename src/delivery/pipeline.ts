@@ -267,12 +267,19 @@ export async function sendOutgoingMessages(svc: any,
         }
       }
       if (shouldCancel?.(target)) {
-        svc.reportOperation('standard', 'info', story, 'user-message', '新消息打断主角输入，停止发送后续分段 参与者=%s', target.id)
+        svc.reportOperation('standard', 'info', story, 'user-message', '新消息打断发送计划，本次未提交给适配器 参与者=%s', target.id)
         continue
       }
       let attemptedAddress: { platform: string, selfId: string } | undefined
       try {
-        svc.reportOperation('standard', 'info', story, 'intent-due', '消息投递开始 参与者=%s', target.id)
+        const logDispatch = () => {
+          const ref = message.scriptEvent
+          svc.reportOperation('standard', 'info', story, 'intent-due', '适配器发送开始 参与者=%s' + (ref?.bubbleIndex === undefined ? '' : ' 分段=%d 事件=%s'),
+            target.id, ...(ref?.bubbleIndex === undefined ? [] : [ref.bubbleIndex + 1, ref.eventId]))
+          if (svc.config.logging?.logMessageContent) {
+            svc.reportOperation('diagnostic', 'info', story, 'intent-due', '待提交给适配器的主角消息预览：%s', message.content.slice(0, svc.config.logging.previewLength ?? 500))
+          }
+        }
         const legacyAddress = svc.endpointAddressSync({ platform: target.platform, selfId: target.selfId }, { kind: 'participant-user', id: target.id })
         // Keep the distinction between a caller-selected route and the legacy
         // default route.  The latter is still allowed to reuse the live
@@ -349,10 +356,9 @@ export async function sendOutgoingMessages(svc: any,
         const outgoingContent = literalQuoteMessageId
           ? [h('quote', { id: literalQuoteMessageId }), '\u200b']
           : message.content
-        if (svc.config.logging?.logMessageContent) {
-          svc.report('info', story, 'intent-due', '主角消息内容：%s', message.content.slice(0, svc.config.logging.previewLength))
-        }
         if (!explicitEndpointId && session && current?.id === target.id && sessionMatchesEndpoint) {
+          if (message.beginPrivateBubbleTransport && (shouldCancel?.(target) || !message.beginPrivateBubbleTransport())) continue
+          logDispatch()
           const receipt = await withTransportTimeout(session.send(outgoingContent), 'private-session-send')
           if (Array.isArray(receipt) && !receipt.length) throw new Error('Private transport returned no message receipt.')
           // 即时会话投递成功同样刷新端点状态（与 bot/desktop 路径一致）。
@@ -379,6 +385,8 @@ export async function sendOutgoingMessages(svc: any,
             // 这里必须留痕供排障。
             svc.reportOperation('diagnostic', 'debug', story, 'intent-due', '后台投递缺少 scriptEvent，幂等键缺失 参与者=%s', target.id)
           }
+          if (message.beginPrivateBubbleTransport && (shouldCancel?.(target) || !message.beginPrivateBubbleTransport())) continue
+          logDispatch()
           const outcome = await svc.desktopDeliveryHandler({
             participantId: target.id, selfId: address.selfId, platform: address.platform,
             channelId: privateChannelId, kind: 'private', content: message.content,
@@ -413,6 +421,8 @@ export async function sendOutgoingMessages(svc: any,
           if (recordFailures) await svc.recordOutgoingDeliveryFailure(story, target.id, message, 'bot-not-found', failureStatus)
           continue
         }
+        if (message.beginPrivateBubbleTransport && (shouldCancel?.(target) || !message.beginPrivateBubbleTransport())) continue
+        logDispatch()
         const receipt = await withTransportTimeout(bot.sendMessage(privateChannelId, outgoingContent), 'private-bot-send')
         if (Array.isArray(receipt) && !receipt.length) throw new Error('Private transport returned no message receipt.')
         svc.noteEndpointOutbound({ kind: 'participant-user', id: target.id }, true, endpoint ? 'endpoint-explicit' : 'private-delivered', address)
@@ -428,7 +438,7 @@ export async function sendOutgoingMessages(svc: any,
           // 幂等去重。账本记 unknown(设计 §7.3):调用可能已到达平台,自动恢复
           // 不重发,保留待核实;迟到成功回执可将其升级为 delivered。
           svc.noteEndpointOutbound({ kind: 'participant-user', id: target.id }, false, String(error), address)
-          svc.report('warn', story, 'intent-due', '消息投递超时（结果未知，账本记待核实） 参与者=%s 错误=%s', target.id, error)
+          svc.report('warn', story, 'intent-due', '私聊适配器发送超时（结果未知） 参与者=%s 错误=%s', target.id, error)
           if (recordFailures) await svc.recordOutgoingDeliveryFailure(story, target.id, message, String(error), 'unknown')
         } else {
           svc.noteEndpointOutbound({ kind: 'participant-user', id: target.id }, false, String(error), address)
@@ -555,13 +565,16 @@ export async function updateScriptDeliveryOutcome(svc: any,
         const segment = action?.segments.find(item => item.index === normalized.segmentIndex)
         if (segment && typeof svc.reportCommunicationEvent === 'function') {
           try {
-            svc.reportCommunicationEvent('standard', segment.status === 'unknown' || segment.status === 'failed' ? 'warn' : 'info',
-              { id: storyId }, 'intent-due', '投递结果更新 状态=%s 原因=%s', {
+            const resultLabel: Record<ScriptDeliverySegmentStatus, string> = {
+              delivered: '平台已确认', cancelled: '投递已取消', unknown: '投递结果未知', failed: '投递失败', pending: '仍待投递',
+            }
+            svc.reportCommunicationEvent('summary', segment.status === 'unknown' || segment.status === 'failed' ? 'warn' : 'info',
+              { id: storyId }, 'intent-due', `${resultLabel[segment.status]}（已记账） 状态=%s 原因=%s`, {
                 type: 'delivery-result', storyId, commitId: normalized.commitId, eventId: normalized.eventId,
                 segmentIndex: normalized.segmentIndex, targetId: action?.participantId, endpointId: action?.endpointId,
                 ...persistedDesktopProcessingContext(metadata), domain: 'transport',
                 reasonCode: segment.reason || `delivery-${segment.status}`, status: segment.status,
-              }, segment.status, segment.reason || 'platform-result')
+              }, segment.status, segment.reason || (segment.status === 'delivered' ? 'platform-confirmed' : '未记录'))
           } catch { /* A log failure preserves both the ledger and follow-up settlement. */ }
         }
       }
@@ -847,7 +860,7 @@ export async function sendGroupMessage(svc: any, story: InterludeStory, channelI
           ? { platform: selectedEndpoint.platform, selfId: selectedEndpoint.selfId }
           : { platform: fallbackAddress!.platform, selfId: fallbackAddress!.selfId }
         if (task.contentCurrent()) svc.noteEndpointOutbound(endpointOwner, false, String(error), address)
-        if (unknownOutcome) svc.report('warn', story, 'user-message', '群消息投递超时（结果未知，等待补偿确认） 群频道=%s 错误=%s', targetGroupId, error)
+        if (unknownOutcome) svc.report('warn', story, 'user-message', '群聊适配器发送超时（结果未知） 群频道=%s 错误=%s', targetGroupId, error)
         else svc.report('error', story, 'user-message', '群消息投递失败 群频道=%s 错误=%s', targetGroupId, error)
       }
     }

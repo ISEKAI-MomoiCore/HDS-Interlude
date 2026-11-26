@@ -1,11 +1,13 @@
 # HDS Interlude 文档索引
 
-当前版本为 `1.0.1-rc60`（Issue #10/#14/#15 修复 + modelCapture）。工作区另有一批**未发布增量**：主动联系统一动作架构（P0–P5：统一作者动作契约、统一投递策略、Urge 收敛、Console 通信动作视图与桥接能力、P5 清理，详见 [PROACTIVE_ACTION_UNIFICATION_DESIGN.md](PROACTIVE_ACTION_UNIFICATION_DESIGN.md)）、实验性表情包采集（stickers.harvest）、考据 Agent（P1/P2/P3'，自 CEV 分叉仓移植）、密度自适应条目预算（contextEntryMode=auto）、HDSI 专属 Console 界面（概览/配置中心/当前故事/考据案头/通信动作/上下文预算）——状态以 [CHANGELOG.md](CHANGELOG.md) 顶部”下一版”段落为准，文档描述均含这批增量。根目录 README、新手指南、配置指南和命令文档面向使用者；本目录保存当前架构、设计依据、发布增量与维护记录。判断当前行为优先阅读”当前实现”，历史报告只用于追溯，不覆盖源码与当前架构。
+当前正式版为 `1.0.1`，由 `1.0.1-rc63` 直接晋升。本版修复逐泡恢复、群投递补偿和后台外部任务阻塞，并统一 Koishi 日志行为；继续保留九档 Focus、事件注意度标注、播种事件涉入标签及私聊逐气泡投递。发布变化见 [更新记录](CHANGELOG.md)。根目录 README、新手指南、配置指南和命令文档面向使用者。本目录保存架构、设计与维护记录。
 
 ## 当前实现
 
 - [ARCHITECTURE.md](ARCHITECTURE.md)：当前真实架构和数据流。
-- [NARRATIVE_PLATFORM_DECOUPLING_DESIGN.md](NARRATIVE_PLATFORM_DECOUPLING_DESIGN.md)：叙事核心与平台接入解耦设计（**v1.1 待评审，未实施**，2026-10-30）——回合执行层的端口与适配器分层 + 提示词语义层（§4.5）：turn-engine 本体无 IO 但两个 flush 执行体（service.ts 内）叙事与平台操作逐行交错、模型调用边界焊接投递回调；主叙事合约输出协议已是语义枚举但六处措辞/类型绑定 QQ。D0–D4（含 D2.5 合约模板参数化）六个行为不变切片，平台词汇经模板参数由适配器注入、QQ 路径逐字节不变，目标"迁移 Discord/Telegram 叙事核心与合约零修改"。
+- [Focus 与事件注意度](experiments/2026-11-25-focus-driven-event-library-design.md)：已实现的九档 Focus、六类事件 T 档、世界事件涉及程度、实况天气和 Console 预览边界。
+- [逐气泡发送延迟](experiments/2026-11-25-per-bubble-send-delay-design.md)：私聊即时回复按泡输出延迟，宿主结合模型耗时、打字模拟与投递回执调度，并支持新私聊打断。
+- [NARRATIVE_PLATFORM_DECOUPLING_DESIGN.md](NARRATIVE_PLATFORM_DECOUPLING_DESIGN.md)：叙事核心与平台接入解耦设计（2026-10-30 原始设计稿，D0–D4 实施状态见 [平台语义层设计的前置说明](PLATFORM_AWARENESS_DESIGN.md)）——回合执行层的端口与适配器分层 + 提示词语义层（§4.5）：turn-engine 本体无 IO 但两个 flush 执行体（service.ts 内）叙事与平台操作逐行交错、模型调用边界焊接投递回调；主叙事合约输出协议已是语义枚举但六处措辞/类型绑定 QQ。D0–D4（含 D2.5 合约模板参数化）六个行为不变切片，平台词汇经模板参数由适配器注入、QQ 路径逐字节不变，目标"迁移 Discord/Telegram 叙事核心与合约零修改"。
 - [PLATFORM_AWARENESS_DESIGN.md](PLATFORM_AWARENESS_DESIGN.md)：平台感知设计（**F1 · v1 待评审，未实施**，2026-10-30）——多平台语义层首个功能增量：PlatformProfile 性格卡片（她对平台的认知 + 能力面标签）随端点列表注入，选择动机不写规则、交给模型基于"卡片 × 关系 × 剧本"演绎；三条既有选择纪律不动。QQ 单平台合约逐字节不变，双平台新增 profile 注入（唯一行为变化点）。前置：解耦 D0–D4 已完成。
 - [RESPONSIVENESS_INSPIRATION_DESIGN.md](RESPONSIVENESS_INSPIRATION_DESIGN.md)：群响应性灵感（**未立项备忘**，2026-10-30）——CHI06 IM 响应性研究的透镜 + 会话修正后的发散沉淀：会话迟滞（键=她真实群发消息）、未处理显著度加速瞥视、注意力预算（节奏×Preplan×Agency 三源合一）、防抖自适应；撤销本地延迟采样（窃取模型裁决权）。**专项：冷尾悬问微调**——热聊中被问后冷群导致跳过条数永远悬置的假感，两层修法（回合归属放行 + group-catchup 一次性兜底唤醒）。第二篇透镜（互酬性，村上 2023）：首句回复时长一句话档案（仅私聊）+ 回复延迟元语言指引 + 人味校准 r 值（非功能指标）；心理负债感已否决、群节奏对齐挂起待议。
 - [CONSOLE_CONFIG_CENTER_DESIGN.md](CONSOLE_CONFIG_CENTER_DESIGN.md)：配置中心设计与当前状态。全部 25 个可见配置节可编辑，支持搜索、保存、强制重载与重新读取；Schema 与 Koishi 标准配置页共用，当前故事设定保存到数据库。
@@ -33,6 +35,7 @@
 
 ## 已确认方向与待实施方案
 
+- [Focus 驱动的事件库设计讨论](experiments/2026-11-25-focus-driven-event-library-design.md) 记录新版 focus 状态候选、事件库的提示词接入和机械重排方向。
 - [PROACTIVE_ACTION_UNIFICATION_DESIGN.md](PROACTIVE_ACTION_UNIFICATION_DESIGN.md)：主动联系统一作者动作架构与实施计划（2026-11-14，方案二；P0–P5 已完成）——Agency 场景证据化、通信动作与执行边界统一、Urge 解耦、历史迁移、日志 / Console / 桌面联动及分批验收。当前功能行为仍以源码和现状文档为准。
 - [主动联系 P0 特征基线](development/PROACTIVE_P0_BASELINE_2026-11-14.md)：相位×入口×权限覆盖表、解析→提交→发送动作去向、旧任务/旧数据样本分类、桌面版本清单、快照与恢复步骤及结构口径性能基线（统一动作重构 P2 起的对照基线）。
 - [主动联系 P5 审查与验收](development/PROACTIVE_P5_REVIEW_2026-11-15.md)：P1–P4 实现审查、P5 清理项、统一契约修复、回归与发布检查记录。
@@ -48,7 +51,7 @@
 
 - [rc12 Anthropic Messages 适配](development/ANTHROPIC_MESSAGES_RC12.md)：双协议选择、cache-first、流式、群音频写作与兼容边界。
 
-- [CHANGELOG.md](CHANGELOG.md)：更新记录——顶部为未发布批次（主动联系统一架构 P5 收敛/表情包采集/考据 Agent/密度自适应/HDSI Console），其后为 rc58 起的全部历史发布记录。
+- [CHANGELOG.md](CHANGELOG.md)：`1.0.1` 正式版与历史版本的发布增量。
 - [EVENT_LED_SCRIPT_REPAIR.md](development/EVENT_LED_SCRIPT_REPAIR.md)：事件优先续写、Alter 收束与关系学习证据边界。
 
 - [URGE_SYSTEM_PROPOSAL.md](development/URGE_SYSTEM_PROPOSAL.md)：可选 Urge 自动推进设计；源码已实现，默认关闭。

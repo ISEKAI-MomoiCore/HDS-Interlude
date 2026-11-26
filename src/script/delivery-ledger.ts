@@ -20,6 +20,8 @@ export interface ScriptDeliveryAction {
   eventId: string
   eventKind: ScriptEventDraft['kind']
   participantId?: string
+  /** User-message replies share the delivery ledger but do not consume proactive quota. */
+  userInitiated?: boolean
   /** Authored route, retained so a restart can retry the same endpoint. */
   endpointId?: string
   status: ScriptDeliveryStatus
@@ -47,6 +49,7 @@ export function createScriptDeliveryActions(commit: ScriptCommitDraft): ScriptDe
       eventId: event.eventId,
       eventKind: event.kind,
       ...(event.participantId ? { participantId: event.participantId } : {}),
+      ...(commit.phase === 'user-message' ? { userInitiated: true } : {}),
       ...(event.endpointId ? { endpointId: event.endpointId } : {}),
       status: 'pending' as const,
       segments,

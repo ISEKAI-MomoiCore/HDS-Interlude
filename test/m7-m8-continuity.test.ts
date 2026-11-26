@@ -192,7 +192,11 @@ test('resolved working detail removes only the evidence-backed label', async () 
 test('raw script persistence keeps a long original passage without truncation', async () => {
   const content = '完整原始剧本。'.repeat(3000)
   let saved: any
-  const service = { historyVectors: new Map(), dbCreate: async (_table: string, value: any) => { saved = { ...value, id: 1 }; return saved } }
-  await (InterludeService.prototype as any).appendEntry.call(service, 's', { kind: 'script', content, actor: 'narrator' }, now)
+  const methods = InterludeService.prototype as any
+  const service = {
+    historyVectors: new Map(), createScriptEntry: methods.createScriptEntry, cacheScriptEntry: methods.cacheScriptEntry,
+    dbCreate: async (_table: string, value: any) => { saved = { ...value, id: 1 }; return saved },
+  }
+  await methods.appendEntry.call(service, 's', { kind: 'script', content, actor: 'narrator' }, now)
   assert.equal(saved.content, content)
 })

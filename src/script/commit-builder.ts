@@ -14,6 +14,7 @@ export interface ScriptFirstDecisionInput {
   decision: NarrativeDecision
   messageSeparator?: string
   splitReplyMessages?: boolean
+  timedPrivateReply?: boolean
   /** Group output is normalized by the service before it enters this adapter. */
   groupReplyContent?: string
   frameId?: string
@@ -63,6 +64,7 @@ export function decisionToScriptCommit(input: ScriptFirstDecisionInput): ScriptC
       split: input.splitReplyMessages,
       prose,
       actions: input.decision.authoredActions,
+      timedPrivateReply: input.timedPrivateReply && interaction.reply.mode === 'immediate',
     })
   }
   for (const action of input.decision.crossConversationActions ?? []) {
@@ -169,6 +171,7 @@ function addMessageEvent(
     split?: boolean
     prose: string
     actions?: AuthoredAction[]
+    timedPrivateReply?: boolean
   },
 ) {
   const bubbles = splitBubbles(input.content, input.separator, input.split)
@@ -179,6 +182,7 @@ function addMessageEvent(
     content: canonicalBubbleContent(input.content, bubbles, input.separator, input.split),
     bubbles,
     deliveryMode: input.mode,
+    ...(input.timedPrivateReply ? { metadata: { timedPrivateReply: true } } : {}),
     scriptBinding: input.mode === 'delayed'
       ? { status: 'future' }
       : bindImmediateMessageAction(input.prose, bubbles, input.actions),

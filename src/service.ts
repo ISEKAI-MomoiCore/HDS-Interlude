@@ -6,7 +6,8 @@ import { offlineGroupCatchup } from './platform/onebot-offline-catchup'
 import { RUNTIME_TABLES, cleanupKey, cleanupPayload, type RuntimeTable } from './database-cleanup'
 import { createWorldSeeder, resolveWorldSeederRuntime, type WorldSeedDomain, type WorldSeeder } from './world-seeder'
 import { resolveWeatherConfig } from './weather'
-import { lifeRhythmStale } from './story-state'
+import { lifeRhythmFromScript, lifeRhythmStale } from './story-state'
+import { fixedEventTier, resolveEventAttentionFocus } from './script/event-attention'
 import { resolveQzoneConfig, type QzoneActionCaller, type QzoneActionKind, type QzoneConfig } from './qzone'
 import {
   endpointAccountKey, freshEndpointState,
@@ -66,6 +67,7 @@ import { RECALLABLE_ENTRY_KINDS, recallHistory, type HistoryVectorEntry, ensureH
 export { isHistoryEntryVisibleToParticipant } from './history-recall'
 import { groupCooldownActive, groupChatCapabilities, privateChatCapabilities, executeGroupReactions, resolveSticker, resolveNativeFace, sendSticker, sendNativeFace } from './group-actions'
 import { receiveGroup, receive, groupSenderName, lookupGroupMemberName } from './inbound-gate'
+import { openBrowserPage, runBrowserOperation } from './browser-runtime'
 import { ManageSessionDenial, manageSessionDenialReason, isEnabledAccount } from './session-platform'
 export { ManageSessionDenial, manageSessionDenialReason, isEnabledAccount }
 import type { GroupWillingnessConfig, GroupWillingnessState } from './group-willingness'
@@ -86,7 +88,8 @@ import { compactionCheckpointAdvanced, scheduleCompaction, compactStory, compact
 import { enqueueEndpointWrite, persistEndpointState, setEndpointState, endpointGateReason, liveBotForEndpoint, endpointInitiateGateReason, endpointForDelivery, ensureEndpointRegistry, reconcileEndpointRegistry, registerStoryRoleEndpointRow, registerParticipantUserEndpointRow, backfillQzoneEndpointIds, recordStoryAlias, resolveStoryIdAlias, removeStoryAlias, listStoryAliases, addStoryEndpoint, disableStoryEndpoint, resolveMostActiveEndpointId, narrativeEndpointSelection, linkParticipantEndpoint, unlinkParticipantEndpoint, listParticipantEndpoints, resolveRoleAccountKey, listStoryEndpoints, resolveInboundEndpointFor, channelMetadataFor, touchEndpointStateInbound, syncCurrentBotConnections, noteEndpointConnection, endpointAddressSync, noteEndpointOutbound } from './endpoint-registry'
 import { qzoneCaller, qzoneExecute, qzoneAvailable, executeQzoneIntent, qzoneFeedSweep, qzoneReactionSweep } from './qzone-executor'
 import { sendGroupMessage, sendCrossGroupMessage, deliveryExecutionKey, successfulDeliveryEntry, deliverOutgoingMessages, deliveryLedgerConfirmed, sendOutgoingMessages, confirmOutgoingDeliveries, recordOutgoingDeliveryFailure, updateScriptDeliveryOutcome, recordPlatformDeliveryOutcome, resolveLiteralQuoteMessageId, recordAutomaticDelivery, splitOutgoingMessage, typingDelayMilliseconds, firstMessageTypingHoldMs, type GroupDeliveryResult } from './delivery/pipeline'
-import { normalizeLifeHandoff } from './script/life-handoff'
+import { entryLifeHandoff, normalizeLifeHandoff } from './script/life-handoff'
+import { isOpeningPrologue, MAX_PROLOGUE_PASSAGES, preparePrologue, type PrologueConfig } from './script/prologue'
 import { needsTimelineDirector } from './script/timeline-routing'
 
 import {
@@ -94,7 +97,7 @@ import {
   resolveAgencyConfig,
 } from './agency'
 import { HDS_INTERLUDE_VERSION } from './meta'
-import { formatLayeredLog, phaseLabel, renderLogMessage, type CommunicationEventLog } from './logging'
+import { allowsLogLevel, communicationLogFields, formatLayeredLog, phaseLabel, renderLogMessage, type CommunicationEventLog, type InterludeLogSink } from './logging'
 import { formatLogTime, formatStoryDisplayTime } from './time'
 
 
@@ -105,6 +108,7 @@ import { nextSchedulePreplanTransition, resolveSchedulePreplanConfig, type Sched
 import {
   decodeStoryState, encodeStoryState, inspectStoryStateMigration,
 } from './story-state'
+import { activatePrivateBubbleGroup, interruptPrivateBubbleGroup, persistPrivateBubbleGroup, privateBubblePlan, splitPrivateBubbleContent, validatePrivateBubbleDelay, type PrivateBubbleCommitOptions } from './delivery/private-bubbles'
 import { attachMessageEvent, prepareOutgoingDelivery, restoreDesktopContext, restoreMessageEvent, scriptEventPayload } from './delivery'
 
 import { decisionToScriptCommit, findGroupScriptEvent, findPrivateOutgoingMessageEvent, unboundImmediateMessageEvents } from './script/commit-builder'
@@ -694,6 +698,7 @@ export interface StoryDefaults {
   perspective: string
   perspectives?: string[]
   supplementaryFacts?: string[]
+  prologue?: PrologueConfig
   userProfile: string
   relationship: string
   world: string
@@ -717,6 +722,8 @@ export interface LoggingConfig {
   logScriptPreview: boolean
   /** Emit user-visible incoming/outgoing message bodies to the plugin log. */
   logMessageContent?: boolean
+  /** Emit otherwise private raw model-response previews at diagnostic debug level. */
+  logModelResponse?: boolean
   previewLength: number
 }
 
@@ -831,6 +838,7 @@ export class InterludeService extends Service {
   deliveryExecutors = new Set<string>() // P2：投递管线经宿主引用读写（执行器去重）
   /** Known platform successes survive a local confirmation failure in this process. */
   private acceptedDeliveries = new Map<string, OutgoingMessageDraft>()
+  private warnedMissingPrivateBubblePlans = new Set<string>()
   private pendingDeliveryRecoveryBackoff = new Map<string, { attempts: number, retryAt: number }>()
   private blindModeHealthIssue = false
   /** Console reload creates a new service instance, so normalized config can
@@ -923,21 +931,25 @@ export class InterludeService extends Service {
     this.modelRouting = resolveModelRouting(config.model, config.alterSystem)
     // 实验性微调数据采集：仅主叙事 narrator 持有 sink；写盘失败只降级采集本身。
     const modelCaptureDirectory = this.modelCaptureConfig.enabled ? resolve(ctx.baseDir, this.modelCaptureConfig.directory) : ''
-    const modelCapture = this.modelCaptureConfig.enabled ? new ModelCaptureSink(modelCaptureDirectory, this.serviceLogger) : undefined
-    if (modelCapture) this.serviceLogger.info('主叙事微调数据采集已开启 目录=%s（按天分 JSONL，仅记录解析成功的往返）', modelCaptureDirectory)
-    this.narrator = createNarrator(ctx, config.model, this.blindModeConfig.enabled, onUsage, this.modelRouting, modelCapture)
+    const modelCapture = this.modelCaptureConfig.enabled ? new ModelCaptureSink(modelCaptureDirectory, this.operationLogger) : undefined
+    if (modelCapture) this.operationLogger.info('主叙事微调数据采集已开启 目录=%s（按天分 JSONL，仅记录解析成功的往返）', modelCaptureDirectory)
+    const providerDiagnostics = {
+      logger: this.operationLogger,
+      previewLength: () => this.modelResponseLogLimit(),
+    }
+    this.narrator = createNarrator(ctx, config.model, this.blindModeConfig.enabled, onUsage, this.modelRouting, modelCapture, providerDiagnostics)
     // 表情包采集：暂存存储与判定客户端（复用表情包识别连接），纯锁外旁路。
     if (this.stickerHarvestActive) {
-      this.harvestStore = new StickerHarvestStore(resolve(ctx.baseDir, this.harvestConfig.stagingDirectory), this.serviceLogger)
-      this.harvestJudge = new OpenAICompatibleNarrator(ctx, config.model, this.blindModeConfig.enabled, onUsage)
+      this.harvestStore = new StickerHarvestStore(resolve(ctx.baseDir, this.harvestConfig.stagingDirectory), this.operationLogger)
+      this.harvestJudge = new OpenAICompatibleNarrator(ctx, config.model, this.blindModeConfig.enabled, onUsage, undefined, undefined, providerDiagnostics)
       this.reportStandaloneOperation('standard', 'info', '表情包采集已开启 暂存目录=%s（判定走表情包识别连接；保留表情自动进入表情库）', this.harvestConfig.stagingDirectory)
     }
     if (this.researchActive) {
-      this.researchNarrator = new OpenAICompatibleNarrator(ctx, config.model, this.blindModeConfig.enabled, onUsage)
+      this.researchNarrator = new OpenAICompatibleNarrator(ctx, config.model, this.blindModeConfig.enabled, onUsage, undefined, undefined, providerDiagnostics)
       this.researchToolsRegistry = new ResearchToolRegistry(ctx)
       this.reportStandaloneOperation('standard', 'info', '考据 Agent 已开启（应答式：她承诺去查 → 后台核实 → 案头供作者参考）')
     }
-    this.compactor = createCompactor(ctx, config.model, this.blindModeConfig.enabled, onUsage, this.modelRouting)
+    this.compactor = createCompactor(ctx, config.model, this.blindModeConfig.enabled, onUsage, this.modelRouting, providerDiagnostics)
     this.embedder = createEmbedder(ctx, config.model, this.modelRouting)
     // D2：平台端口（QQ/OneBot 首个实现；包装本类既有方法，行为零变化）。
     this.platform = new OneBotAdapter(this)
@@ -947,8 +959,8 @@ export class InterludeService extends Service {
     // 每次插件加载提示一次，修好配置前不刷屏。
     const embeddingDegraded = embeddingDegradationNotice(config.model, this.modelRouting)
     if (embeddingDegraded) this.reportStandaloneOperation('standard', 'warn', embeddingDegraded)
-    this.stickerDescriber = createStickerDescriber(ctx, config.model, this.blindModeConfig.enabled, onUsage, this.modelRouting)
-    this.visionDescriber = createVisionDescriber(ctx, config.model, this.blindModeConfig.enabled, onUsage, this.modelRouting)
+    this.stickerDescriber = createStickerDescriber(ctx, config.model, this.blindModeConfig.enabled, onUsage, this.modelRouting, providerDiagnostics)
+    this.visionDescriber = createVisionDescriber(ctx, config.model, this.blindModeConfig.enabled, onUsage, this.modelRouting, providerDiagnostics)
     // 播种器模型来自模型中心的“用于世界播种”勾选（useForWorldSeeding）；
     // 无勾选连接即视为关闭——不再单独复制一份提供商配置。
     const rawSeederProvider = (config.model.providers ?? []).find(provider => provider.enabled !== false && provider.useForWorldSeeding === true && provider.model?.trim())
@@ -1004,7 +1016,10 @@ export class InterludeService extends Service {
         setTimeout: (fn: () => void, ms: number) => this.ctx.setTimeout(fn, ms),
         retryDelayMs: Time.second,
         deferDelayMs: 500,
-        onWakeError: error => service.reportStandaloneOperation('diagnostic', 'debug', '到期消息唤醒失败 错误=%s', error),
+        onWakeError: error => {
+          if (service.disposed || isContextDisposedError(error)) return
+          service.reportStandalone('warn', '到期计划唤醒失败 错误=%s', error)
+        },
         onTaskError: error => service.reportStandaloneOperation('diagnostic', 'debug', '记忆压缩跳过 错误=%s', error),
       })
     }
@@ -1016,7 +1031,7 @@ export class InterludeService extends Service {
       await this.syncGroupAssignees()
       this.reportStandaloneOperation('summary', 'info', '服务已就绪')
     })
-    this.reportStandaloneOperation('summary', 'info', '服务初始化完成 主叙事路由=%s 共享主剧本=%s 自动推进=%s', this.modelRouting.main.available ? '已配置' : '未配置', this.sharedStoryConfig.enabled, this.autoAdvanceConfig.enabled)
+    this.reportStandaloneOperation('summary', 'info', '服务初始化完成 版本=%s 主叙事路由=%s 共享主剧本=%s 自动推进=%s', HDS_INTERLUDE_VERSION, this.modelRouting.main.available ? '已配置' : '未配置', this.sharedStoryConfig.enabled, this.autoAdvanceConfig.enabled)
     this.reportStandaloneOperation('diagnostic', 'debug', '模型任务路由 %s', formatModelRouting(this.modelRouting))
   }
 
@@ -1093,6 +1108,7 @@ export class InterludeService extends Service {
     void (async () => {
       try {
         await this.syncCurrentBotConnections()
+        await this.rearmPrivateBubbleWakes()
         // Let adapter lifecycle callbacks and endpoint state writes settle before
         // the first compensation pass. A later sweep remains the fallback.
         this.ctx.setTimeout(() => void this.recoverPendingDeliveries().catch(error =>
@@ -1168,12 +1184,14 @@ export class InterludeService extends Service {
         if (attempted >= limit || this.databaseResetting || (this.desktopRuntimePhase as string) === 'paused') break
         if (story.status !== 'active') continue
         const owners = new Map<string, number>()
+        const timedOwners = new Set<string>()
         const splits = await this.dbGet('interlude_intent', { storyId: story.id, type: 'split-message' }) as NarrativeIntent[]
         for (const intent of splits) {
           const ref = restoreMessageEvent(intent.payload, String(intent.payload?.content ?? ''))
           if (ref?.scriptEntryId) {
             const key = JSON.stringify([ref.scriptEntryId, ref.commitId, ref.eventId, ref.bubbleIndex ?? 0])
             if (!owners.has(key)) owners.set(key, intent.id)
+            if (privateBubblePlan(intent)) timedOwners.add(JSON.stringify([ref.scriptEntryId, ref.commitId, ref.eventId]))
           }
         }
         let cursor = 0
@@ -1181,6 +1199,7 @@ export class InterludeService extends Service {
           const entries = await this.dbGet('interlude_script_entry', { storyId: story.id, kind: 'script', id: { $gt: cursor } }, { sort: { id: 'asc' }, limit: 256 }) as ScriptEntry[]
           if (!entries.length) break
           cursor = entries.at(-1)!.id
+          await this.warnMissingPrivateBubblePlans(story.id, entries, timedOwners)
           const candidates = entries.flatMap(entry => this.pendingOutgoingDeliveryCandidates(entry))
           for (const candidate of candidates) {
             if (attempted >= limit) break
@@ -1222,6 +1241,41 @@ export class InterludeService extends Service {
     }
   }
 
+  private async warnMissingPrivateBubblePlans(storyId: string, entries: ScriptEntry[], owners: Set<string>) {
+    const missing: Array<{ key: string, entryId: number, commitId: string, eventId: string }> = []
+    for (const entry of entries) {
+      const actions = Array.isArray(entry.metadata?.deliveryActions) ? entry.metadata.deliveryActions : []
+      const events = Array.isArray(entry.metadata?.scriptEvents) ? entry.metadata.scriptEvents : []
+      for (const action of actions) {
+        if (!isRecord(action) || (action.status !== 'pending' && action.status !== 'partial')
+          || !Array.isArray(action.segments) || !action.segments.some(segment => isRecord(segment) && segment.kind === 'message' && segment.status === 'pending')) continue
+        const { commitId, eventId } = action
+        if (typeof commitId !== 'string' || typeof eventId !== 'string') continue
+        const key = JSON.stringify([entry.id, commitId, eventId])
+        if (owners.has(key) || this.warnedMissingPrivateBubblePlans.has(key)) continue
+        if (events.some(event => isRecord(event) && event.commitId === commitId && event.eventId === eventId
+          && isRecord(event.metadata) && event.metadata.timedPrivateReply === true)) {
+          missing.push({ key, entryId: entry.id, commitId, eventId })
+        }
+      }
+    }
+    if (!missing.length) return
+    // The initial owner snapshot can predate a newly committed entry on this page.
+    // Read owners again after reading the entries, including terminal plans.
+    const splits = await this.dbGet('interlude_intent', { storyId, type: 'split-message' }) as NarrativeIntent[]
+    for (const intent of splits) {
+      if (!privateBubblePlan(intent)) continue
+      const ref = restoreMessageEvent(intent.payload, '')
+      if (ref?.scriptEntryId) owners.add(JSON.stringify([ref.scriptEntryId, ref.commitId, ref.eventId]))
+    }
+    if (this.databaseResetting) return
+    for (const { key, entryId, commitId, eventId } of missing) {
+      if (owners.has(key) || this.warnedMissingPrivateBubblePlans.has(key)) continue
+      this.warnedMissingPrivateBubblePlans.add(key)
+      this.reportStandalone('warn', '私聊逐泡账本缺少发送计划，仅记录告警 故事=%s 条目=%d 提交=%s 事件=%s', storyId, entryId, commitId, eventId)
+    }
+  }
+
   private pendingOutgoingDeliveryCandidates(entry: ScriptEntry) {
     const actions = Array.isArray(entry.metadata?.deliveryActions) ? entry.metadata.deliveryActions : []
     const events = Array.isArray(entry.metadata?.scriptEvents) ? entry.metadata.scriptEvents : []
@@ -1241,26 +1295,23 @@ export class InterludeService extends Service {
       const rawEvent = events.find(item => isRecord(item) && item.commitId === action.commitId && item.eventId === action.eventId)
       if (!isRecord(rawEvent) || !isOutgoingScriptEvent(rawEvent as unknown as ScriptEventDraft)) continue
       const event = rawEvent as unknown as ScriptEventDraft
+      // The durable timed group owns its head and tail; generic compensation must never send either.
+      if (event.metadata?.timedPrivateReply === true) continue
       for (const segment of action.segments) {
         if (!isRecord(segment) || segment.kind !== 'message' || segment.status !== 'pending' || typeof segment.content !== 'string' || !segment.content) continue
-        // 群 pending 段(group-message 事件不带 participantId):从事件/行动的
-        // endpointId 解析群目标;有群目标即入候选——此前 continue 让群发段
-        // 崩溃后永久 pending 且 deliveryReality 持续报 not-confirmed
-        const groupEndpointId = typeof event.endpointId === 'string' && event.endpointId.trim()
-          ? event.endpointId.trim()
-          : typeof action.endpointId === 'string' && action.endpointId.trim()
-            ? action.endpointId.trim()
-            : ''
-        const participantId = typeof event.participantId === 'string' && event.participantId.trim()
-          ? event.participantId.trim()
-          : typeof action.participantId === 'string' && action.participantId.trim()
-            ? action.participantId.trim()
-            : entry.participantId.trim()
-        if (!participantId && !groupEndpointId) continue
-        if (!participantId && groupEndpointId && !groupEndpointId.startsWith('group:')) continue
+        const endpoint = [event.endpointId, action.endpointId].find(value => typeof value === 'string' && value.trim())?.trim()
+        const explicitTarget = [event.participantId, action.participantId].find(value => typeof value === 'string' && value.trim())?.trim()
+        const registeredGroup = endpoint && this.endpointRows?.find(row => row.id === endpoint && row.ownerKind === 'group')
+        const groupId = normalizeGroupId(registeredGroup ? registeredGroup.groupId ?? registeredGroup.ownerId
+          : endpoint?.startsWith('group:') ? endpoint.slice('group:'.length) : '')
+        const groupTarget = explicitTarget?.startsWith('group:') ? explicitTarget : groupId ? `group:${groupId}` : undefined
+        const participantId = event.kind === 'group-message' ? groupTarget : explicitTarget || groupTarget || entry.participantId.trim()
+        if (!participantId) continue
+        // Legacy group:NN is a destination, not a registered route ID.
+        const endpointId = endpoint?.startsWith('group:') ? undefined : endpoint
         candidates.push({
           entryId: entry.id, commitId: action.commitId, eventId: action.eventId, event,
-          participantId: participantId || groupEndpointId, ...(event.endpointId || action.endpointId ? { endpointId: event.endpointId ?? action.endpointId } : {}),
+          participantId, ...(endpointId ? { endpointId } : {}),
           segmentIndex: segment.index, content: segment.content,
         })
       }
@@ -1329,12 +1380,16 @@ export class InterludeService extends Service {
     if (!this.taskGenerationCurrent(story.id, generation)) return 'pending'
     // 与分段投递路径同款守卫:打断标志期间不补发(次序倒置不可逆),参与者
     // 非 active 不投递(向已删除/暂停参与者发送不可撤回)
-    if (this.interruptedTypingParticipants.has(current.participantId)) return 'pending'
-    const recoveryParticipant = current.participantId ? await this.getParticipant(current.participantId) : undefined
-    if (current.participantId && (!recoveryParticipant || recoveryParticipant.status !== 'active')) {
-      await this.updateScriptDeliveryOutcome(story.id, scriptEvent, 'cancelled', new Date(), 'participant-inactive-recovery')
-      return 'cancelled'
+    if (!current.participantId.startsWith('group:')) {
+      if (this.interruptedTypingParticipants.has(current.participantId)) return 'pending'
+      const recoveryParticipant = await this.getParticipant(current.participantId)
+      if (!this.taskGenerationCurrent(story.id, generation)) return 'pending'
+      if (!recoveryParticipant || recoveryParticipant.status !== 'active') {
+        await this.updateScriptDeliveryOutcome(story.id, scriptEvent, 'cancelled', new Date(), 'participant-inactive-recovery')
+        return 'cancelled'
+      }
     }
+    // Group delivery owns its allowlist, route validation and receipt reconciliation.
     await this.deliverOutgoingMessages(story, [message], undefined, undefined, undefined, true, undefined, 'pending')
     const fresh = (await this.dbGet('interlude_script_entry', { id: entry.id }))[0] as ScriptEntry | undefined
     const action = Array.isArray(fresh?.metadata?.deliveryActions)
@@ -1398,8 +1453,23 @@ export class InterludeService extends Service {
         const revision = ++turn.revision
         turn.timer = this.ctx.setTimeout(() => void this.flushGroupTurn(key, revision), 0)
       }
+      await this.rearmPrivateBubbleWakes?.()
     }
     this.desktopEventSink?.('runtime-snapshot', await this.desktopRuntimeSnapshot())
+  }
+
+  private async rearmPrivateBubbleWakes() {
+    if (!this.ctx?.database || this.disposed || this.desktopRuntimePhase === 'paused') return
+    try {
+      const stories = await this.dbGet('interlude_story', { status: 'active' }) as InterludeStory[]
+      for (const story of stories) {
+        const splits = await this.pendingSplitSegments(story.id)
+        const next = splits.find(intent => privateBubblePlan(intent))
+        if (next && !this.disposed && this.getDesktopRuntimePhase() !== 'paused') this.scheduleDueIntentWake(story.id, next.notBefore)
+      }
+    } catch (error) {
+      this.reportStandalone('warn', '恢复私聊逐泡计时失败，将由后台扫描补排 错误=%s', error)
+    }
   }
 
   /** Snapshot is intentionally small; detailed timeline uses desktopTimelineSnapshot below. */
@@ -1491,10 +1561,9 @@ export class InterludeService extends Service {
     if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime()) || from > to) {
       throw new Error('选区删除时间范围无效。')
     }
-    return this.serial(story.id, async () => {
-      await this.purgeStoryRange(story.id, from, to)
-      return { storyId: story.id }
-    })
+    // purgeStoryRange owns the queue; wrapping it again would await our own tail.
+    await this.purgeStoryRange(story.id, from, to)
+    return { storyId: story.id }
   }
 
   /**
@@ -1829,7 +1898,7 @@ export class InterludeService extends Service {
       .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime())
   }
 
-  async createStory(session: Session, name?: string) {
+  async createStory(session: Session, name?: string, receivedAt?: Date) {
     if (!this.canHandleSession(session) && !this.canHandleGroupSession(session)) throw new Error('This session is not allowed to use HDS Interlude.')
     const existing = await this.findStory(session)
     if (existing) {
@@ -1846,8 +1915,30 @@ export class InterludeService extends Service {
       channelId: '', status: 'active', setting, state: emptyStoryState(),
       cursorAt: now, createdAt: now, updatedAt: now,
     }
+    const prologue = preparePrologue(this.config.storyDefaults.prologue, story.id, now, receivedAt)
+    if (prologue.length) story.state.extensions = { hasPrologue: true }
+    let concurrentStory: InterludeStory | undefined
     try {
-      await this.dbCreate('interlude_story', story)
+      if (prologue.length) {
+        // Commit the story and its complete opening together. A competing
+        // first message can only see the story after the opening is readable.
+        await this.dbWrite(async () => {
+          this.transactionRunning = true
+          try {
+            await this.ctx.database.withTransaction(database => this.transactionScope.run(database, async () => {
+              concurrentStory = (await this.dbGet('interlude_story', { id: story.id }))[0]
+              if (concurrentStory) return
+              await this.dbCreate('interlude_story', story)
+              for (const entry of prologue) await this.dbCreate('interlude_script_entry', entry)
+              await this.ensureContinuity(story, now)
+            }))
+          } finally {
+            this.transactionRunning = false
+          }
+        })
+      } else {
+        await this.dbCreate('interlude_story', story)
+      }
     } catch (error) {
       // Two accounts can DM a newly started bot at almost the same time. The
       // database primary key is the final arbiter; join the winner instead of
@@ -1855,10 +1946,14 @@ export class InterludeService extends Service {
       const raced = (await this.dbGet('interlude_story', { id: story.id }))[0]
       if (!raced) throw error
       await this.ensureContinuity(raced, now)
-      await this.ensureParticipant(raced, session, now)
+      if (session.isDirect) await this.ensureParticipant(raced, session, now)
       return raced
     }
-    await this.ensureContinuity(story, now)
+    if (concurrentStory) {
+      if (session.isDirect) await this.ensureParticipant(concurrentStory, session, now)
+      return concurrentStory
+    }
+    if (!prologue.length) await this.ensureContinuity(story, now)
     // 新建故事同步登记角色端点与别名——findStory 的陌生账号拒绝
     // 依赖"本故事账号必然已注册"这一不变式。
     await this.registerStoryRoleEndpointRow({ id: story.id, platform: story.platform, selfId: story.selfId })
@@ -1898,6 +1993,7 @@ export class InterludeService extends Service {
       }
     } catch { /* 防御性回填失败不阻断故事创建 */ }
     await this.scheduleNextAutomaticAdvance(story.id, now)
+    if (prologue.length) this.reportStandaloneOperation('standard', 'info', '前置剧本已导入 故事=%s 段数=%d', story.id, prologue.length)
     return story
   }
 
@@ -1955,7 +2051,7 @@ export class InterludeService extends Service {
       const personId = account?.personId?.trim() || preset?.personId?.trim() || existing.personId || session.userId
       const displayName = account?.label?.trim() || preset?.label?.trim() || existing.displayName || session.username || session.userId
       const profile = account?.profile?.trim() || preset?.profile?.trim() || existing.profile || this.config.storyDefaults.userProfile
-      const relationship = account?.relationship?.trim() || preset?.relationship?.trim() || existing.relationship || this.config.storyDefaults.relationship
+      const relationship = account?.relationship?.trim() || preset?.relationship?.trim() || existing.relationship || story.setting.defaultRelationship?.trim() || this.config.storyDefaults.relationship
       const changed = existing.storyId !== story.id
         || existing.channelId !== session.channelId
         || existing.personId !== personId
@@ -1987,7 +2083,7 @@ export class InterludeService extends Service {
       personId: account?.personId?.trim() || preset?.personId?.trim() || session.userId,
       displayName: account?.label?.trim() || preset?.label?.trim() || session.username || session.userId,
       profile: account?.profile?.trim() || preset?.profile?.trim() || this.config.storyDefaults.userProfile,
-      relationship: account?.relationship?.trim() || preset?.relationship?.trim() || this.config.storyDefaults.relationship,
+      relationship: account?.relationship?.trim() || preset?.relationship?.trim() || story.setting.defaultRelationship?.trim() || this.config.storyDefaults.relationship,
       state: emptyParticipantState(), status: 'active', createdAt: now, updatedAt: now,
     }
     try {
@@ -2040,7 +2136,7 @@ export class InterludeService extends Service {
    * 选取；此前的"先限量查询后过滤"会让群刷屏把 script 挤出候选集）。 */
   private static readonly CHAT_ENTRY_KINDS = ['user-message', 'character-message', 'group-message', 'character-group-message'] as const
 
-  private async recentEntriesForPrompt(storyId: string, now: Date, budget?: { count: number, minutes: number, mode: 'fixed' | 'auto' }, options?: { excludeChatKinds?: boolean }) {
+  private async recentEntriesForPrompt(storyId: string, now: Date, budget?: { count: number, minutes: number, mode: 'fixed' | 'auto' }, options?: { excludeChatKinds?: boolean, openingPrologue?: boolean }) {
     const resolved = budget ?? resolveScriptContextBudget(this.config.runtime)
     const { count, minutes } = resolved
     // F6：排除条件下推到查询（minato/sqlite 均支持 $nin）——生活条目的席位
@@ -2048,16 +2144,19 @@ export class InterludeService extends Service {
     const query = options?.excludeChatKinds
       ? { storyId, kind: { $nin: [...InterludeService.CHAT_ENTRY_KINDS] } }
       : { storyId }
-    const [countRows, timeRows] = await Promise.all([
+    const [countRows, timeRows, prologueRows] = await Promise.all([
       this.dbGet('interlude_script_entry', query, { limit: count, sort: { occurredAt: 'desc' } }),
       minutes > 0
         ? this.dbGet('interlude_script_entry', { ...query, occurredAt: { $gte: new Date(now.getTime() - minutes * Time.minute) } }, { limit: 500, sort: { occurredAt: 'desc' } })
+        : Promise.resolve([] as ScriptEntry[]),
+      options?.openingPrologue
+        ? this.dbGet('interlude_script_entry', { storyId, kind: 'prologue' }, { limit: MAX_PROLOGUE_PASSAGES, sort: { id: 'desc' } })
         : Promise.resolve([] as ScriptEntry[]),
     ])
     const byId = new Map<number, ScriptEntry>()
     // 墓碑不进 prompt——recentEntries 有同款过滤（批次 4 契约），此处是真正的
     // 主入口，缺过滤会让管理员删除/清库留下的占位文本进入模型上下文。
-    for (const entry of [...countRows, ...timeRows]) {
+    for (const entry of [...countRows, ...timeRows, ...prologueRows]) {
       if (entry.kind === 'redacted') continue
       byId.set(entry.id, entry)
     }
@@ -2065,7 +2164,10 @@ export class InterludeService extends Service {
     // 超出时从最旧端裁剪（保留贴近决策点的最新内容）。fixed 模式维持并集语义。
     if (budget?.mode === 'auto' && byId.size > count) {
       const ordered = [...byId.values()].sort((left: any, right: any) => left.occurredAt.getTime() - right.occurredAt.getTime() || left.id - right.id)
-      for (const entry of ordered.slice(0, ordered.length - count)) byId.delete(entry.id)
+      const openingIds = new Set(prologueRows.map(entry => entry.id))
+      for (const entry of ordered.filter(entry => !openingIds.has(entry.id)).slice(0, ordered.length - count)) {
+        byId.delete(entry.id)
+      }
     }
     return [...byId.values()].sort((left: any, right: any) => left.occurredAt.getTime() - right.occurredAt.getTime() || left.id - right.id)
   }
@@ -2299,11 +2401,13 @@ export class InterludeService extends Service {
     this.longHorizonGenerationCooldownUntil.delete(storyId)
     const now = new Date()
     const story = await this.getStory(storyId)
+    const previousDefaultRelationship = story.setting.defaultRelationship?.trim()
     const setting = this.initialStorySetting()
+    if (previousDefaultRelationship) setting.defaultRelationship = previousDefaultRelationship
     await this.dbSet('interlude_story', { id: storyId }, {
       setting, state: emptyStoryState(), cursorAt: now, updatedAt: now,
     })
-    await this.resetParticipantCanon(storyId, now)
+    await this.resetParticipantCanon(storyId, now, setting)
     await this.ensureContinuity({ ...story, setting, state: emptyStoryState(), cursorAt: now }, now)
   }
 
@@ -3021,6 +3125,8 @@ export class InterludeService extends Service {
     for (const key of this.groupWillingness.keys()) {
       if (!storyId || key.startsWith(`${storyId}:`)) this.groupWillingness.delete(key)
     }
+    if (storyId) this.groupNarrativeSalience?.delete(storyId)
+    else this.groupNarrativeSalience?.clear()
     this.scheduler.cancelWakes(storyId)
   }
 
@@ -3078,7 +3184,14 @@ export class InterludeService extends Service {
     if (this.desktopRuntimePhase === 'paused') return []
     if (!this.canHandleStory(story)) return []
     const generation = this.taskGeneration(story.id)
-    const messages = await this.serial(story.id, async () => this.advanceUnlocked(await this.getStory(story.id), new Date(), force, generation))
+    const hadExternalWork = await this.runDeferredAdvanceWork(story.id, new Date(), generation)
+    const messages = await this.serial(story.id, async () => {
+      if (this.disposed || !this.taskGenerationCurrent(story.id, generation)) return []
+      if (hadExternalWork && !force && this.hasPendingNarrative(story.id)) return []
+      const current = await this.getStory(story.id)
+      if (!this.canHandleStory(current)) return []
+      return this.advanceUnlocked(current, new Date(), force, generation)
+    })
     // 审计修复 #4：到期考据在故事串行队列外执行，不阻塞后续用户回合。
     const researchQueue = this.researchDueIntents ?? []
     const dueResearch = researchQueue.filter(intent => intent.storyId === story.id)
@@ -3088,9 +3201,50 @@ export class InterludeService extends Service {
       const storyNow = await this.getStory(intent.storyId).catch((): undefined => undefined)
       if (storyNow && this.taskGenerationCurrent(story.id, generation)) await this.executeResearchIntent(storyNow, intent, new Date())
     }
-    if (force || messages.length) this.reportOperation('summary', 'info', story, 'advance', '剧本推进完成 可见消息=%d', messages.length)
     this.scheduleCompaction(story.id)
     return messages
+  }
+
+  // Claim one batch per story across automatic and manual advances. Network
+  // waits must not inherit the serial scope; only snapshot and commit do.
+  private deferredAdvanceRunning = new Set<string>()
+
+  private async runDeferredAdvanceWork(storyId: string, now: Date, generation: string) {
+    const running = this.deferredAdvanceRunning ??= new Set<string>()
+    const current = () => !this.disposed && this.taskGenerationCurrent(storyId, generation)
+    if (running.has(storyId) || !current()) return false
+    running.add(storyId)
+    try {
+      const snapshot = await this.serial(storyId, async () => {
+        if (!current()) return undefined
+        const story = await this.getStory(storyId)
+        if (!this.canHandleStory(story)) return undefined
+        const query = { storyId, status: 'pending', notBefore: { $lte: now } }
+        const sort = { notBefore: 'asc' }
+        const [browsers, [qzone]] = await Promise.all([
+          this.dbGet('interlude_intent', { ...query, type: 'browser-research' }, { sort, limit: this.browserConfig.maxResearchPerSweep }),
+          this.dbGet('interlude_intent', { ...query, type: 'qzone-action' }, { sort, limit: 1 }),
+        ])
+        if (current() && (browsers.length || qzone)) {
+          // If this sweep is the first to discover an overdue split (e.g.
+          // after restart), do not make its transport wait for optional I/O.
+          const [split] = await this.dbGet('interlude_intent', { ...query, type: 'split-message' }, { limit: 1 })
+          if (split && current()) this.scheduleDueIntentWake(storyId, now)
+        }
+        return { story, browsers: browsers as NarrativeIntent[], qzone: qzone as NarrativeIntent | undefined }
+      })
+      if (!snapshot || (!snapshot.browsers.length && !snapshot.qzone)) return false
+      for (const intent of snapshot.browsers) {
+        if (!current()) return true
+        await this.executeDeferredBrowserIntent(snapshot.story, intent, now)
+      }
+      if (snapshot.qzone && current()) {
+        await this.executeQzoneIntent(snapshot.story, snapshot.qzone, now)
+      }
+      return true
+    } finally {
+      running.delete(storyId)
+    }
   }
 
   /** Used by commands/tests to deliver a mixed set of account-targeted actions safely. */
@@ -3165,7 +3319,7 @@ export class InterludeService extends Service {
     }
   }
 
-  /** I-2 待叙事显著度（内存态，重载即清——与 groupWillingness 同生命周期）：
+  /** I-2 待叙事显著度（内存态，随 invalidateBufferedNarratives / purge 失效）：
    * storyId → groupId → 状态。纯函数模块见 narrative/narrative-salience.ts。
    * 惰性初始化以兼容原型测试宿主（issue #5 桩防御惯例）。 */
   private groupNarrativeSalience?: Map<string, Record<string, GroupSalienceState>>
@@ -3286,14 +3440,18 @@ export class InterludeService extends Service {
    * 只提前不推后——rest/Preplan 等既有安排若本就更早则不动。 */
   async maybeScheduleSalienceGlance(storyId: string): Promise<void> {
     try {
-      const states = this.groupNarrativeSalience.get(storyId)
-      const score = maxSalienceScore(states, Date.now())
-      if (score < DEFAULT_SALIENCE_CONFIG.triggerThreshold) return
+      if (maxSalienceScore(this.groupNarrativeSalience?.get(storyId), Date.now()) < DEFAULT_SALIENCE_CONFIG.triggerThreshold) return
+      const generation = this.taskGeneration(storyId)
+      let score = 0
       const updated = await this.serial(storyId, async () => {
+        if (!this.taskGenerationCurrent(storyId, generation)) return false
         const story = await this.getStory(storyId)
-        if (!story || story.status !== 'active') return false
+        if (!story || story.status !== 'active' || !this.taskGenerationCurrent(storyId, generation)) return false
         const state = decodeStoryState(story.state)
         const now = Date.now()
+        // A reset may have cleared the salience while this task waited for the queue/read.
+        score = maxSalienceScore(this.groupNarrativeSalience?.get(storyId), now)
+        if (score < DEFAULT_SALIENCE_CONFIG.triggerThreshold) return false
         // F4 修正：瞥视时刻 clamp 到"当前调度约束下能排出的最早推进时刻"
         // （Urge 路径含 slow 区间/休息窗口/五档节奏/设备减半；非 Urge 路径含
         // 休息窗口与基础间隔）——显著度只能在此之上提前，不得绕过更高优先
@@ -3496,7 +3654,7 @@ export class InterludeService extends Service {
     } else {
       lines.push('· 嵌入：（未配置/不可用）')
     }
-    lines.push('提示：失败信息中的 原文头=/raw= 是模型实际返回的开头片段，可据此判断拒答、JSON 包裹在文本里或思考截断。')
+    lines.push('提示：需要查看无效 JSON 的响应片段时，可临时打开模型响应预览，并将日志设为诊断 / debug。')
     return lines
   }
 
@@ -3576,8 +3734,10 @@ export class InterludeService extends Service {
     // Deliver at most one split segment per wake-up. If the scheduler was
     // blocked for a while, sending every overdue segment together would skip
     // the configured typing-time simulation.
+    // A timed private group is owned by the wake path, which calls transport outside this story lock.
+    if (due.some((intent: NarrativeIntent) => privateBubblePlan(intent))) this.scheduleDueIntentWake(story.id, now)
     const splitSegments = due
-      .filter((intent: any) => intent.type === 'split-message')
+      .filter((intent: NarrativeIntent) => intent.type === 'split-message' && !privateBubblePlan(intent))
       .sort((left: any, right: any) => left.notBefore.getTime() - right.notBefore.getTime())
       .slice(0, 1)
     let splitHandled = false
@@ -3639,28 +3799,9 @@ export class InterludeService extends Service {
       ;(this.researchDueIntents ??= []).push(...researchIntents)
       due = due.filter((intent: any) => intent.type !== 'research-lookup')
     }
-    // Browser research is an external, already-happened observation once it
-    // completes. It must never be handed to the narrator as an ordinary
-    // future plan, otherwise the model could write as if it had read a page
-    // before Puppeteer actually did so.
-    // Keep a backlog of optional research from turning one background sweep
-    // into several serial page loads. The remaining intents stay pending for
-    // the next sweep and never block a live user turn for an unbounded time.
-    const browserIntents = due
-      .filter((intent: any) => intent.type === 'browser-research')
-      .slice(0, Math.max(1, this.browserConfig.maxResearchPerSweep))
-    for (const intent of browserIntents) await this.executeDeferredBrowserIntent(story, intent, now)
-    // Browser intents always complete (successfully or as a recorded failure)
-    // in executeDeferredBrowserIntent(), so re-reading the whole pending list
-    // here only adds a SQLite round trip to every background sweep.
-    due = due.filter((intent: any) => intent.type !== 'browser-research')
-    // QQ 空间动作同样是“到期即外部已发生/已失败”的一锤子执行：限流门挡下或
-    // 通道失败都直接完成（成败在审计表），绝不作为未来计划回流给叙事。
-    const qzoneIntent = due.filter((intent: any) => intent.type === 'qzone-action').slice(0, 1)[0]
-    if (qzoneIntent) {
-      await this.executeQzoneIntent(story, qzoneIntent, now)
-      due = due.filter((intent: any) => intent.id !== qzoneIntent.id)
-    }
+    // The external executors own these intents, including the backlog and
+    // work still in flight during a concurrent (e.g. manual) advance.
+    due = due.filter((intent: NarrativeIntent) => intent.type !== 'browser-research' && intent.type !== 'qzone-action')
     // A committed typing chain is not a new incoming event. Never let another
     // background turn for its recipient recreate the not-yet-delivered text.
     // Include FUTURE split intents: looking only at `due` misses this race.
@@ -3681,8 +3822,8 @@ export class InterludeService extends Service {
     // 状态归一化加载时即被丢弃，运行期不再存在该暂停来源。
     const pausedForConversation = false
     this.reportOperation('diagnostic', 'debug', story, 'advance',
-      '后台状态 到期计划=%d 分段消息=%d 网页任务=%d 短期跟进=%d 自动推进到期=%s 对话暂停=%s',
-      due.length, splitSegments.length, browserIntents.length, dueFollowUps.length, automaticDue, pausedForConversation)
+      '后台状态 到期计划=%d 分段消息=%d 短期跟进=%d 自动推进到期=%s 对话暂停=%s',
+      due.length, splitSegments.length, dueFollowUps.length, automaticDue, pausedForConversation)
     // A due typing segment can be delivered during the conversation pause;
     // it is already a committed message, not an automatic life update.
     if (!force && !due.length && (!automaticDue || pausedForConversation)) return messages
@@ -3695,7 +3836,7 @@ export class InterludeService extends Service {
       && !dueFollowUps.length
       && elapsed < minimumManualAdvanceMs
     if (manualAdvanceTooSoon) {
-      this.reportOperation('standard', 'info', story, 'advance',
+      this.reportOperation('summary', 'info', story, 'advance',
         '手动推进跳过：游标距离现在不足 %d 分钟，且没有到期计划或对话后续任务', this.config.runtime.minimumAdvanceMinutes)
       return messages
     }
@@ -3718,12 +3859,12 @@ export class InterludeService extends Service {
       const blockedSplits = pendingSplits.filter((intent: any) => phase === 'advance' || intent.participantId === followUpParticipant?.id)
       if (blockedSplits.length) {
         await this.scheduleNextPendingWake(story.id)
-        this.reportOperation('diagnostic', 'debug', story, phase,
-          '后台写作等待已提交分段投递 参与者=%s 待发分段=%d', followUpParticipant?.id || '全局', blockedSplits.length)
+        this.reportOperation(force ? 'summary' : 'diagnostic', force ? 'info' : 'debug', story, phase,
+          force ? '手动推进暂未写作：等待已提交分段投递 参与者=%s 待发分段=%d' : '后台写作等待已提交分段投递 参与者=%s 待发分段=%d', followUpParticipant?.id || '全局', blockedSplits.length)
         return messages
       }
       this.reportOperation('standard', 'info', story, phase,
-        '即将执行自动写作 类型=%s 时间段=%s→%s', phaseLabel(phase), formatLogTime(from, story.setting.timezone), formatLogTime(now, story.setting.timezone))
+        '即将执行剧本写作 类型=%s 时间段=%s→%s', phaseLabel(phase), formatLogTime(from, story.setting.timezone), formatLogTime(now, story.setting.timezone))
       // I-6a：advance 相位装配群消息背景（有界：概况 + 每群 K 条；尽力而为，
       // 失败静默不阻塞推进）。conversation-follow-up 不注入（最小切片）。
       const groupBackground = phase === 'advance' ? await this.groupBackgroundForAdvance(story).catch((): undefined => undefined) : undefined
@@ -3736,6 +3877,9 @@ export class InterludeService extends Service {
         messages.push(...persisted.messages)
         await this.dbSet('interlude_story', { id: story.id }, { cursorAt: now, updatedAt: now })
         advanced = true
+        if (persisted.scriptEntry) this.reportOperation(force ? 'summary' : 'standard', 'info', story, phase,
+          '推进剧本已提交 待交投递管线的消息=%d', persisted.messages.length)
+        else if (force) this.reportOperation('summary', 'info', story, phase, '本轮未新增剧本条目')
         // 成功提交 → 内容覆盖水位推进（失败不推，批次保留催动资格）。
         if (groupBackground) await this.commitGroupBackgroundCoverage(story.id, groupBackground.coverage, now, groupBackground.sections).catch((): undefined => undefined)
       }
@@ -3773,13 +3917,20 @@ export class InterludeService extends Service {
             ? await this.persistStreamScriptRecovery(current, dueParticipant ?? null, decision, now)
             : false
           const turnSucceeded = streamRecovery ? recovered : succeeded
+          let scriptCommitted = recovered
+          let outgoingDraftCount = 0
           if (!streamRecovery && taskCurrent()) {
             const permitMessages = this.config.runtime.allowProactiveMessages || dueBatch.some((intent: any) => intent.payload?.userInitiated === true)
             const persisted = await this.persistDecision(current, dueParticipant ?? null, decision, dueFrom, now, permitMessages, 'intent-due', dueBatch, false, timelinePlan)
             messages.push(...persisted.messages)
+            scriptCommitted = !!persisted.scriptEntry
+            outgoingDraftCount = persisted.messages.length
           }
           if (turnSucceeded && taskCurrent()) {
             await this.dbSet('interlude_story', { id: current.id }, { cursorAt: now, updatedAt: now })
+            if (scriptCommitted) this.reportOperation(force ? 'summary' : 'standard', 'info', current, 'intent-due',
+              '到期回合剧本已提交 待交投递管线的消息=%d', outgoingDraftCount)
+            else if (force) this.reportOperation('summary', 'info', current, 'intent-due', '本轮未新增剧本条目')
             const ordinaryDueIds = dueBatch.filter((intent: any) => intent.type !== 'follow-up-commitment').map(intent => intent.id)
             if (ordinaryDueIds.length) {
               await this.dbSet('interlude_intent', { id: { $in: ordinaryDueIds } }, { status: 'completed', updatedAt: now })
@@ -3827,7 +3978,7 @@ export class InterludeService extends Service {
     return messages
   }
 
-  private async decide(story: InterludeStory, participant: InterludeParticipant | null, phase: NarrativeRequest['phase'], from: Date, now: Date, userMessage: string | undefined, dueIntents: NarrativeIntent[], supersededIntents: NarrativeIntent[] = [], groupContext?: GroupContext, images: NarrativeImage[] = [], audio: NarrativeAudio[] = [], extraWebContext: WebObservation[] = [], outputRecovery = false, chatCapabilities?: ChatActionCapabilities, quotedMessages: IndexedQuotedMessageContext[] = [], stickerCatalog: StickerCatalogEntry[] = [], turnQueryEmbedding?: number[], visualObservations?: string[], timelinePlan?: TimelinePlan, onEarlyReply?: (reply: EarlyNarrativeReply) => Promise<boolean>, historicalGroupImages: NarrativeHistoricalImage[] = [], groupBackground?: GroupBackgroundSection[]) {
+  private async decide(story: InterludeStory, participant: InterludeParticipant | null, phase: NarrativeRequest['phase'], from: Date, now: Date, userMessage: string | undefined, dueIntents: NarrativeIntent[], supersededIntents: NarrativeIntent[] = [], groupContext?: GroupContext, images: NarrativeImage[] = [], audio: NarrativeAudio[] = [], extraWebContext: WebObservation[] = [], outputRecovery = false, chatCapabilities?: ChatActionCapabilities, quotedMessages: IndexedQuotedMessageContext[] = [], stickerCatalog: StickerCatalogEntry[] = [], turnQueryEmbedding?: number[], visualObservations?: string[], timelinePlan?: TimelinePlan, onEarlyReply?: (reply: EarlyNarrativeReply) => Promise<boolean>, historicalGroupImages: NarrativeHistoricalImage[] = [], groupBackground?: GroupBackgroundSection[], eventAttentionFocus?: NarrativeRequest['eventAttentionFocus']) {
     if (this.longHorizonConfig.enabled) await this.ensureLongHorizonGuidanceLoaded(story.id)
     // 这里是主模型上下文的唯一入口。recentEntries 保留近距离质感，场景、弧线和
     // facts 负责把很长的过去压缩成连续性线索。参与者摘要让模型知道角色
@@ -3850,7 +4001,10 @@ export class InterludeService extends Service {
       // to testers as “上下文条目/长期事实”，and should be authoritative.
       // F6：advance 相位把聊天行排除下推到查询——生活条目（script 等）的
       // 席位不再被群刷屏在查询阶段挤出。
-      this.recentEntriesForPrompt(story.id, now, this.effectiveContextBudget(story.id, groupContext ? 'group' : 'private', phase, now), { excludeChatKinds: phase === 'advance' }),
+      this.recentEntriesForPrompt(story.id, now, this.effectiveContextBudget(story.id, groupContext ? 'group' : 'private', phase, now), {
+        excludeChatKinds: phase === 'advance',
+        openingPrologue: isOpeningPrologue(story.state),
+      }),
       memoryEnabled ? this.memories(story.id, this.config.runtime.memoryLimit, participant?.id) : Promise.resolve([]),
       this.activeScene(story.id),
       this.activeArc(story.id),
@@ -3996,12 +4150,13 @@ export class InterludeService extends Service {
     if (interactionRhythm) this.reportOperation('diagnostic', 'debug', story, phase, '交往节奏印象已注入 参与者=%s 印象=%s', participant!.id, interactionRhythm)
     const narrated = await this.narrator.decide({
       urgeEnabled: this.urgeConfig.enabled && !dueIntents.some((intent: any) => intent.type === 'narrative-retry'),
-      phase, refreshContinuity, outputRecovery, story, from, now, userMessage, userReportedTimes, images, audio, visualObservations, historicalGroupImages, timelinePlan, developmentTendencies,
+      phase, refreshContinuity, outputRecovery, story, from, now, eventAttentionFocus, userMessage, userReportedTimes, images, audio, visualObservations, historicalGroupImages, timelinePlan, developmentTendencies,
       ...(groupBackground?.length ? { groupBackground } : {}),
       ...(interactionRhythm ? { interactionRhythm } : {}),
       writingOptions: {
         messageSeparator: this.config.runtime.messageSeparator?.trim() || '<sep/>',
         splitReplyMessages: this.config.runtime.splitReplyMessages !== false,
+        privateBubbleDelay: this.usesPrivateBubbleDelay(phase, participant, groupContext),
         browserMode: turnBrowserMode,
         ...(messageRepetition ? { messageRepetition } : {}),
       },
@@ -4187,13 +4342,13 @@ export class InterludeService extends Service {
     if (backoff) this.timelineBackoff.delete(story.id)
     const [scene, recentEntries, facts] = await Promise.all([
       this.activeScene(story.id),
-      this.recentEntriesForPrompt(story.id, now),
+      this.recentEntriesForPrompt(story.id, now, undefined, { openingPrologue: isOpeningPrologue(story.state) }),
       this.memoryConfig.enabled ? this.facts(story.id, Math.min(16, this.config.runtime.memoryLimit), '') : Promise.resolve([] as NarrativeFact[]),
     ])
     const visibleEntries = this.sharedStoryConfig.shareParticipantDetails
       ? recentEntries
       : recentEntries.filter(entry => !entry.participantId || entry.participantId === participant?.id)
-    const continuation = [...visibleEntries].reverse().find(entry => entry.kind === 'script' && entry.content.trim())
+    const continuation = [...visibleEntries].reverse().find(entry => (entry.kind === 'script' || entry.kind === 'prologue') && entry.content.trim())
     const continuationLedger = continuation ? timelineEntryPromptProjection(continuation) : undefined
     const request: TimelinePlanRequest = {
       story, participant, phase, from, now, scene, facts, recentEntries: visibleEntries.map(entry => timelineEntryPromptProjection(entry)),
@@ -4280,9 +4435,14 @@ export class InterludeService extends Service {
     }
   }
 
+  usesPrivateBubbleDelay(phase: NarrativeRequest['phase'], participant: InterludeParticipant | null, groupContext?: GroupContext) {
+    return phase === 'user-message' && !!participant && !groupContext && this.modelRouting?.main.available === true
+  }
+
   private async tryDecide(story: InterludeStory, participant: InterludeParticipant | null, phase: NarrativeRequest['phase'], from: Date, now: Date, userMessage: string | undefined, dueIntents: NarrativeIntent[], supersededIntents: NarrativeIntent[] = [], groupContext?: GroupContext, images: NarrativeImage[] = [], audio: NarrativeAudio[] = [], chatCapabilities?: ChatActionCapabilities, quotedMessages: IndexedQuotedMessageContext[] = [], stickerCatalog: StickerCatalogEntry[] = [], turnQueryEmbedding?: number[], visualObservations?: string[], onEarlyReply?: (reply: EarlyNarrativeReply) => Promise<boolean>, historicalGroupImages: NarrativeHistoricalImage[] = [], groupBackground?: GroupBackgroundSection[]) {
     let immediateObservations: WebObservation[] = []
     let effectiveNow = now
+    const eventAttentionFocus = resolveEventAttentionFocus(decodeStoryState(story.state).lifeRhythm, now)
     const automaticPhase = phase === 'advance' || phase === 'conversation-follow-up' || phase === 'intent-due'
     const shortSchedule = automaticPhase && phase !== 'advance' && this.schedulePreplanConfig.enabled
       ? await this.currentSchedulePreplanWindow(story, from) : undefined
@@ -4303,18 +4463,22 @@ export class InterludeService extends Service {
         ...(fused ? [fused] : []))
     }
     const startedAt = Date.now()
+    const usingNarrativeModel = this.modelRouting.main.available
     this.reportOperation('standard', 'info', story, phase,
-      '模型调用开始 任务=主叙事 模型=%s 参与者=%s 时间段=%s→%s 到期计划=%d',
+      (usingNarrativeModel ? '模型调用开始' : '本地叙事回退开始（未调用模型）') + ' 任务=主叙事 模型=%s 参与者=%s 时间段=%s→%s 到期计划=%d',
       this.mainModelLabel(), participant?.id || '全局', formatLogTime(from, story.setting.timezone), formatLogTime(now, story.setting.timezone), dueIntents.length)
     try {
       let earlyReplyCommitted = false
-      const canEarlyReply = onEarlyReply && !(phase === 'user-message' && participant && !groupContext && this.browserConfig.enabled && this.browserConfig.mode === 'allow-immediate')
+      const delayedBubbles = this.usesPrivateBubbleDelay?.(phase, participant, groupContext) === true
+      const checkBubbleDelay = (value: NarrativeDecision) => delayedBubbles
+        ? validatePrivateBubbleDelay(value, effectiveNow, this.config.runtime) : { valid: true } as const
+      const canEarlyReply = !delayedBubbles && onEarlyReply && !(phase === 'user-message' && participant && !groupContext && this.browserConfig.enabled && this.browserConfig.mode === 'allow-immediate')
       const earlyReply = canEarlyReply ? async (reply: EarlyNarrativeReply) => {
         const committed = await onEarlyReply(reply)
         if (committed) earlyReplyCommitted = true
         return committed
       } : undefined
-      let decision = await this.decide(story, participant, phase, from, effectiveNow, userMessage, dueIntents, supersededIntents, groupContext, images, audio, [], false, chatCapabilities, quotedMessages, stickerCatalog, turnQueryEmbedding, visualObservations, timelinePlan, earlyReply, historicalGroupImages, groupBackground)
+      let decision = await this.decide(story, participant, phase, from, effectiveNow, userMessage, dueIntents, supersededIntents, groupContext, images, audio, [], false, chatCapabilities, quotedMessages, stickerCatalog, turnQueryEmbedding, visualObservations, timelinePlan, earlyReply, historicalGroupImages, groupBackground, eventAttentionFocus)
       const immediate = phase === 'user-message' && participant && !groupContext && this.browserConfig.enabled && this.browserConfig.mode === 'allow-immediate'
         ? decision.browserIntents?.map(intent => normalizeBrowserIntentDraft(intent, this.browserConfig)).find(intent => intent?.timing === 'immediate')
         : undefined
@@ -4324,10 +4488,10 @@ export class InterludeService extends Service {
         // more with the observation so the final script stays a single,
         // coherent piece of writing rather than two stitched tool calls.
         this.reportOperation('standard', 'info', story, phase, '即时网页观察开始 模式=%s', immediate.mode)
-        const observation = await this.collectWebObservation(story, immediate, participant.id, null, new Date(), false)
+        const observation = await this.collectWebObservation(story, immediate, participant.id, null, new Date())
         immediateObservations = [observation]
         effectiveNow = new Date()
-        decision = await this.decide(story, participant, phase, from, effectiveNow, userMessage, dueIntents, supersededIntents, groupContext, images, audio, immediateObservations, false, chatCapabilities, quotedMessages, stickerCatalog, turnQueryEmbedding, visualObservations, timelinePlan, undefined, historicalGroupImages, groupBackground)
+        decision = await this.decide(story, participant, phase, from, effectiveNow, userMessage, dueIntents, supersededIntents, groupContext, images, audio, immediateObservations, false, chatCapabilities, quotedMessages, stickerCatalog, turnQueryEmbedding, visualObservations, timelinePlan, undefined, historicalGroupImages, groupBackground, eventAttentionFocus)
       }
       // 用户自报的钟点（“八点赶到”）对守卫背书：模型复述它们不是时间越界。
       // 提取是 O(消息长度) 的本地正则，只在实况用户回合发生一次。
@@ -4338,23 +4502,26 @@ export class InterludeService extends Service {
         : undefined
       const initialTimeOverflow = detectLiveScriptTimeOverflow(decision.script, phase, from, effectiveNow, story.setting.timezone, endorsedClocks)
       const initialVisibleRecovery = this.modelRouting.main.available && !earlyReplyCommitted && requiresVisibleReplyRecovery(phase, groupContext, decision)
-      if (initialTimeOverflow || initialVisibleRecovery) {
+      const initialBubbleDelay = checkBubbleDelay(decision)
+      if (initialTimeOverflow || initialVisibleRecovery || !initialBubbleDelay.valid) {
         // 诊断：记录被抛弃草稿里模型实际返回的 interaction（缺失/为空/形状错误），
         // 让下一次"结构化可见回复缺失"可以直接从日志定位是模型行为还是解析问题。
-        if (initialVisibleRecovery) {
-          this.reportOperation('diagnostic', 'warn', story, phase, '被抛弃草稿的结构化回复字段 interaction=%s groupReply=%s',
-            safeJsonPreview(decision.interaction), safeJsonPreview(decision.groupReply))
+        const modelPreviewLength = this.modelResponseLogLimit()
+        if (initialVisibleRecovery && modelPreviewLength) {
+          this.reportOperation('diagnostic', 'debug', story, phase, '被抛弃草稿的结构化回复预览：%s',
+            safeJsonPreview({ interaction: decision.interaction, groupReply: decision.groupReply }, modelPreviewLength))
         }
         this.reportOperation('standard', 'warn', story, phase,
           initialTimeOverflow
             ? '剧本越过当前时间终点，已抛弃本次未落库剧本并重新写作 原因=%s'
-            : '结构化可见回复缺失，已抛弃本次未落库剧本并重新写作',
+            : !initialBubbleDelay.valid ? '私聊逐泡延迟无效，丢弃未发布的稿件并修复输出'
+              : '结构化可见回复缺失，已抛弃本次未落库剧本并重新写作',
           ...(initialTimeOverflow ? [initialTimeOverflow] : []))
         // Fix 5：structureMissing 在首稿就计数（进入恢复重写即视为"发生了一次
         // 缺失"）；recoverySaved 在恢复稿通过校验后才计数（不是进入恢复就计）。
         if (initialVisibleRecovery) this.health?.recordStructureMissing(story.id)
         else if (initialTimeOverflow) { /* 时间越界不在此计数 */ }
-        decision = await this.decide(story, participant, phase, from, effectiveNow, userMessage, dueIntents, supersededIntents, groupContext, images, audio, immediateObservations, true, chatCapabilities, quotedMessages, stickerCatalog, turnQueryEmbedding, visualObservations, timelinePlan, undefined, historicalGroupImages, groupBackground)
+        decision = await this.decide(story, participant, phase, from, effectiveNow, userMessage, dueIntents, supersededIntents, groupContext, images, audio, immediateObservations, true, chatCapabilities, quotedMessages, stickerCatalog, turnQueryEmbedding, visualObservations, timelinePlan, undefined, historicalGroupImages, groupBackground, eventAttentionFocus)
         const recoveredTimeOverflow = detectLiveScriptTimeOverflow(decision.script, phase, from, effectiveNow, story.setting.timezone, endorsedClocks)
         if (recoveredTimeOverflow) throw new Error(`Narrative provider crossed the live time boundary after one recovery attempt: ${recoveredTimeOverflow}`)
         // 恢复成功 = 第二稿不再需要回复恢复。
@@ -4362,7 +4529,7 @@ export class InterludeService extends Service {
           this.health?.recordRecoverySaved(story.id)
         }
         if (this.modelRouting.main.available && !earlyReplyCommitted && requiresVisibleReplyRecovery(phase, groupContext, decision)) {
-          this.reportOperation('diagnostic', 'warn', story, phase, '恢复尝试仍缺失结构化回复 interaction=%s', safeJsonPreview(decision.interaction))
+          if (modelPreviewLength) this.reportOperation('diagnostic', 'debug', story, phase, '恢复尝试仍缺失结构化回复，字段预览：%s', safeJsonPreview(decision.interaction, modelPreviewLength))
           // 降级而非硬失败：两稿都丢 interaction 时，若剧本非空仍以无可见回复
           // 提交——生活继续走、用户下次还能触发回复；硬失败会让整回合进
           // 30s 重试队列，弱模型下变成失败循环。
@@ -4374,6 +4541,11 @@ export class InterludeService extends Service {
           }
         }
       }
+      const finalBubbleDelay = checkBubbleDelay(decision)
+      if (!finalBubbleDelay.valid) throw new Error('Invalid private bubbleDelaySeconds after one output recovery attempt.')
+      if ('immediate' in finalBubbleDelay && decision.interaction) {
+        decision = { ...decision, interaction: { ...decision.interaction, reply: { ...decision.interaction.reply, mode: 'immediate' } } }
+      }
       // The fixed narrative contract requires prose for every real model turn.
       // A syntactically valid object with an omitted/blank script used to be
       // treated as success, advancing the cursor while leaving a gap in the
@@ -4382,7 +4554,8 @@ export class InterludeService extends Service {
       // their next attempt. Fallback is intentionally a no-network smoke mode.
       if (this.modelRouting.main.available && !hasRequiredNarrativeScript(decision)) {
         // rc50 issue 报告:抛错前留原始决策快照——字段名/类型错排障必需。
-        this.reportOperation('diagnostic', 'warn', story, phase, '主叙事无可用 script，原始决策=%s', safeJsonPreview(decision))
+        const previewLength = this.modelResponseLogLimit()
+        if (previewLength) this.reportOperation('diagnostic', 'debug', story, phase, '主叙事无可用剧本，决策预览：%s', safeJsonPreview(decision, previewLength))
         throw new Error('Narrative provider returned no usable script.')
       }
       const result = {
@@ -4393,20 +4566,13 @@ export class InterludeService extends Service {
         timelinePlan,
       }
       if (this.config.logging?.logScriptPreview && result.decision.script) {
-        this.report('info', story, phase, '当前剧本内容：\n%s', result.decision.script.slice(0, this.config.logging.previewLength))
+        this.report('info', story, phase, '生成的剧本预览（尚未提交）：\n%s', result.decision.script.slice(0, this.config.logging.previewLength))
       }
       this.reportOperation('standard', 'info', story, phase,
-        '模型调用完成 任务=主叙事 耗时=%dms 剧本文字=%d 回复模式=%s',
+        (usingNarrativeModel ? '模型调用完成（输出已校验，剧本尚未提交）' : '本地叙事回退完成（剧本尚未提交）') + ' 任务=主叙事 耗时=%dms 剧本文字=%d 回复模式=%s',
         Date.now() - startedAt, result.decision.script?.length ?? 0, visibleReplyMode(result.decision, phase, groupContext))
       this.health?.recordNarrativeComplete(story.id, Date.now() - startedAt, visibleReplyMode(result.decision, phase, groupContext))
       this.lastActiveStoryId = story.id
-      // 无可见回复的私聊回合打出最终 interaction（纳入 logScriptPreview
-      // 门控——JSON 里可能带 reply 草稿，不能绕过隐私开关；需要时与剧本预览
-      // 一起打开）。
-      if (phase === 'user-message' && !groupContext && result.decision.interaction?.reply?.mode === 'none' && this.config.logging?.logScriptPreview) {
-        this.reportOperation('standard', 'info', story, phase, '本回合无可见回复 interaction=%s',
-          safeJsonPreview(result.decision.interaction))
-      }
       return result
     } catch (error) {
       // 主叙事失败是最高优先级故障（角色无响应）——升 error 供运维告警。
@@ -4417,7 +4583,7 @@ export class InterludeService extends Service {
       }
       this.report('error', story, phase,
         '模型调用失败 任务=主叙事 阶段=narrative-provider 当前图片=%d 历史图片=%d 音频=%d 耗时=%dms 错误=%s',
-        images.length, historicalGroupImages.length, audio.length, Date.now() - startedAt, describeHttpError(error))
+        images.length, historicalGroupImages.length, audio.length, Date.now() - startedAt, describeHttpError(error, false))
       this.health?.recordNarrativeFailed(story.id)
       return { decision: {}, succeeded: false, effectiveNow, immediateObservations, timelinePlan }
     }
@@ -4434,7 +4600,9 @@ export class InterludeService extends Service {
     contextIntents: NarrativeIntent[] = [],
     immediateReplyAlreadyDelivered = false,
     timelinePlan?: TimelinePlan,
+    privateBubbleCommit?: PrivateBubbleCommitOptions,
   ) {
+    const timedPrivateReply = !!privateBubbleCommit && !!participant && permitMessages && !immediateReplyAlreadyDelivered
     // 先规范化，再写库：不信任模型给出的时间、长度和结构，尤其不能让未来剧情落库。
     raw = reconcileTransportReferences(raw, immediateReplyAlreadyDelivered, this.config.runtime.messageSeparator)
     // 无 participant 回合（群聊/推进）容错重排 interaction：见 hoistParticipantlessInteraction。
@@ -4455,6 +4623,14 @@ export class InterludeService extends Service {
       raw, from, now, permitMessages, this.effectiveUrgeRuntime, this.sharedStoryConfig,
       participant?.id ?? '', permittedParticipantIds, permittedGroupIds, phase, this.memoryConfig, refreshContinuity,
     )
+    const privateReply = decision.interaction?.reply
+    if (timedPrivateReply && privateReply?.mode === 'immediate' && privateReply.content) {
+      // The visible text has been clamped. Canonicalize segmentation for both
+      // the script ledger and transport only now: delimiters inserted for
+      // newline boundaries must not consume the visible text budget again.
+      privateReply.content = splitPrivateBubbleContent(privateReply.content, this.config.runtime)
+        .join(this.config.runtime.messageSeparator?.trim() || '<sep/>')
+    }
     const stateBefore = decodeStoryState(story.state)
     const activeScene = decision.script ? await this.activeScene(story.id) : null
     const sceneFrame: SceneFrame | undefined = decision.script
@@ -4523,6 +4699,7 @@ export class InterludeService extends Service {
           } as NarrativeDecision,
           messageSeparator: this.config.runtime.messageSeparator,
           splitReplyMessages: this.config.runtime.splitReplyMessages,
+          timedPrivateReply,
           groupReplyContent,
           frameId: sceneFrame?.id,
           burstId: dialogueBurst?.id,
@@ -4578,12 +4755,40 @@ export class InterludeService extends Service {
           ? inferredFollowUpCommitment(decision.interaction!.reply.content!, now) : undefined)
         if (event && commitment) event.metadata = { ...event.metadata, followUpCommitment: commitment }
       }
-      scriptEntry = await this.appendEntry(
-        story.id,
-        scriptEntryDraftForCommit(commit, decision.interaction ?? null, timelinePlan, decision.lifeHandoff),
-        now,
-        participant?.id ?? '',
-      )
+      const entryDraft = scriptEntryDraftForCommit(commit, decision.interaction ?? null, timelinePlan, decision.lifeHandoff)
+      const interaction = decision.interaction
+      if (timedPrivateReply && participant && privateBubbleCommit && interaction?.reply.mode === 'immediate' && interaction.reply.content) {
+        const content = interaction.reply.content
+        const event = findPrivateOutgoingMessageEvent(commit, participant.id, 'immediate', content, this.config.runtime.messageSeparator)
+        if (!event) throw new Error('Timed private reply is missing its script event.')
+        const bubbles = this.splitOutgoingMessage(content)
+        const { entry, intent } = await this.dbWrite(async () => {
+          this.transactionRunning = true
+          try {
+            let committed!: { entry: ScriptEntry, intent: NarrativeIntent }
+            await this.ctx.database.withTransaction(database => this.transactionScope.run(database, async () => {
+              const entry = await this.createScriptEntry(story.id, entryDraft, now, participant.id)
+              const message = prepareOutgoingDelivery(attachMessageEvent({
+                participantId: participant.id, content, interaction, userInitiated: true,
+              }, event, entry.id), bubbles)
+              if (!message) throw new Error('Timed private reply is missing its transport draft.')
+              const intent = await persistPrivateBubbleGroup(this, story, participant, message, privateBubbleCommit.startedAt, privateBubbleCommit.sourceEndpointId)
+              committed = { entry, intent }
+            }))
+            return committed
+          } finally {
+            this.transactionRunning = false
+          }
+        })
+        scriptEntry = entry
+        privateBubbleCommit.onCommitted()
+        activatePrivateBubbleGroup(this, intent, participant, privateBubbleCommit.handle)
+        this.cacheScriptEntry(entry)
+        this.reportOperation('summary', 'info', story, 'user-message', '私聊回复已排程 气泡=%d 首泡到期=%s 计划=%d 事件=%s',
+          bubbles.length, intent.notBefore.toISOString(), intent.id, event.eventId)
+      } else {
+        scriptEntry = await this.appendEntry(story.id, entryDraft, now, participant?.id ?? '')
+      }
     }
     const resolvedConsequences = await this.applyIntentUpdates(story.id, decision.intentUpdates, now, participant?.id)
     // Issue #10 根因 B：记录本轮新意图的 id 上界。若本轮稍后发生可见投递撤回
@@ -4639,6 +4844,10 @@ export class InterludeService extends Service {
       const state = stateBefore
       const nextCount = Math.max(0, Math.floor(state.narrativeUpdateCount || 0)) + 1
       const nextState: StoryState = { ...state, narrativeUpdateCount: nextCount }
+      if (scriptEntry) {
+        const focus = entryLifeHandoff(scriptEntry)?.focus
+        if (focus) nextState.lifeRhythm = lifeRhythmFromScript(focus, scriptEntry, 'narrator')
+      }
       // Originals and execution annotations now supply continuity. A second
       // real-time prose summary must not certify an unexecuted sending action.
       if (resolvedConsequences || resolvedFollowUps.size) {
@@ -4750,7 +4959,7 @@ export class InterludeService extends Service {
         }
       : undefined
     if (participant && phase === 'user-message' && !isAgencyCheck && interaction?.seen) await this.markParticipantSeen(participant, now)
-    if (participant && permitMessages && !immediateReplyAlreadyDelivered && interaction?.reply?.mode === 'immediate' && interaction.reply.content) {
+    if (participant && permitMessages && !timedPrivateReply && !immediateReplyAlreadyDelivered && interaction?.reply?.mode === 'immediate' && interaction.reply.content) {
       messages.push(attachMessageEvent({
         participantId: participant.id, content: interaction.reply.content, automaticDelivery,
         interaction: interaction ?? null, userInitiated: phase === 'user-message',
@@ -4936,21 +5145,9 @@ export class InterludeService extends Service {
             ? crossActions.find(action => action.mode === 'immediate' && !action.participantId.startsWith('group:'))?.participantId
             : undefined)
         const urge = commitUrge(normalizeUrgeState(state.extensions?.urge, now.getTime()), raw.urge, decision.script || '', scriptEntry.id, target, now.getTime(), this.urgeConfig)
-        // 主叙事轻量节奏覆盖:模型在 urge 交接里带 rhythmAttention 时写入 lifeRhythm,
-        // 比等下一次压缩更即时(source: narrator)。
-        const rawUrge = raw.urge as Record<string, unknown> | undefined
-        const rhythmOverride = urge.rhythmAttention && typeof rawUrge?.rhythmAttention === 'string'
-          ? {
-              attention: urge.rhythmAttention as 'phone-focused' | 'available' | 'occupied' | 'resting' | 'asleep',
-              basis: '主叙事交接覆盖',
-              assessedAt: now.toISOString(),
-              source: 'narrator' as const,
-            }
-          : undefined
         await this.dbSet('interlude_story', { id: story.id }, { state: encodeStoryState({
           ...state,
           extensions: { ...state.extensions, urge },
-          ...(rhythmOverride ? { lifeRhythm: rhythmOverride } : {}),
         }), updatedAt: now })
       } catch (error) {
         // Optional scheduling projection must never swallow already committed speech.
@@ -5215,6 +5412,12 @@ export class InterludeService extends Service {
   }
 
   private async appendEntry(storyId: string, entry: ScriptEntryDraft, now: Date, participantId = '') {
+    const row = await this.createScriptEntry(storyId, entry, now, participantId)
+    this.cacheScriptEntry(row)
+    return row
+  }
+
+  private async createScriptEntry(storyId: string, entry: ScriptEntryDraft, now: Date, participantId: string) {
     const occurredAt = toDate(entry.occurredAt) ?? now
     const created = await this.dbCreate('interlude_script_entry', {
       storyId, participantId, kind: clip(entry.kind, 32) || 'life', actor: clip(entry.actor ?? 'character', 32),
@@ -5223,8 +5426,11 @@ export class InterludeService extends Service {
     })
     // Scene entry counts are derived during compaction. Avoiding a second
     // SQLite write here keeps every durable script append atomic and cheap.
-    const row = normalizeDatabaseRow('interlude_script_entry', created) as ScriptEntry
-    const recallCache = this.historyVectors.get(storyId)
+    return normalizeDatabaseRow('interlude_script_entry', created) as ScriptEntry
+  }
+
+  private cacheScriptEntry(row: ScriptEntry) {
+    const recallCache = this.historyVectors.get(row.storyId)
     if (recallCache && RECALLABLE_ENTRY_KINDS.includes(row.kind)) {
       recallCache.set(row.id, {
         tags: Object.values(groundedEpisodeTags(row.content, (row.metadata?.episodeTags ?? {}) as Record<string, unknown>)).flat(),
@@ -5235,7 +5441,6 @@ export class InterludeService extends Service {
         occurredAt: row.occurredAt.toISOString(), participantId: row.participantId, kind: row.kind,
       })
     }
-    return row
   }
 
   private async appendMemory(storyId: string, memory: MemoryDraft, now: Date, participantId = '', sourceEntryId?: number) {
@@ -5488,6 +5693,11 @@ export class InterludeService extends Service {
         canonicalId = story.id
         const entryCount = await this.dbRead(() => this.ctx.database.eval('interlude_script_entry', row => $.count(row.id), { storyId: story.id }))
         const decoded = decodeStoryState(story.state)
+        const rhythm = decoded.lifeRhythm
+        const overviewAt = new Date()
+        const attention = resolveEventAttentionFocus(rhythm, overviewAt)
+        const localTime = (value?: string) => value && Number.isFinite(Date.parse(value))
+          ? formatStoryDisplayTime(new Date(value), story.setting.timezone) : ''
         storyBlock = {
           found: true,
           characterName: story.setting.character?.name ?? '',
@@ -5495,7 +5705,25 @@ export class InterludeService extends Service {
           entryCount,
           status: story.status,
           cursorLocal: formatStoryDisplayTime(story.cursorAt, story.setting.timezone),
-          rhythm: decoded.lifeRhythm?.attention ?? '未建立',
+          rhythm: rhythm?.attention ?? '未建立',
+          eventAttention: {
+            status: attention ? 'current' : !rhythm ? 'missing' : lifeRhythmStale(rhythm, overviewAt.getTime()) ? 'stale' : 'legacy',
+            assessedAtLocal: localTime(rhythm?.assessedAt) || undefined,
+            tiers: {
+              privateBatch: fixedEventTier(attention, 'privateBatch'),
+              groupBatch: fixedEventTier(attention, 'groupBatch'),
+              groupBackground: fixedEventTier(attention, 'groupBackground'),
+              weather: fixedEventTier(attention, 'weather'),
+              friendFeed: fixedEventTier(attention, 'friendFeed'),
+            },
+          },
+          location: decoded.sceneFrame?.place || story.setting.location || '',
+          activity: decoded.sceneFrame?.ongoingActivity || '',
+          focus: decoded.sceneFrame?.narrativeFocus || '',
+          timezone: story.setting.timezone,
+          nextAdvanceLocal: localTime(decoded.automation.nextAdvanceAt),
+          lastAdvanceLocal: localTime(decoded.automation.lastAutoAdvanceAt),
+          followUpCount: decoded.automation.conversationFollowUpAt?.length ?? 0,
         }
       }
     } catch { /* 无故事时用占位 */ }
@@ -5543,6 +5771,10 @@ export class InterludeService extends Service {
         counts: densityCounts,
         tier: densityTier(densityCounts),
         effectiveLimit: this.effectiveContextBudget(densityStoryId, 'private', 'user-message', new Date()).count,
+        budgets: {
+          private: this.effectiveContextBudget(densityStoryId, 'private', 'user-message', new Date()),
+          group: this.effectiveContextBudget(densityStoryId, 'group', 'user-message', new Date()),
+        },
         mode: effectiveScopeMode(this.contextEntryConfig, 'private'),
         anchor: this.config.runtime.contextEntryLimit,
         scopes: { private: this.contextEntryConfig.private, group: this.contextEntryConfig.group },
@@ -5556,7 +5788,8 @@ export class InterludeService extends Service {
    * 插件配置。ctx.scope 在 Service 上是 protected，经此公开；框架随后
    * 完成热更新与 loader 写回 koishi.yml（设计 §6.1）。 */
   updatePluginConfig(next: Config, reload = false): void {
-    this.ctx.scope.update(next as never, reload)
+    // Ordinary saves use Cordis change detection; only explicit reloads force a restart.
+    this.ctx.scope.update(next as never, reload ? true : undefined)
   }
 
   /** Console 配置读取（hdsi/config/read 的数据源）。无活跃故事时 story 节
@@ -5566,7 +5799,7 @@ export class InterludeService extends Service {
     if (section === 'story') {
       const story = await this.getCanonicalStory()
       if (!story) return { ok: true, values: {} }
-      const s = story.setting as any
+      const s = story.setting as StorySetting & { character: StorySetting['character'] & { traits?: string | string[] } }
       return {
         ok: true,
         values: {
@@ -5627,23 +5860,38 @@ export class InterludeService extends Service {
 
     const story = await this.getCanonicalStory()
     if (!story) return { ok: false, error: '没有活跃故事' }
-    const patch: Record<string, unknown> = {}
+    const patch: Partial<StorySetting> = {}
+    const characterPatch = { ...story.setting.character } as StorySetting['character'] & { traits?: string[] }
+    let characterChanged = false
     let applied = 0
     for (const [key, value] of Object.entries(values)) {
       if (!EDITABLE_STORY_KEYS.has(key)) continue
-      const parts = key.split('.')
-      if (parts.length === 2 && parts[0] === 'character') {
-        // character.traits 在表单里是换行分隔文本，落库回数组。
-        const target = (patch.character ??= {}) as Record<string, unknown>
-        target[parts[1]] = parts[1] === 'traits'
-          ? String(value ?? '').split('\n').map(line => line.trim()).filter(Boolean)
-          : value
-      } else {
-        patch[key] = value
+      const text = String(value ?? '')
+      switch (key) {
+        case 'character.name':
+          characterPatch.name = text
+          characterChanged = true
+          break
+        case 'character.profile':
+          characterPatch.profile = text
+          characterChanged = true
+          break
+        case 'character.traits':
+          characterPatch.traits = text.split('\n').map(line => line.trim()).filter(Boolean)
+          characterChanged = true
+          break
+        case 'world': patch.world = text; break
+        case 'location': patch.location = text; break
+        case 'supportingCast': patch.supportingCast = text; break
+        case 'style': patch.style = text; break
+        case 'perspective': patch.perspective = text; break
+        case 'defaultRelationship': patch.defaultRelationship = text; break
+        case 'timezone': patch.timezone = text; break
       }
       applied++
     }
-    if (applied) await this.updateSetting(story, patch as never)
+    if (characterChanged) patch.character = characterPatch
+    if (applied) await this.updateSetting(story, patch)
     return { ok: true, applied }
   }
 
@@ -5657,42 +5905,32 @@ export class InterludeService extends Service {
   /** Read a page through Koishi Puppeteer. This is intentionally read-only:
    * it rejects non-public destinations, extracts visible text only, and closes
    * the page after every observation. */
-  private async collectWebObservation(story: InterludeStory, draft: BrowserIntentDraft | null, participantId: string, intentId: number | null, now: Date, persist = true): Promise<WebObservation> {
+  private async collectWebObservation(story: InterludeStory, draft: BrowserIntentDraft | null, participantId: string, intentId: number | null, now: Date): Promise<WebObservation> {
     const config = this.browserConfig
     const normalized = draft ? normalizeBrowserIntentDraft(draft, config) : undefined
     if (!normalized || !config.enabled) {
-      return this.saveWebObservation(story.id, participantId, intentId, normalized?.mode ?? 'visit', normalized?.query ?? '', normalized?.url ?? '', '', '', '浏览未执行：功能未启用或请求不符合安全规则。', 'blocked', now, persist)
+      return this.saveWebObservation(story.id, participantId, intentId, normalized?.mode ?? 'visit', normalized?.query ?? '', normalized?.url ?? '', '', '', '浏览未执行：功能未启用或请求不符合安全规则。', 'blocked', now, false)
     }
 
     const target = resolveBrowserTarget(normalized, config)
     if (!target) {
       this.report('warn', story, 'intent-due', '网页浏览被安全策略拦截：模式=%s', normalized.mode)
-      return this.saveWebObservation(story.id, participantId, intentId, normalized.mode, normalized.query ?? '', normalized.url ?? '', '', '', '浏览目标未通过公开网页安全校验。', 'blocked', now, persist)
+      return this.saveWebObservation(story.id, participantId, intentId, normalized.mode, normalized.query ?? '', normalized.url ?? '', '', '', '浏览目标未通过公开网页安全校验。', 'blocked', now, false)
     }
 
     const cached = await this.findCachedWebObservation(story.id, participantId, normalized, now)
-    if (cached) {
-      if (!persist) return { ...cached, id: 0, intentId, accessedAt: now, createdAt: now }
-      await this.appendEntry(story.id, {
-        kind: 'web-observation', actor: 'system',
-        content: `The character revisited a recent web observation: ${cached.title || cached.url}.`,
-        occurredAt: now.toISOString(), metadata: { observationId: cached.id, cached: true, status: cached.status },
-      }, now, participantId)
-      return cached
-    }
+    if (cached) return { ...cached, id: intentId === null ? 0 : cached.id, intentId, accessedAt: now, createdAt: now } as WebObservation
 
     const puppeteer = (this.ctx as any).puppeteer
     if (!puppeteer?.page) {
       this.report('warn', story, 'intent-due', '网页浏览服务不可用：请安装并启用 koishi-plugin-puppeteer。')
-      return this.saveWebObservation(story.id, participantId, intentId, normalized.mode, normalized.query ?? '', target, '', '', '浏览器服务不可用。', 'failed', now, persist)
+      return this.saveWebObservation(story.id, participantId, intentId, normalized.mode, normalized.query ?? '', target, '', '', '浏览器服务不可用。', 'failed', now, false)
     }
 
-    return this.withBrowserSlot(async () => {
-      let page: any
-      try {
-        page = await puppeteer.page()
-        await page.setUserAgent(`Mozilla/5.0 (compatible; HDS-Interlude/${HDS_INTERLUDE_VERSION}; +https://koishi.chat/)`)
-        await page.setRequestInterception(true)
+    try {
+      return await this.withBrowserPage(config.navigationTimeout + 5_000, async (page, step) => {
+        await step(() => page.setUserAgent(`Mozilla/5.0 (compatible; HDS-Interlude/${HDS_INTERLUDE_VERSION}; +https://koishi.chat/)`))
+        await step(() => page.setRequestInterception(true))
         page.on('request', (request: any) => {
           const resourceType = request.resourceType?.() ?? 'document'
           const requestUrl = request.url?.() ?? ''
@@ -5702,28 +5940,26 @@ export class InterludeService extends Service {
           void Promise.resolve(operation).catch((): undefined => undefined)
         })
         page.on('popup', (popup: any): void => void popup.close().catch((): undefined => undefined))
-        await page.goto(target, { waitUntil: config.waitUntil, timeout: config.navigationTimeout })
+        await step(() => page.goto(target, { waitUntil: config.waitUntil, timeout: config.navigationTimeout }))
         const finalUrl = String(page.url?.() ?? target)
         if (!isSafePublicWebUrl(finalUrl, config)) throw new Error('页面重定向到了不允许的地址。')
-        const result = await page.evaluate(() => ({
+        const result = await step<{ title: string; text: string }>(() => page.evaluate(() => ({
           title: String(document.title || '').trim(),
           text: String(document.body?.innerText || '').replace(/\r/g, '').replace(/\n{3,}/g, '\n\n').trim(),
-        }))
+        })))
         const text = clip(String(result?.text ?? ''), config.maxTextCharacters)
         const title = clip(String(result?.title ?? ''), 500)
         const excerpt = clip(text, config.maxExcerptCharacters)
         const summary = clip(`${title ? `${title}。` : ''}${excerpt}`, config.maxExcerptCharacters)
-        const observation = await this.saveWebObservation(story.id, participantId, intentId, normalized.mode, normalized.query ?? '', finalUrl, title, excerpt, summary || '页面没有可提取的正文。', 'success', new Date(), persist)
+        const observation = await this.saveWebObservation(story.id, participantId, intentId, normalized.mode, normalized.query ?? '', finalUrl, title, excerpt, summary || '页面没有可提取的正文。', 'success', new Date(), false)
         this.reportOperation('standard', 'info', story, 'intent-due', '网页读取完成 标题=%s 正文=%d字', title || '未命名页面', text.length)
         if (config.logObservationPreview) this.report('debug', story, 'intent-due', '网页观察节选：%s', excerpt)
         return observation
-      } catch (error) {
-        this.report('warn', story, 'intent-due', '网页读取失败：%s', error)
-        return this.saveWebObservation(story.id, participantId, intentId, normalized.mode, normalized.query ?? '', target, '', '', `网页读取失败：${clip(String(error instanceof Error ? error.message : error), 500)}`, 'failed', new Date(), persist)
-      } finally {
-        if (page) await page.close().catch((): undefined => undefined)
-      }
-    })
+      })
+    } catch (error) {
+      this.report('warn', story, 'intent-due', '网页读取失败：%s', error)
+      return this.saveWebObservation(story.id, participantId, intentId, normalized.mode, normalized.query ?? '', target, '', '', `网页读取失败：${clip(String(error instanceof Error ? error.message : error), 500)}`, 'failed', new Date(), false)
+    }
   }
 
   private async saveWebObservation(storyId: string, participantId: string, intentId: number | null, mode: 'search' | 'visit', query: string, url: string, title: string, excerpt: string, summary: string, status: WebObservation['status'], now: Date, persist = true): Promise<WebObservation> {
@@ -5748,7 +5984,16 @@ export class InterludeService extends Service {
   /** Immediate browser reads are intentionally held in memory until the
    * final narrator result survives the stale-request check. This prevents an
    * obsolete two-second message burst from leaving a durable web event behind. */
-  private async persistCollectedWebObservation(observation: WebObservation) {
+  async persistCollectedWebObservation(observation: WebObservation, reuseCached = false) {
+    if (reuseCached && observation.id > 0) {
+      await this.appendEntry(observation.storyId, {
+        kind: 'web-observation', actor: 'system',
+        content: `The character revisited a recent web observation: ${observation.title || observation.url}.`,
+        occurredAt: observation.accessedAt.toISOString(),
+        metadata: { observationId: observation.id, cached: true, status: observation.status },
+      }, observation.accessedAt, observation.participantId)
+      return observation
+    }
     return this.saveWebObservation(
       observation.storyId, observation.participantId, observation.intentId, observation.mode,
       observation.query, observation.url, observation.title, observation.excerpt, observation.summary,
@@ -5783,11 +6028,48 @@ export class InterludeService extends Service {
       && (draft.mode === 'search' ? observation.query === (draft.query ?? '') : observation.url === (draft.url ?? '')))
   }
 
-  private async withBrowserSlot<T>(task: () => Promise<T>) {
-    const max = Math.max(1, this.browserConfig.maxConcurrentPages)
-    if (this.browserActive >= max) await new Promise<void>(resolve => this.browserWaiters.push(resolve))
-    else this.browserActive++
+  async withBrowserPage<T>(timeoutMs: number, task: (page: any, step: <R>(operation: () => Promise<R>) => Promise<R>) => Promise<T>) {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(new Error(`browser deadline exceeded (${timeoutMs}ms)`)), timeoutMs)
+    const signal = controller.signal
+    const step = <R>(operation: () => Promise<R>) => runBrowserOperation(signal, operation)
     try {
+      return await this.withBrowserSlot(async () => {
+        const { page, close } = await openBrowserPage((this.ctx as any).puppeteer, this.browserConfig.maxConcurrentPages, signal)
+        try {
+          return await task(page, step)
+        } finally {
+          // Release the waiting caller on timeout; the Chromium lease still
+          // counts against capacity until actual close settles.
+          const closing = close()
+          if (!signal.aborted) await step(() => closing).catch((): undefined => undefined)
+        }
+      }, signal)
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+
+  private async withBrowserSlot<T>(task: () => Promise<T>, signal?: AbortSignal) {
+    signal?.throwIfAborted()
+    const max = Math.max(1, this.browserConfig.maxConcurrentPages)
+    if (this.browserActive >= max) {
+      await new Promise<void>((resolve, reject) => {
+        const enter = () => {
+          signal?.removeEventListener('abort', abort)
+          resolve()
+        }
+        const abort = () => {
+          const index = this.browserWaiters.indexOf(enter)
+          if (index >= 0) this.browserWaiters.splice(index, 1)
+          reject(signal?.reason)
+        }
+        this.browserWaiters.push(enter)
+        signal?.addEventListener('abort', abort, { once: true })
+      })
+    } else this.browserActive++
+    try {
+      signal?.throwIfAborted()
       return await task()
     } finally {
       const next = this.browserWaiters.shift()
@@ -5871,8 +6153,8 @@ export class InterludeService extends Service {
   /** 为最早的未到期唤醒意图补排计时器（keep-earliest 仲裁，重复调用安全）。
    *  只看严格未来的 notBefore——已到期的行属于 wakeDueIntents/sweep 的消费范围，
    *  补排指过去只会空转。 */
-  async scheduleNextPendingWake(storyId: string) {
-    return scheduleNextPendingWake(this, storyId)
+  async scheduleNextPendingWake(storyId: string, includeDue = false) {
+    return scheduleNextPendingWake(this, storyId, includeDue)
   }
   /** Deliver already-decided <sep/> segments without invoking the narrator. */
   async deliverDueSplitSegments(storyId: string) {
@@ -5940,20 +6222,26 @@ export class InterludeService extends Service {
         status: 'cancelled',
         updatedAt: now,
       })
+      const interruptions = new Map<number, Awaited<ReturnType<typeof interruptPrivateBubbleGroup>>>()
       for (const intent of matching) {
+        if (privateBubblePlan(intent)) {
+          interruptions.set(intent.id, await interruptPrivateBubbleGroup(this, storyId, intent, now))
+          continue
+        }
         const content = clip(intent.payload?.content, this.config.runtime.maxMessageCharacters)
         const reference = restoreMessageEvent(intent.payload, content)
         if (reference) await this.updateScriptDeliveryOutcome(storyId, reference, 'cancelled', now, 'superseded-by-new-message')
       }
       this.scheduler.cancelWake(storyId)
-      await this.scheduleNextPendingWake(storyId)
+      await this.scheduleNextPendingWake(storyId, true)
       const interruptedDrafts = matching
-        .filter((intent: any) => intent.type === 'split-message')
+        .filter((intent: NarrativeIntent) => intent.type === 'split-message' && !privateBubblePlan(intent))
         .map(intent => clip(intent.payload?.content, this.config.runtime.maxMessageCharacters))
         .filter(Boolean)
       const content = interruptedDrafts.length
         ? `The protagonist wanted to send ${interruptedDrafts.map(draft => JSON.stringify(draft)).join(' and ')}, but had not finished typing before the user's new message arrived.`
-        : 'A newer user message superseded a planned outgoing message before it was sent.'
+        : interruptions.size ? 'A newer user message interrupted the remaining private message bubbles.'
+          : 'A newer user message superseded a planned outgoing message before it was sent.'
       await this.appendEntry(storyId, {
         kind: 'intent-cancelled',
         actor: 'system',
@@ -5961,7 +6249,11 @@ export class InterludeService extends Service {
         occurredAt: now.toISOString(),
         metadata: { intentIds: matching.map(intent => intent.id), interruptedDrafts },
       }, now, participantId)
-      return matching
+      return matching.flatMap((intent: NarrativeIntent) => {
+        if (!privateBubblePlan(intent)) return [intent]
+        const interruption = interruptions.get(intent.id)
+        return interruption ? [{ ...intent, payload: { privateBubbleInterruption: interruption } }] : []
+      })
     } finally {
       // 无条件清理——异常滞留会永久跳过该参与者的后续分段投递。
       this.interruptedTypingParticipants.delete(participantId)
@@ -6232,7 +6524,7 @@ export class InterludeService extends Service {
     if (incoming) urge = urgeUserEvent(urge, anchor.getTime())
     const rest = activeRestWindow(this.autoAdvanceConfig.restWindows, story.setting.timezone, anchor)
     const window = activeAgencyWindow(state.agencyWindow, anchor)
-    // 五档生活节奏：压缩器主写/主叙事或入站覆盖；stale 时走 restMultiplier 兜底。
+    // 生活节奏来自剧本结尾；stale 时走 restMultiplier 兜底。
     // 7.1.4：生活节奏唯一事实源——旧 lifeStatus 由 story-state 加载迁移并入。
     const rhythmRaw = state.lifeRhythm
     const rhythm: UrgeRhythmInput | undefined = rhythmRaw
@@ -6256,32 +6548,6 @@ export class InterludeService extends Service {
       rhythm?.attention ?? '(无)',
       rhythm?.stale === true ? '(stale)' : '',
       formatLogTime(next, story.setting.timezone))
-  }
-
-  /** 入站消息→节奏提升:asleep/resting → phone-focused(source: incoming)。
-   * 已是 phone-focused 但评估过期（>2h 无更新）时仅续期 assessedAt——消息
-   * 到达即"仍在看手机"的最新证据；不续期会让持续对话在 2 小时后节奏 stale，
-   * Urge 推进无端退化到兜底因子（phone-focused 1.4 → 1.0，间隔慢 40%）。
-   * 仅私聊路径调用：群消息的节奏由压缩器与主叙事交接维护。 */
-  async elevateRhythmOnIncoming(storyId: string, now: Date) {
-    try {
-      const story = await this.getStory(storyId)
-      if (!story) return
-      const state = decodeStoryState(story.state)
-      const rhythm = state.lifeRhythm
-      if (rhythm && (rhythm.attention === 'asleep' || rhythm.attention === 'resting')) {
-        const next = { attention: 'phone-focused' as const, basis: '收到用户消息，她在看手机', assessedAt: now.toISOString(), source: 'incoming' as const }
-        await this.dbSet('interlude_story', { id: storyId }, {
-          state: encodeStoryState({ ...state, lifeRhythm: next }), updatedAt: now,
-        })
-        this.reportOperation('diagnostic', 'debug', story, 'user-message', '生活节奏提升 %s→phone-focused(入站触发)', rhythm.attention)
-      } else if (rhythm?.attention === 'phone-focused' && lifeRhythmStale(rhythm, now.getTime())) {
-        await this.dbSet('interlude_story', { id: storyId }, {
-          state: encodeStoryState({ ...state, lifeRhythm: { ...rhythm, assessedAt: now.toISOString(), source: 'incoming' } }), updatedAt: now,
-        })
-        this.reportOperation('diagnostic', 'debug', story, 'user-message', '生活节奏续期 phone-focused(入站触发，原评估已过期)')
-      }
-    } catch { /* 节奏提升是尽力而为;失败不阻塞入站消息 */ }
   }
 
   private dueConversationFollowUps(story: InterludeStory, now: Date) {
@@ -6445,6 +6711,7 @@ export class InterludeService extends Service {
     setting.user.displayName = 'Multiple participants'
     setting.user.profile = defaults.userProfile
     setting.relationship = defaults.relationship
+    setting.defaultRelationship = defaults.relationship
     setting.world = defaults.world
     setting.perspective = clip(defaults.perspective, 1_200)
     // 多条独立视角：去空去重、截断，保留为独立条目不合并。
@@ -6465,7 +6732,7 @@ export class InterludeService extends Service {
   }
 
   /** Rebuild per-account relationship baselines and discard evolving state. */
-  private async resetParticipantCanon(storyId: string, now: Date) {
+  private async resetParticipantCanon(storyId: string, now: Date, setting: StorySetting) {
     const participants = await this.dbGet('interlude_participant', { storyId })
     for (const participant of participants) {
       const account = this.userAccountRule(participant.userId)
@@ -6474,7 +6741,7 @@ export class InterludeService extends Service {
         personId: account?.personId?.trim() || preset?.personId?.trim() || participant.personId || participant.userId,
         displayName: account?.label?.trim() || preset?.label?.trim() || participant.displayName || participant.userId,
         profile: account?.profile?.trim() || preset?.profile?.trim() || this.config.storyDefaults.userProfile,
-        relationship: account?.relationship?.trim() || preset?.relationship?.trim() || this.config.storyDefaults.relationship,
+        relationship: account?.relationship?.trim() || preset?.relationship?.trim() || setting.defaultRelationship?.trim() || this.config.storyDefaults.relationship,
         state: emptyParticipantState(),
         updatedAt: now,
       })
@@ -7203,6 +7470,20 @@ export class InterludeService extends Service {
       .map(({ item }) => ({ target: item.target, tendency: clip(item.proposedValue, 300), sourceEntryIds: item.sourceEntryIds }))
   }
 
+  /** Adapter for startup/Console and auxiliary components; all use the service's logger policy. */
+  readonly operationLogger: InterludeLogSink = {
+    error: (message, ...args) => this.reportStandalone('error', message, ...args),
+    warn: (message, ...args) => this.reportStandalone('warn', message, ...args),
+    info: (message, ...args) => this.reportStandaloneOperation('standard', 'info', message, ...args),
+    debug: (message, ...args) => this.reportStandaloneOperation('diagnostic', 'debug', message, ...args),
+  }
+
+  private modelResponseLogLimit() {
+    const logging = this.config.logging
+    return !this.blindModeConfig.enabled && logging?.logModelResponse && logging.verbosity === 'diagnostic' && logging.level === 'debug'
+      ? logging.previewLength ?? 500 : 0
+  }
+
   private report(level: 'error' | 'warn' | 'info' | 'debug', story: InterludeStory, phase: NarrativeRequest['phase'], message: string, ...args: unknown[]) {
     this.writeReport(level, story, phase, message, args)
   }
@@ -7220,30 +7501,24 @@ export class InterludeService extends Service {
       if (level === 'error' || level === 'warn') this.blindModeHealthIssue = true
       return
     }
-    const rank = { silent: 0, error: 1, warn: 2, info: 3, debug: 4 }
     const logging = this.config.logging ?? { level: 'info' as const, format: 'layered' as const, colors: true, colorTheme: 'dark' as const, kaomoji: true, logScriptPreview: false, previewLength: 500 }
-    if (rank[logging.level] < rank[level]) return
+    if (!allowsLogLevel(logging.level, level)) return
     const rendered = renderLogMessage(message, args)
     const storyDetail = (logging.verbosity ?? 'standard') === 'diagnostic' ? ` 故事=${story.id}` : ''
     // issue #5：调用方可能传入轻量 story 桩（只有 id）——读 setting.character.name
     // 直接抛 TypeError，且发生在叙事管线关键路径上会造成死锁。防御式回退到
     // 故事 ID，日志层永不成为故障源。
     const protagonist = story.setting?.character?.name ?? story.id
-    const communicationAction = communication
-      ? communication.domain === 'policy' ? 'warning' as const
-        : communication.domain === 'transport' ? 'send' as const
-        : communication.domain === 'authoring' ? 'processing' as const : 'system' as const
-      : undefined
+    const fields = communicationLogFields(communication)
     const output = logging.format === 'layered'
       ? formatLayeredLog({
         level, phase, protagonist, message, args,
-        ...(communicationAction ? { action: communicationAction } : {}),
         ...(communication ? { communication } : {}),
         colors: logging.colors !== false, colorTheme: logging.colorTheme ?? 'dark', kaomoji: logging.kaomoji !== false,
       })
       : logging.format === 'compact'
-        ? `[${phaseLabel(phase)}] ${protagonist} ${rendered}${storyDetail}`
-        : `[${phaseLabel(phase)}] ${protagonist}\n事件：${rendered}${storyDetail}`
+        ? `[${phaseLabel(phase)}] ${protagonist} ${rendered}${storyDetail}${fields.map(field => ` ${field.label}=${field.value}`).join('')}`
+        : `[${phaseLabel(phase)}] ${protagonist}\n事件：${rendered}${storyDetail}${fields.map(field => `\n${field.label}：${field.value}`).join('')}`
     this.emitLog(level, output)
   }
 
@@ -7278,9 +7553,8 @@ export class InterludeService extends Service {
       if (level === 'error' || level === 'warn') this.blindModeHealthIssue = true
       return
     }
-    const rank = { silent: 0, error: 1, warn: 2, info: 3, debug: 4 }
     const logging = this.config.logging ?? { level: 'info' as const, format: 'layered' as const, colors: true, colorTheme: 'dark' as const, kaomoji: true }
-    if (rank[logging.level] < rank[level]) return
+    if (!allowsLogLevel(logging.level, level)) return
     const output = logging.format === 'layered'
       ? formatLayeredLog({
         level, protagonist: 'HDSI', message, args, standalone: true,
@@ -7310,10 +7584,9 @@ export class InterludeService extends Service {
   }
 
   private emitLog(level: 'error' | 'warn' | 'info' | 'debug', output: string) {
-    if (level === 'error') this.serviceLogger.error(output)
-    else if (level === 'warn') this.serviceLogger.warn(output)
-    else if (level === 'info') this.serviceLogger.info(output)
-    else this.serviceLogger.debug(output)
+    try {
+      this.serviceLogger[level](output)
+    } catch { /* A logger target must not interrupt persistence or delivery. */ }
   }
 
   private reportBlindModeHealth() {

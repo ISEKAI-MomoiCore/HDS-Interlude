@@ -5,6 +5,7 @@
  * Agency Window, Alter, prompts, or durable story state.
  */
 import { LIFE_RHYTHM_STALE_MS } from './story-state'
+import { legacyRhythmAttention } from './life-rhythm'
 export interface GroupWillingnessConfig {
   enabled: boolean
   maxScore: number
@@ -128,9 +129,9 @@ export type WillingnessPreset = 'off' | WillingnessTier | 'auto' | 'custom'
 /** auto 档的三桶（档位配置键，沿用旧三态命名）。 */
 export type WillingnessBucket = 'busy' | 'asleep' | 'idle'
 
-/** 7.1.4 统一事实源：五档生活节奏 → 三桶映射（与压缩器旧派生同映射）。
- * phone-focused/available/resting 都按 idle 桶处理。 */
-export function rhythmTierBucket(attention: string): WillingnessBucket | undefined {
+/** 细分 focus → 旧五档 → 群聊意愿三桶；手机/空闲/休息均走 idle。 */
+export function rhythmTierBucket(value: unknown): WillingnessBucket | undefined {
+  const attention = legacyRhythmAttention(value)
   if (attention === 'occupied') return 'busy'
   if (attention === 'asleep') return 'asleep'
   if (attention === 'phone-focused' || attention === 'available' || attention === 'resting') return 'idle'
@@ -260,7 +261,7 @@ function resolveWillingnessLayers(
   if (resolved === 'auto') {
     // 7.1.4：数据源是五档生活节奏（唯一事实源），经三桶映射选档位；
     // 时效口径与 Urge 共用 2 小时（旧 6 小时窗口已废止）。
-    const bucket = lifeRhythm ? rhythmTierBucket(String(lifeRhythm.attention)) : undefined
+    const bucket = lifeRhythm ? rhythmTierBucket(lifeRhythm.attention) : undefined
     const assessedAt = lifeRhythm ? Date.parse(lifeRhythm.assessedAt) : Number.NaN
     if (!bucket || !Number.isFinite(assessedAt) || now - assessedAt > LIFE_RHYTHM_STALE_MS) {
       tier = resolveAutoWillingness(autoInput).idle
@@ -334,7 +335,8 @@ export function consumeWillingnessGate(
   // §7.6.3 兼容选项：skipJitter=false 时不掷（既有 skipCount 归零，观察路径整体停用）。
   const tier = layers.diagnosis.tier as WillingnessTier | undefined
   const [jitterMin, jitterMax] = tier && WILLINGNESS_JITTER[tier] ? WILLINGNESS_JITTER[tier] : [0, 3] as const
-  const rhythmMod = rhythmAttention && RHYTHM_SKIP_MODIFIER[rhythmAttention] !== undefined ? RHYTHM_SKIP_MODIFIER[rhythmAttention] : 0
+  const legacyAttention = legacyRhythmAttention(rhythmAttention)
+  const rhythmMod = legacyAttention ? RHYTHM_SKIP_MODIFIER[legacyAttention] : 0
   const raw = jitterMin + Math.floor(random() * (jitterMax - jitterMin + 1)) + rhythmMod
   return { ...consumed, skipCount: skipJitter === false ? 0 : Math.max(0, raw) }
 }

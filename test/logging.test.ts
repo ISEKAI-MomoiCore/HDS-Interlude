@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { formatLayeredLog } from '../src/logging'
+import { formatLayeredLog, renderLogMessage } from '../src/logging'
+import { providerHttpFailure } from '../src/provider-response'
+import { withTransportTimeout } from '../src/session-platform'
 
 test('user-message logs read as a compact task timeline', () => {
   const received = formatLayeredLog({
@@ -46,7 +48,7 @@ test('colors can be enabled and kaomoji can be replaced by simple symbols', () =
     message: '消息投递开始 参与者=1319973221',
   })
   assert.match(colored, /\u001b\[[0-9]+m/)
-  assert.match(colored, /\(・ω・\)ノ/)
+  assert.match(colored, /^├─ .*\(•̀ᴗ•́\)و/m)
 
   const symbols = formatLayeredLog({
     level: 'warn', protagonist: 'HDSI', standalone: true, colors: false, kaomoji: false,
@@ -68,6 +70,37 @@ test('dark and light themes use separate high-contrast 256-color palettes', () =
   assert.match(dark, /\u001b\[38;5;81m\[用户消息\]/)
   assert.match(light, /\u001b\[38;5;25m\[用户消息\]/)
   assert.notEqual(dark, light)
+})
+
+test('delivery markers distinguish confirmation, cancellation and unknown outcomes', () => {
+  const common = { type: 'delivery-result' as const, domain: 'transport' as const, storyId: 's', reasonCode: 'reason', segmentIndex: 1, eventId: 'reply' }
+  for (const [status, marker, level] of [
+    ['delivered', '→', 'info'], ['cancelled', '–', 'info'], ['unknown', '!', 'warn'], ['pending', '…', 'info'],
+  ] as const) {
+    const output = formatLayeredLog({ level, message: '结果：%s', args: [status], colors: false, kaomoji: false,
+      communication: { ...common, status } })
+    assert.ok(output.includes(` ${marker} 结果：${status}`))
+    assert.match(output, /分段: 2/)
+    assert.match(output, /事件: reply/)
+  }
+  const output = formatLayeredLog({ level: 'info', message: '私聊回复已排程 气泡=%d', args: [2], colors: false, kaomoji: false })
+  assert.match(output, /^├─ … 私聊回复已排程/)
+})
+
+test('provider response bodies are not inserted into ordinary error logs', () => {
+  const ordinary = Object.assign(new Error('sensitive'), { response: { status: 400, data: 'sensitive' } })
+  const streaming = providerHttpFailure('sensitive stream response', 503)
+  assert.equal(renderLogMessage('请求失败：%s / %s', [ordinary, streaming]), '请求失败：HTTP 400 / HTTP 503')
+  assert.equal(streaming.message, 'sensitive stream response', 'internal exception stays unchanged')
+})
+
+test('transport timeout marks unknown without promising a retry', async () => {
+  await assert.rejects(withTransportTimeout(Promise.reject(Object.assign(new Error('adapter timed out'), { timeout: true })), 'fake'), error => {
+    assert.equal((error as { transportTimeout?: boolean }).transportTimeout, true)
+    assert.match(String(error), /结果未知/)
+    assert.doesNotMatch(String(error), /补偿|重试/)
+    return true
+  })
 })
 
 test('Agency decisions have a distinct subjectivity marker', () => {

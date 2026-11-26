@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { Schema } from 'cordis'
+import { Context } from 'koishi'
 import { Config } from '../src/index'
 import { InterludeService } from '../src/service'
 import { CONFIG_CENTER_MENU, CONFIG_CENTER_SECRET_MASK, isOpenConfigCenterSection } from '../src/console/contract'
@@ -37,7 +38,7 @@ test('每个菜单节的 Schema 都能经 {uid, refs} JSON 往返（P1 验收：
     if (original.dict) {
       assert.deepEqual(
         Object.keys(revived.dict).sort(),
-        Object.keys(original.dict).sort(),
+        Object.keys(original.dict).filter(key => !(id === 'model' && ['fixedPrompt', 'formatPrompt', 'stylePrompt'].includes(key)) && !(id === 'storyDefaults' && key === 'style')).sort(),
         `节 ${id} 往返后字段集应一致`,
       )
     }
@@ -64,6 +65,18 @@ test('readConfigCenter: 无参只返回菜单；开放节附带 schema 与当前
   assert.ok(runtime.schema)
   assert.equal(runtime.values!.contextEntryLimit, resolvedConfig.runtime.contextEntryLimit)
   assert.equal(runtime.values!.contextEntryMode, resolvedConfig.runtime.contextEntryMode)
+})
+
+test('运行时配置页说明私聊首泡、打字上限与打断范围，不暴露模型的逐泡字段', () => {
+  const host = { config: resolvedConfig } as unknown as InterludeService
+  const result = readConfigCenter(host, Config, 'runtime')
+  assert.equal(result.ok, true)
+  const fields = new (Schema as any)(result.schema).dict
+  assert.match(fields.typingBaseDelaySeconds.meta.description, /首个气泡/)
+  assert.match(fields.typingMaxDelaySeconds.meta.description, /不限制模型/)
+  assert.match(fields.cancelDelayedRepliesOnUserMessage.meta.description, /无论此项是否开启.*打断.*首泡/)
+  assert.equal(fields.bubbleDelaySeconds, undefined)
+  assert.equal(result.values!.bubbleDelaySeconds, undefined)
 })
 
 test('readConfigCenter: 空参数只读菜单，未知节返回错误且仍随菜单', () => {
@@ -210,4 +223,93 @@ test('无 ID 的旧模型连接在表单重排与删除后仍保留各自密钥'
   assert.equal(applyConfigSectionPatch(host, Config, 'model', { providers: [rows[0], rows[0]] }).ok, false)
   const { id: _id, ...withoutId } = rows[1]
   assert.equal(applyConfigSectionPatch(host, Config, 'model', { providers: [withoutId] }).ok, false)
+})
+
+
+test('写作提示词独立投影：读写保留原键、模型密钥和故事档案', () => {
+  const config: any = Config({ mainPrompt: '主指令', model: { fixedPrompt: '长期规则', providers: [{ id: 'p', apiKey: 'private-key' }] }, storyDefaults: { characterName: '主角', style: '旧文风' } })
+  const { host, updates } = pipelineHost(config)
+  const writing = readConfigCenter(host, Config, 'mainPrompt')
+  assert.equal(writing.values!.value, '主指令')
+  assert.equal((writing.values!.model as any).fixedPrompt, '长期规则')
+  assert.equal((writing.values!.storyDefaults as any).style, '旧文风')
+  assert.ok(!JSON.stringify(writing).includes('private-key'))
+  assert.equal(readConfigCenter(host, Config, 'model').values!.fixedPrompt, undefined)
+  assert.equal(readConfigCenter(host, Config, 'storyDefaults').values!.style, undefined)
+  assert.match(new Schema(serializeConfigSection(Config, 'storyDefaults') as any).meta.description as string, /默认文风在「写作提示词」/)
+  const result = applyConfigSectionPatch(host, Config, 'mainPrompt', { value: '新指令', model: { fixedPrompt: '新规则' }, storyDefaults: { style: '新文风' } })
+  assert.equal(result.ok, true)
+  assert.equal(updates[0].mainPrompt, '新指令')
+  assert.equal(updates[0].model.fixedPrompt, '新规则')
+  assert.deepEqual(updates[0].model.providers, config.model.providers)
+  assert.equal(updates[0].storyDefaults.characterName, '主角')
+  assert.equal(updates[0].storyDefaults.style, '新文风')
+  assert.equal(config.storyDefaults.style, '旧文风')
+  assert.equal((result.values!.model as any).fixedPrompt, '新规则')
+  assert.equal(applyConfigSectionPatch(host, Config, 'mainPrompt', { model: { providers: [] } }).ok, false)
+  assert.equal(applyConfigSectionPatch(host, Config, 'mainPrompt', {}, { unset: ['model.providers'] }).ok, false)
+  assert.equal(applyConfigSectionPatch(host, Config, 'mainPrompt', {}, { unset: ['model.fixedPrompt', 'storyDefaults.style'] }).ok, true)
+  assert.equal(updates[1].model.fixedPrompt, undefined)
+  assert.equal(updates[1].storyDefaults.style, undefined)
+  assert.equal(config.model.fixedPrompt, '长期规则')
+})
+
+test('普通保存触发真实 Cordis 更新，未修改时保持运行，强制重载重新应用', async () => {
+  const app = new Context()
+  const applied: number[] = [], persisted: any[] = []
+  let pluginContext: Context
+  const plugin = Object.assign((ctx: Context, config: any) => {
+    pluginContext = ctx
+    applied.push(config.runtime.contextEntryLimit)
+  }, { Config })
+  const fork = app.plugin(plugin, Config({}))
+  app.on('internal/before-update', (_scope, config) => { persisted.push(config) })
+  try {
+    await app.start()
+    const host: any = {
+      config: Config({}),
+      updatePluginConfig(next: any, reload: boolean) {
+        InterludeService.prototype.updatePluginConfig.call({ ctx: pluginContext } as any, next, reload)
+      },
+    }
+    assert.equal(applyConfigSectionPatch(host, Config, 'runtime', { contextEntryLimit: 31 }).ok, true)
+    await new Promise(resolve => setImmediate(resolve))
+    assert.deepEqual(applied, [18, 31])
+    assert.equal(persisted[0].runtime.contextEntryLimit, 31)
+    host.config = fork.config
+    assert.equal(applyConfigSectionPatch(host, Config, 'runtime', { contextEntryLimit: 31 }).ok, true)
+    await new Promise(resolve => setImmediate(resolve))
+    assert.deepEqual(applied, [18, 31])
+    assert.equal(applyConfigSectionPatch(host, Config, 'runtime', { contextEntryLimit: 31 }, { reload: true }).ok, true)
+    await new Promise(resolve => setImmediate(resolve))
+    assert.deepEqual(applied, [18, 31, 31])
+  } finally { await app.stop() }
+})
+
+test('保存响应返回规范化字段和密钥占位值，可跨重载直接更新表单', () => {
+  const config: any = Config({ research: { searchApiKey: 'original-secret' } })
+  const { host } = pipelineHost(config)
+  const result = applyConfigSectionPatch(host, Config, 'research', { searchApiKey: 'replacement-secret' })
+  assert.equal(result.ok, true)
+  assert.equal(result.values!.searchApiKey, CONFIG_CENTER_SECRET_MASK)
+  assert.ok(result.maskedFields!.includes('searchApiKey'))
+  assert.ok(!JSON.stringify(result).includes('replacement-secret'))
+})
+
+
+test('写作页显示旧版有效主提示词，清空后恢复内置默认并保留其它模型设置', () => {
+  const config: any = Config({ model: { mainPrompt: '旧版自定义主提示词', temperature: 0.7 } })
+  const { host, updates } = pipelineHost(config)
+  assert.equal(readConfigCenter(host, Config, 'mainPrompt').values!.value, '旧版自定义主提示词')
+  assert.equal(applyConfigSectionPatch(host, Config, 'mainPrompt', { value: '' }).ok, true)
+  assert.equal(updates[0].mainPrompt, '')
+  assert.equal(updates[0].model.mainPrompt, (Config as any).dict.model.dict.mainPrompt(undefined))
+  assert.equal(updates[0].model.temperature, 0.7)
+  assert.equal(config.model.mainPrompt, '旧版自定义主提示词')
+  const override: any = Config({ mainPrompt: '顶层主提示词', model: { mainPrompt: '曾经的覆盖值' } })
+  const f = pipelineHost(override)
+  assert.equal(readConfigCenter(f.host, Config, 'mainPrompt').values!.value, '顶层主提示词')
+  assert.equal(applyConfigSectionPatch(f.host, Config, 'mainPrompt', {}, { unset: ['value'] }).ok, true)
+  assert.equal(f.updates[0].mainPrompt, undefined)
+  assert.equal(f.updates[0].model.mainPrompt, (Config as any).dict.model.dict.mainPrompt(undefined))
 })

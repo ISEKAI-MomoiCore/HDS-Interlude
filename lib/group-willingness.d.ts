@@ -48,9 +48,8 @@ export type WillingnessTier = 'quiet' | 'reserved' | 'normal' | 'active' | 'eage
 export type WillingnessPreset = 'off' | WillingnessTier | 'auto' | 'custom';
 /** auto 档的三桶（档位配置键，沿用旧三态命名）。 */
 export type WillingnessBucket = 'busy' | 'asleep' | 'idle';
-/** 7.1.4 统一事实源：五档生活节奏 → 三桶映射（与压缩器旧派生同映射）。
- * phone-focused/available/resting 都按 idle 桶处理。 */
-export declare function rhythmTierBucket(attention: string): WillingnessBucket | undefined;
+/** 细分 focus → 旧五档 → 群聊意愿三桶；手机/空闲/休息均走 idle。 */
+export declare function rhythmTierBucket(value: unknown): WillingnessBucket | undefined;
 /** 档位参数表。基线：normal 约每 4~5 条普通群消息触发一次模型调用
  * （单条批次连续到达、随机数公平时的期望值；密集批次会更快）。 */
 export declare const WILLINGNESS_TIERS: Record<WillingnessTier, GroupWillingnessConfig>;

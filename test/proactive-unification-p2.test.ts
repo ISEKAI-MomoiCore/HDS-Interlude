@@ -50,6 +50,45 @@ test('P2 ledger derivation rebuilds the full window from persisted script entrie
   ], 'delivered/partial/pending/unknown occupy; failed/cancelled release; window bounded')
 })
 
+test('daily cap excludes explicitly user-initiated replies but conservatively counts legacy rows', () => {
+  const entries = [{ kind: 'script', metadata: { deliveryActions: [
+    ...Array.from({ length: 9 }, (_, index) => ({
+      commitId: `reply-${index}`, eventId: `r${index}`, participantId: 'alice', status: 'delivered',
+      updatedAt: new Date(NOW.getTime() - (index + 1) * MINUTE).toISOString(), userInitiated: true,
+    })),
+    ...Array.from({ length: 2 }, (_, index) => ({
+      commitId: `proactive-${index}`, eventId: `p${index}`, participantId: 'alice', status: 'delivered',
+      updatedAt: new Date(NOW.getTime() - (index + 20) * MINUTE).toISOString(),
+    })),
+  ] } }]
+  const records = policyActionRecordsFromLedger(entries as any, NOW)
+  const config = { ...DEFAULT_DELIVERY_POLICY_CONFIG, proactivePerTargetDailyCap: 8 }
+  const allowed = evaluateDeliveryPolicy({ config, targetId: 'alice', records, now: NOW })
+  assert.equal(allowed.allowed, true, '9 user replies plus 2 proactive actions use only 2 cap slots')
+  assert.equal(allowed.counted, 2)
+
+  const atLimit = [...records, ...Array.from({ length: 6 }, (_, index) => record('alice', 40 + index))]
+  const blocked = evaluateDeliveryPolicy({ config, targetId: 'alice', records: atLimit, now: NOW })
+  assert.equal(blocked.allowed, false)
+  assert.equal(blocked.reason, 'policy-daily-cap')
+  assert.equal(blocked.counted, 8, 'cap diagnostics report only quota-counted actions')
+
+  const legacy = policyActionRecordsFromLedger([{ kind: 'script', metadata: { deliveryActions: [
+    { commitId: 'legacy', eventId: 'e1', participantId: 'alice', status: 'delivered', updatedAt: NOW.toISOString() },
+  ] } }], NOW)
+  assert.equal(evaluateDeliveryPolicy({ config: { ...config, proactivePerTargetDailyCap: 1 }, targetId: 'alice', records: legacy, now: NOW }).allowed,
+    false, 'missing origin stamp retains the old counting behavior')
+})
+
+test('user replies remain interval anchors even though the daily cap excludes them', () => {
+  const config = { ...DEFAULT_DELIVERY_POLICY_CONFIG, proactivePerTargetDailyCap: 8, minimumRunIntervalMinutes: 60 }
+  const reply = { ...record('alice', 30), userInitiated: true }
+  const blocked = evaluateDeliveryPolicy({ config, targetId: 'alice', records: [reply], now: NOW })
+  assert.equal(blocked.allowed, false)
+  assert.equal(blocked.reason, 'policy-run-interval')
+  assert.equal(blocked.counted, 0)
+})
+
 // ── evaluateDeliveryPolicy：矩阵（A06/A14/A18 的纯函数部分）────────────────
 
 function record(participantId: string, minutesAgo: number, settled = true): PolicyActionRecord {

@@ -1,8 +1,8 @@
 export type StoryStatus = 'active' | 'paused' | 'archived';
-/** 生活节奏五档：生活节奏的唯一事实源（7.1.4 统一）。由压缩器/主叙事/入站
- * 事件判定，planUrge 与群聊意愿 auto 档（经三桶映射）消费；旧三值
- * lifeStatus 由 story-state 加载迁移并入，不再单独存在。 */
-export type LifeRhythmAttention = 'phone-focused' | 'available' | 'occupied' | 'resting' | 'asleep';
+/** 主角注意档位（新九档或兼容旧存档的宽泛档位）。由已提交剧本证据更新；
+ * Urge 和群聊意愿通过旧五档映射消费，deviceAccess 独立维护。 */
+import type { CompactionFocusDraft, LifeRhythmAttention } from './life-rhythm';
+export type { LifeRhythmAttention } from './life-rhythm';
 export interface CharacterSetting {
     name: string;
     profile: string;
@@ -18,6 +18,8 @@ export interface StorySetting {
         profile: string;
     };
     relationship: string;
+    /** Story-level fallback for a participant relationship baseline. */
+    defaultRelationship?: string;
     world: string;
     /** Independent outer layer: the protagonist's values and way of seeing the world. */
     perspective: string;
@@ -69,14 +71,15 @@ export interface StoryState {
         voided?: boolean;
         origin?: string;
     }>;
-    /** 生活节奏五档（压缩器主写/主叙事与入站可覆盖）：生活节奏唯一事实源，
-     * Urge 推进密度与群聊意愿 auto 档（经三桶映射）消费。
-     * 过期（>2h）视为 stale，退回 restWindows 兜底；旧三值 lifeStatus 由
+    /** 九档 Focus；从已提交剧本交接更新，压缩器可补写，入站不改写。
+     * 供事件注意度标注使用；Urge 与群聊意愿沿用兼容映射。与 deviceAccess 独立。
+     * 过期（>2h）时注意度标注用中性行，Urge 退回 restWindows；旧三值 lifeStatus 由
      * story-state 加载迁移并入本字段。 */
     lifeRhythm?: {
         attention: LifeRhythmAttention;
         basis: string;
         assessedAt: string;
+        sourceEntryId?: number;
         source: 'compactor' | 'narrator' | 'incoming' | 'fallback';
     };
     /** Host-owned unresolved state carried forward from the latest completed
@@ -553,6 +556,8 @@ export interface OutgoingMessageDraft {
     interaction?: NarrativeInteraction | null;
     /** Split bubbles are scheduled only after their first bubble was delivered. */
     laterSegments?: string[];
+    /** Internal transport boundary for a scheduled private bubble; never serialized. */
+    beginPrivateBubbleTransport?: () => boolean;
     /** Lets a failed delivery explain whether it originated in a live user turn. */
     userInitiated?: boolean;
     /** Set by transport when a literal quote was converted into a platform reply. */
@@ -589,6 +594,7 @@ export interface NarrativeInteraction {
     seen: boolean;
     reply: {
         mode: InteractionReplyMode;
+        bubbleDelaySeconds?: number[];
         content?: string;
         actionId?: string;
         sendAt?: string;
@@ -860,6 +866,8 @@ export interface NarrativeRequest {
     story: InterludeStory;
     from: Date;
     now: Date;
+    /** Host-only attention snapshot; null explicitly preserves the neutral row on retries. */
+    eventAttentionFocus?: import('./life-rhythm').FocusAttention | null;
     userMessage?: string;
     /** Explicit clock references stated by the user in this one message. They
      * describe reported past/future events, not the message receive time. */
@@ -910,6 +918,7 @@ export interface NarrativeRequest {
     writingOptions?: {
         messageSeparator: string;
         splitReplyMessages: boolean;
+        privateBubbleDelay?: boolean;
         browserMode: 'disabled' | 'deferred-only' | 'allow-immediate';
         /** Host-detected fixed bubble-count run in her recent delivered replies; conversation turns only. */
         messageRepetition?: {
@@ -1136,10 +1145,7 @@ export interface CompactionDecision {
     schedulePreplan?: SchedulePreplanProposal;
     /** 压缩器输出的五档生活节奏（生活节奏唯一事实源；Urge 与群门 auto 档输入）。
      * 旧三值 lifeStatus 草稿通道已随 7.1.4 统一移除。 */
-    lifeRhythm?: {
-        attention: LifeRhythmAttention;
-        basis: string;
-    };
+    lifeRhythm?: CompactionFocusDraft;
 }
 export interface WorkingDetailDraft {
     /** Explicit rename of the same evidenced matter; never fuzzy deduplication. */

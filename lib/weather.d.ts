@@ -27,12 +27,26 @@ export interface WeatherSnapshot {
     feelsLike: number;
     humidity: number;
     windSpeed: number;
+    /** Raw fields are for event attention only; legacy weather text is unchanged. */
+    windSpeedKmh?: number;
+    weatherCode?: number;
+    observedAt?: number;
+    observationPoint?: string;
     condition: string;
     fetchedAt: number;
     /** 注入文本:"环境：22°C 小毛毛雨。" */
     text: string;
 }
 export declare function fetchWeatherSnapshot(ctx: Context, config: WeatherConfig, locationHint?: string): Promise<WeatherSnapshot | undefined>;
+export declare const STRONG_WIND_KMH = 50;
+export declare function weatherSampleTime(snapshot: WeatherSnapshot): number;
+export declare function hasValidWeatherCode(snapshot: WeatherSnapshot): boolean;
+export declare function hasNotableWeatherChange(previous: WeatherSnapshot, next: WeatherSnapshot, cadenceMinutes: number): boolean;
+export declare function weatherAttentionOffset(data: {
+    weatherCode?: unknown;
+    windSpeedKmh?: unknown;
+    weatherChanged?: unknown;
+}): -2 | 0 | 1;
 /** 架空世界判定(手动开关语义下与 weatherSweep 共用的唯一权威拷贝)：
  * 命中即跳过实况天气注入;播种器据此反过来保留天气播种(那些世界里模型
  * 即兴是唯一的天气来源)。 */

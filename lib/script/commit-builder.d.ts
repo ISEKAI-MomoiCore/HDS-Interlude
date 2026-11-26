@@ -10,6 +10,7 @@ export interface ScriptFirstDecisionInput {
     decision: NarrativeDecision;
     messageSeparator?: string;
     splitReplyMessages?: boolean;
+    timedPrivateReply?: boolean;
     /** Group output is normalized by the service before it enters this adapter. */
     groupReplyContent?: string;
     frameId?: string;

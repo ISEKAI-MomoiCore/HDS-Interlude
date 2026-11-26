@@ -81,6 +81,15 @@ test('M6 ledger groups text and platform segments under their script event ident
   assert.equal(new Set(actions.map(item => item.commitId)).size, 1)
 })
 
+test('delivery ledger marks user-message outputs and leaves automatic actions proactive', () => {
+  const userReply = createScriptDeliveryActions(commit())
+  const automatic = createScriptDeliveryActions({ ...commit(), phase: 'advance' })
+  assert.ok(userReply.length > 0)
+  assert.ok(userReply.every(action => action.userInitiated === true))
+  assert.ok(automatic.length > 0)
+  assert.ok(automatic.every(action => action.userInitiated !== true))
+})
+
 test('M6 ledger reports partial and terminal delivery without downgrading delivered speech', () => {
   const value = commit()
   const event = findPrivateOutgoingMessageEvent(value, 'alice')!

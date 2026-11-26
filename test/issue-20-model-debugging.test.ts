@@ -2,27 +2,33 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { readFileSync } from 'node:fs'
 
-/** Issue #20 回归：非法 JSON 保留原文摘录、提供商失败可见性、模型自检一条龙。 */
+/** Issue #20 回归：非法 JSON 的受控预览、提供商失败可见性、模型自检一条龙。 */
 
-test('#20 P1a：侧任务非法 JSON 的错误信息带原文摘录（压空白截断）', async () => {
+test('#20 P1a：侧任务非法 JSON 仅在显式启用时输出诊断预览，错误不带原文', async () => {
   const { OpenAICompatibleNarrator, rawResponseExcerpt } = await import('../src/narrator')
   const narrator: any = Object.create(OpenAICompatibleNarrator.prototype)
-  narrator.logger = { warn: () => {}, debug: () => {} }
+  const diagnostics: unknown[][] = []
+  let previewLength = 0
+  narrator.diagnostics = { previewLength: () => previewLength }
+  narrator.logger = { warn: (...args: unknown[]) => diagnostics.push(args), debug: (...args: unknown[]) => diagnostics.push(args) }
   narrator.config = { failover: { enabled: false, cooldownMinutes: 1 } }
   narrator.cooldownUntil = new Map()
   narrator.onSideTaskHealth = () => {}
   narrator.postChat = async () => ({ choices: [{ message: { content: '抱歉，我   不能\n输出 JSON。' } }] })
-  await assert.rejects(
+  const request = () => assert.rejects(
     narrator.customSideTask({ endpoint: 'https://api.example.com/v1/chat/completions', apiKey: 'k', model: 'm', label: '示例' },
       '测试任务', 5_000, 0, 64, 'system', 'ping'),
     (error: Error) => {
-      // 审计修正后消息附原始解析错误（英文关键词），恢复"去掉 max_tokens 重试"
-      // 正则的匹配能力；原文摘录仍随消息到达日志。
-      assert.match(error.message, /原文头=抱歉，我 不能 输出 JSON。/)
+      assert.doesNotMatch(error.message, /抱歉|原文头=/)
       assert.match(error.message, /invalid JSON/)
       return true
     },
   )
+  await request()
+  assert.doesNotMatch(JSON.stringify(diagnostics), /抱歉/)
+  previewLength = 8
+  await request()
+  assert.ok(diagnostics.some((args) => args.includes('抱歉，我 不能 ')))
   assert.equal(rawResponseExcerpt('  a \n b  c '), 'a b c', '摘录压缩空白')
 })
 

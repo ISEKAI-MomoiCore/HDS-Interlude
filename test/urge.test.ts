@@ -33,7 +33,7 @@ test('Urge round trips through existing story JSON without schema migration or l
   assert.equal(urge.sourceEntryId, 9)
   assert.equal(urge.pace, 'slow')
   assert.equal(urge.suggested, 90)
-  assert.equal(urge.rhythmAttention, 'occupied')
+  assert.equal(urge.rhythmAttention, undefined)
   // §9：往返后的状态集只剩调度字段——联系专用字段不再出现。
   for (const key of ['armed', 'burst', 'spent', 'value', 'contactMin', 'hot']) assert.ok(!(key in urge), `${key} 应随 §9 退役`)
   assert.equal(storyStateForPrompt(restored).extensions?.urge, undefined)
@@ -140,7 +140,7 @@ test('legacy persisted armed/burst/spent/value are cleaned at load; the sampled 
   assert.deepEqual(cleaned.buckets, [now - minute], '真实对话密度桶保留')
   assert.equal(cleaned.pace, 'slow')
   assert.equal(cleaned.suggested, 60)
-  assert.equal(cleaned.rhythmAttention, 'occupied')
+  assert.equal(cleaned.rhythmAttention, undefined)
   // 已采样的 deadline 存在 automation 上，urge 状态重载归一不影响它。
   const plan = planUrge(cleaned, now, c)
   const stored = JSON.parse(JSON.stringify({ urge: plan.state, nextAdvanceAt: plan.nextAdvanceAt }))
@@ -154,12 +154,12 @@ test('Urge handoff exists only on automatic main narration and does not request 
   assert.match(urgeInstruction(true, 'intent-due'), /full script/)
 })
 test('urge handoff wording is scheduling-only: no proactiveContact/value teaching', () => {
-  // §9 新文案：交接只有 pace/suggestedDelayMinutes/rhythmAttention/basisQuote，
+  // §9 新文案：交接只有 pace/suggestedDelayMinutes/basisQuote，
   // 明言不是联系决策（outbound contact 属于 CONTACT ACTIONS 契约）。
   const text = urgeInstruction(true, 'advance')
   assert.match(text, /pace:"normal"\|"slow"/)
   assert.match(text, /suggestedDelayMinutes/)
-  assert.match(text, /rhythmAttention/)
+  assert.doesNotMatch(text, /rhythmAttention/)
   assert.match(text, /basisQuote/)
   assert.match(text, /not speech, a future event, or a contact decision/)
   assert.match(text, /outbound contact belongs to the CONTACT ACTIONS contract/)

@@ -116,7 +116,7 @@ test('side tasks drop max_tokens and retry once when thinking budget truncates t
     calls.push(body)
     call++
     // 第一次：思考型网关把 500 cap 吃光，正文只剩残句（真实故障形态）。
-    if (call === 1) return { choices: [{ message: { content: '{"description":"深夜赶工的疲惫里带着一点被' } }] }
+    if (call === 1) return { choices: [{ message: { content: '{"description":"深夜赶工的疲惫里带着一点被' }, finish_reason: 'length' }] }
     return { choices: [{ message: { content: '{"description":"深夜赶工的疲惫里带着一点被认可的踏实。"}' } }] }
   } } }
   const narrator = new OpenAICompatibleNarrator(ctx as any, {
@@ -135,7 +135,7 @@ test('Alter usage stays aggregated across the uncapped retry instead of fragment
   const ctx = { http: { post: async () => {
     call++
     return call === 1
-      ? { choices: [{ message: { content: '{"description":"截断' } }], usage: { prompt_tokens: 10, completion_tokens: 5 } }
+      ? { choices: [{ message: { content: '{"description":"截断' }, finish_reason: 'length' }], usage: { prompt_tokens: 10, completion_tokens: 5 } }
       : { choices: [{ message: { content: '{"description":"完整的心情描述。"}' } }], usage: { prompt_tokens: 10, completion_tokens: 7 } }
   } } }
   const usages: any[] = []

@@ -22,7 +22,7 @@ export declare const EDITABLE_RUNTIME_KEYS: Set<string>;
 export declare const EDITABLE_RESEARCH_KEYS: Set<string>;
 export declare function isConfigSection(value: string): value is ConfigSection;
 export interface ConfigCenterSectionMeta {
-    /** Config Schema 顶层键（与 koishi.yml 字段同名）。 */
+    /** Config Schema 顶层键；mainPrompt 页面同时映射全局提示词和新故事默认文风。 */
     id: string;
     label: string;
     description: string;
@@ -67,5 +67,7 @@ export interface ConfigCenterReadResult {
 }
 export interface ConfigCenterSaveResult {
     ok: boolean;
+    values?: Record<string, unknown>;
+    maskedFields?: string[];
     error?: string;
 }

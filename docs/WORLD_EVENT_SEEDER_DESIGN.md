@@ -1,10 +1,10 @@
 # 世界事件播种器（World Event Seeder）设计实现文档
 
-适用版本：当前实现基线为 `1.0.1-rc59` 工作区。本文最初起草于 rc24，以下分期和开放决策保留作为设计演进记录；当前实现状态以本节和源码为准。
+本文最初起草于 rc24。下方分期和开放决策保留为历史记录；已实现的涉入标签及 T 档以本节、[事件注意度设计](experiments/2026-11-25-focus-driven-event-library-design.md)和源码为准。
 
 ## 0. 状态
 
-当前已实现：周期生成、事件校验、计划事件排期、语义去重、到期事件注入，以及 user-message / advance 回合按重要性排水。当前尚未实现的主要部分是桌面时间线专用世界事件状态徽标。rc24 起提供商选择改为模型中心的用途勾选（useForWorldSeeding）。历史设计决策包括：① 参与者**严格禁止**与事件相关（双层校验：提示词拉黑 + 宿主词面拦截）；② 密度默认每 24 小时 1~4 条、单次至多 2 条、高重要性每天至多 1 条（低多高少）；③ 注入条目使用**新增 `world-event` kind**（ownership 映射 system）；④ 模型选择复用**用途勾选**（连接行 `useForWorldSeeding`，无勾选即关闭）；⑤ 提示词全面开放：环境（时区/季节/世界设定/场景地点）、历史剧本（压缩摘录）、关系网（拉黑名单）、主角所为（workingDetails/场景/弧摘要）全部进入生成上下文。
+当前已实现：周期生成、事件校验、计划事件排期、语义去重、到期事件注入，以及 user-message / advance 回合按重要性排水。当前尚未实现的主要部分是桌面时间线专用世界事件状态徽标。rc24 起提供商选择改为模型中心的用途勾选（useForWorldSeeding）。当前每轮至多生成一条，允许输出空；生成时同时标定 `importance` 和 `involvement`，不随机预选、不生成后再调用模型补标。以下为历史设计决策：① 参与者**严格禁止**与事件相关（双层校验：提示词拉黑 + 宿主词面拦截）；② 密度默认每 24 小时 1~4 条、单次至多 2 条、高重要性每天至多 1 条（低多高少）；③ 注入条目使用**新增 `world-event` kind**（ownership 映射 system）；④ 模型选择复用**用途勾选**（连接行 `useForWorldSeeding`，无勾选即关闭）；⑤ 提示词全面开放：环境（时区/季节/世界设定/场景地点）、历史剧本（压缩摘录）、关系网（拉黑名单）、主角所为（workingDetails/场景/弧摘要）全部进入生成上下文。
 
 实现落点：`src/world-seeder.ts`（提示词/解析/校验闸/客户端）、`narrator.customSideTask`（独立配置块复用侧任务请求链）、表 `interlude_seeded_event`（cev 为 `cev_` 前缀）、`service.worldSeederSweep`（定时器+抖动+校验闸+入库+due 唤醒）、`service.drainDueSeededEvents`（`decide()` 顶部排水：user-message 回合仅 medium/high，其余回合含 low）、主提示词 WORLD EVENTS / LITE_WORLD_EVENTS 指令块。
 
@@ -65,18 +65,18 @@
 | expiresAt | timestamp? | 过期未注入即作废；宿主兜底：有效窗至少为 occursAt 后 2 小时（模型给的更短过期会被抬高） |
 | status | 'scheduled' \| 'injecting' \| 'injected' \| 'expired' | injecting 为 claim-then-append 的注入中态；dropped 从未写入（拒绝发生在入库前） |
 | subjects | json | 涉及的 NPC 名单（审计与拉黑校验） |
-| sourcePayload | json | rationale、生成时上下文指纹 |
+| sourcePayload | json | `rationale`、`involvement`；实况天气使用同一张表，另有来源标识和天气分类证据 |
 | injectedEntryId | unsigned? | 回链剧本条目 |
 | createdAt / updatedAt | timestamp | |
 
 注入条目形态（复用 appendEntry 管线）：
 
-- `kind`: 'system-event'（复用现有 kind，ownership 映射为 system；新增 'world-event' kind 作为备选，见 §13）
+- `kind`: `'world-event'`（ownership 映射为 system）
 - `content`: `[世界事件] ` + summary
 - `occurredAt`: 事件的 occursAt
-- `metadata`: `{ seededEventId, importance }`
+- `metadata`: `{ seededEventId, importance, eventSource: 'world-seeder', involvement }`；旧播种记录缺少标签时允许省略。
 
-条目自此自然流经 recentScript → 压缩 → 桌面时间线，**不需要新增 payload 字段**。
+条目沿现有选材进入 `recentScript`。最终提示词使用独立的 `eventAttention` 标注，不改正文、排期和排序。`importance` 取 1/2/3，`environment` 取 1，`involved` 取 2；乘积 1/2/3/4/6 对应 T5/T4/T3/T2/T1。已确认是播种的旧记录缺标签时取 1；来源不明的旧剧本条目按 T5，不补查或猜正文。
 
 ## 6. 生成回路
 
@@ -96,13 +96,15 @@
 { "events": [ {
   "summary": "楼下五金店开始装修，电钻声断断续续。",
   "importance": "low",
+  "involvement": "environment",
   "occursAt": "2026-09-25T10:30:00+08:00",
   "expiresAt": "2026-09-25T14:00:00+08:00",
   "subjects": [],
-  "wakeEligible": false,
   "rationale": "上午在家，质感级噪音事件，与当前场景不冲突"
 } ] }
 ```
+
+`involvement: environment` 表示未直接涉及主角的环境变化；`involved` 表示直接涉及她、其已有关系或具体事务。标签独立于重要性与世界切面。新输出缺失或含非法标签时跳过该事件。
 
 ### 宿主校验闸（入库前；宁可错杀，不重试）
 
@@ -117,9 +119,9 @@
 
 ## 7. 注入机制
 
-- **调度**：入库即 `scheduleDueIntentWake(storyId, occursAt)`，完全复用现有唤醒。
+- **调度**：复用现有 due sweep 与自然推进，不因 T 档主动唤起回合。
 - **排水**：回合构建时（`flushBufferedNarrative` 与 `advanceUnlocked` 的 serial 队列内、读 recentEntries 之前）执行 `drainDueSeededEvents(storyId, now)`：把 `occursAt ≤ now` 且 `status=scheduled` 的事件按 occursAt 顺序追加条目并置 injected。
-- **重要性感知浮现**：low 仅在 advance / conversation-follow-up 回合排水；medium/high 任何回合排水。
+- **重要性排水限制**：`user-message` 不注入新 `low` 事件（实况天气也是 `low`）；其余回合沿原条件可注入。此处是原有排水门槛，不由 T 档决定。
 - 到点不排水也不会丢：事件仍在表内，下一回合补排；超过 expiresAt 置 expired。
 
 ### 主提示词常设块
@@ -155,7 +157,9 @@ CONSTRAINTS:
 - occursAt must be a concrete future time within the allowed horizon,
   expressed in the story timezone.
 
-OUTPUT: one JSON object {"events":[]} with 0–2 events. Do not wrap in
+- Choose involvement independently: environment or involved.
+
+OUTPUT: one JSON object {"events":[]} with 0–1 events. Do not wrap in
 Markdown fences.
 ```
 

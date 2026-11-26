@@ -10,11 +10,13 @@ import type { Context } from 'koishi'
 import { OpenAICompatibleNarrator, type ModelConfig, type ProviderConfig, type TokenUsageRecord } from './narrator'
 
 export type SeedImportance = 'low' | 'medium' | 'high'
+export type SeedInvolvement = 'environment' | 'involved'
 
 /** 模型输出经解析与校验后的候选事件（尚未入库）。 */
 export interface WorldSeedEventDraft {
   summary: string
   importance: SeedImportance
+  involvement: SeedInvolvement
   occursAt: Date
   expiresAt?: Date
   subjects: string[]
@@ -111,9 +113,12 @@ export function worldSeederSystemPrompt(domain?: WorldSeedDomain, weatherHandled
     '- Place events at concrete future times within the allowed horizon, expressed in the story timezone. Ordinary gaps in her day are the best slots.',
     '- Variety: avoid repeating the same NPC + same object + same time-of-day pattern across events. If a similar scenario was already seeded, shift to a different NPC, a different place, or a different time entirely.',
     '- Importance: low = texture she may barely notice; medium = a small practical change; high = relationship-relevant or disruptive. Prefer medium for events involving named NPCs; reserve high for genuinely disruptive moments.',
+    '- Label each event after choosing what happens. Use environment for an ambient or general external change that does not directly involve her, her existing relationships, or a specific affair of hers. Use involved when the external fact directly concerns her, an established relationship, or a specific affair of hers.',
+    '- A neighbor making noise in the hallway is environment. A neighbor coming to her door to return a borrowed item is involved. An involved event still leaves her response and actions to the main narrator.',
+    '- Choose involvement independently of importance and of the run\'s slice.',
     ...(weatherHandledByHost ? ['- Real-time weather, temperature and sky conditions arrive via a separate host-injected channel. NEVER originate weather changes: no rain, snow, temperature shifts, wind warnings or sky descriptions in your events.'] : []),
     'Real life is mostly uneventful, but a good world still stirs sometimes. Most runs should produce 0-2 events; when the world has something to say, say it.',
-    'Output one JSON object only: {"events":[{"summary":"one concrete Chinese sentence stating what happened","importance":"low|medium|high","occursAt":"ISO-8601 with offset","expiresAt":"optional ISO-8601","subjects":["names of offline people involved, empty when none"],"rationale":"short reason this fits now"}]}',
+    'Output one JSON object only: {"events":[{"summary":"one concrete Chinese sentence stating what happened","importance":"low|medium|high","involvement":"environment|involved","occursAt":"ISO-8601 with offset","expiresAt":"optional ISO-8601","subjects":["names of offline people involved, empty when none"],"rationale":"short reason this fits now"}]}',
   ].join('\n')
 }
 
@@ -232,6 +237,8 @@ export function parseWorldSeedEvents(value: unknown, limit = 2): WorldSeedEventD
     const summary = typeof item.summary === 'string' ? item.summary.trim().slice(0, 200) : ''
     const importance = item.importance
     if (!summary || (importance !== 'low' && importance !== 'medium' && importance !== 'high')) continue
+    const involvement = item.involvement
+    if (involvement !== 'environment' && involvement !== 'involved') continue
     const occursAt = new Date(String(item.occursAt ?? ''))
     if (Number.isNaN(occursAt.getTime())) continue
     const expiresRaw = typeof item.expiresAt === 'string' ? new Date(item.expiresAt) : undefined
@@ -240,7 +247,7 @@ export function parseWorldSeedEvents(value: unknown, limit = 2): WorldSeedEventD
       ? item.subjects.filter((s): s is string => typeof s === 'string').map(s => s.trim().slice(0, 40)).filter(Boolean).slice(0, 4)
       : []
     drafts.push({
-      summary, importance, occursAt, subjects,
+      summary, importance, involvement, occursAt, subjects,
       rationale: typeof item.rationale === 'string' ? item.rationale.trim().slice(0, 200) : '',
       ...(expiresAt ? { expiresAt } : {}),
     })

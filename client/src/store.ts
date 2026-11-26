@@ -40,6 +40,8 @@ export interface ConfigCenterReadResult {
 
 export interface ConfigCenterSaveResult {
   ok: boolean
+  values?: Record<string, unknown>
+  maskedFields?: string[]
   error?: string
 }
 

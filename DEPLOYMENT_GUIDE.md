@@ -1,8 +1,8 @@
 # HDS Interlude 部署教程
 
-适用版本：`1.0.1-rc60`
+适用版本：`1.0.1`
 
-当前文档已同步至 2026-10-17 的 rc57，累计变更以 rc56 发布包为基线。已完成源码构建、类型检查、回归测试与 rc57 安装包打包；发布包与校验信息见发行记录。旧安装包不会自动获得这些修改，运行实例须安装并重载后才生效。
+本教程适用于 `1.0.1` 正式版。安装本地包时请核对随包的 SHA-256 校验清单；升级后请重载插件并刷新 Koishi Console。
 
 > 写给第一次把 HDSI 接到 QQ 上、并希望角色能长期生活下去的人。
 
@@ -49,7 +49,7 @@ Koishi 第一次启动会准备运行环境，耐心等待即可。
 
 ```powershell
 cd C:\Users\你的用户名\AppData\Roaming\Koishi\Desktop\data\instances\default
-node .yarn/releases/yarn-4.5.3.cjs add "koishi-plugin-hds-interlude@file:C:/路径/koishi-plugin-hds-interlude-1.0.1-rc60.tgz" --exact
+node .yarn/releases/yarn-4.5.3.cjs add "koishi-plugin-hds-interlude@file:C:/路径/koishi-plugin-hds-interlude-1.0.1.tgz" --exact
 ```
 
 安装完成后回到 Koishi Console，添加或启用 `hds-interlude`。
@@ -121,7 +121,7 @@ http://127.0.0.1:6099/webui/
 
 智谱官方 endpoint 会自动填写，不能与同一行的普通 endpoint 混用。GLM‑5.3‑Flash 会走 SSE 流式接收：首个可见文本最长等待 45 秒，收到首字后不设置总等待上限。默认仍在完整 JSON 解析成功后才向 QQ 投递，保证剧本与消息记录一致。
 
-如需试验更快的私聊首泡，在确认模型支持 JSON 对象和 SSE 后，将 `model.mainStreamingMode` 改为 `experimental`。它会先等待完整的 `interaction.reply` 字段，再发送首条消息并继续接收剧本；群聊不使用提前投递。首条已发而流式收尾失败时，只会补写剧本，不会重发第二条消息。未知中转站先保持 `off`，避免流式协议不兼容。
+当前私聊的即时文本回复会等完整模型输出通过校验，再按逐泡规则投递。`model.mainStreamingMode` 保留默认 `off` 即可。智谱官方 GLM 仍走其 SSE 接收路径。
 
 视觉模型才开启 `model.vision.enabled`。普通文本模型保持关闭；使用 GLM‑5.3‑Flash 时可在确认官方模式可用后再测试图片。
 
@@ -223,7 +223,7 @@ C:\Users\你的用户名\AppData\Roaming\Koishi\Desktop\data\instances\default\d
 
 ### 分段回复重复、补写不停或重启后 pending
 
-此轮工作区修复让同一参与者的后台补写等待 pending 气泡，全局推进等待任意链；承诺回访有硬截止及五次未结算顺延上限。源剧本 pending 消息可经启动、端点上线或周期扫描补偿，有 split-message 时仍由原打字队列负责。这些修复已纳入本次构建的 rc51；旧包不会自动变化，安装 rc51 并重载后生效。
+已有待发气泡时，同一参与者的后台补写等待该发送链，全局推进等待任意未完成的发送链；承诺回访仍有硬截止和未结算顺延上限。重启后，逐泡私聊由持久化的 `split-message` 计划恢复；如果旧账本有待发气泡却没有发送计划，日志会告警，不会绕过原发送顺序补发。
 
 排查时临时开启 diagnostic/debug，核对 commitId、eventId、scriptEntryId、分段 index、意图状态与账本；不同 commit 的相同文本属于跨回合重复生成，不等同同一 segment 重投。不要把 done/completed 调度任务或剧本中的“发了消息”当作平台回执。分段等待、承诺退役和待投递补偿扫描均有独立诊断。平台已接受但回执丢失仍不能承诺零重复。
 

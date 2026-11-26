@@ -15,6 +15,7 @@ function draft(overrides: Partial<WorldSeedEventDraft> = {}): WorldSeedEventDraf
   return {
     summary: '楼下五金店开始装修，电钻声断断续续。',
     importance: 'low',
+    involvement: 'environment',
     occursAt: new Date('2026-09-26T11:30:00+08:00'),
     subjects: [],
     rationale: '上午在家的质感事件',
@@ -44,19 +45,32 @@ test('runtime resolves from the assignment checkbox: no assigned provider means 
 test('parseWorldSeedEvents trims defensively and drops malformed entries', () => {
   const parsed = parseWorldSeedEvents({
     events: [
-      { summary: '  快递到了，放在驿站。 ', importance: 'medium', occursAt: '2026-09-26T12:00:00+08:00', subjects: ['快递员', 42], rationale: 'x'.repeat(500) },
-      { summary: '', importance: 'low', occursAt: '2026-09-26T12:00:00+08:00' },
-      { summary: '坏时间', importance: 'low', occursAt: 'not-a-date' },
-      { summary: '坏档', importance: 'huge', occursAt: '2026-09-26T12:00:00+08:00' },
+      { summary: '  快递到了，放在驿站。 ', importance: 'medium', involvement: 'involved', occursAt: '2026-09-26T12:00:00+08:00', subjects: ['快递员', 42], rationale: 'x'.repeat(500) },
+      { summary: '', importance: 'low', involvement: 'environment', occursAt: '2026-09-26T12:00:00+08:00' },
+      { summary: '坏时间', importance: 'low', involvement: 'environment', occursAt: 'not-a-date' },
+      { summary: '坏档', importance: 'huge', involvement: 'environment', occursAt: '2026-09-26T12:00:00+08:00' },
       'junk',
     ],
-  })
+  }, 5)
   assert.equal(parsed.length, 1)
+  assert.equal(parsed[0]!.involvement, 'involved')
   assert.equal(parsed[0]!.summary, '快递到了，放在驿站。')
   assert.deepEqual(parsed[0]!.subjects, ['快递员'])
   assert.equal(parsed[0]!.rationale.length, 200)
   assert.deepEqual(parseWorldSeedEvents({}), [])
   assert.deepEqual(parseWorldSeedEvents('junk'), [])
+})
+
+test('involvement is selected per event and must be a supported tag', () => {
+  const base = { importance: 'low', occursAt: '2026-09-26T12:00:00+08:00' }
+  const parsed = parseWorldSeedEvents({ events: [
+    { ...base, summary: '隔壁传来搬椅子的声音。', involvement: 'environment' },
+    { ...base, summary: '邻居来敲门，还她借出的伞。', involvement: 'involved' },
+    { ...base, summary: '楼下店门关了。' },
+    { ...base, summary: '走廊的灯亮了。', involvement: 'ambient' },
+  ] }, 4)
+  assert.deepEqual(parsed.map(item => [item.importance, item.involvement]), [['low', 'environment'], ['low', 'involved']])
+  assert.match(worldSeederSystemPrompt(), /"involvement":"environment\|involved"/)
 })
 
 test('validation gates reject each documented failure mode', () => {

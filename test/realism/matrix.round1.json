@@ -1,0 +1,221 @@
+{
+  "phase2A": [
+    {
+      "id": "P01",
+      "arm": "A0",
+      "scenario": "SS"
+    },
+    {
+      "id": "P02",
+      "arm": "A1",
+      "scenario": "SS"
+    },
+    {
+      "id": "P03",
+      "arm": "A2",
+      "scenario": "SS"
+    },
+    {
+      "id": "P04",
+      "arm": "A3",
+      "scenario": "SS"
+    },
+    {
+      "id": "P05",
+      "arm": "W1",
+      "scenario": "SS"
+    },
+    {
+      "id": "P06",
+      "arm": "W2",
+      "scenario": "SS"
+    },
+    {
+      "id": "P07",
+      "arm": "W3",
+      "scenario": "SS"
+    },
+    {
+      "id": "P08",
+      "arm": "W4",
+      "scenario": "SS"
+    },
+    {
+      "id": "P09",
+      "arm": "W5",
+      "scenario": "SS"
+    },
+    {
+      "id": "P10",
+      "arm": "W6",
+      "scenario": "SS"
+    },
+    {
+      "id": "P11",
+      "arm": "W7",
+      "scenario": "SS"
+    },
+    {
+      "id": "P12",
+      "arm": "W8",
+      "scenario": "SS"
+    },
+    {
+      "id": "P13",
+      "arm": "N1",
+      "scenario": "SS"
+    },
+    {
+      "id": "P14",
+      "arm": "N2",
+      "scenario": "SS"
+    },
+    {
+      "id": "P15",
+      "arm": "N3",
+      "scenario": "SS"
+    },
+    {
+      "id": "P16",
+      "arm": "N4",
+      "scenario": "SS"
+    },
+    {
+      "id": "P17",
+      "arm": "X1",
+      "scenario": "SS"
+    },
+    {
+      "id": "P18",
+      "arm": "X2",
+      "scenario": "SS"
+    },
+    {
+      "id": "P19",
+      "arm": "E0",
+      "scenario": "SS"
+    },
+    {
+      "id": "P20",
+      "arm": "E1",
+      "scenario": "SS"
+    },
+    {
+      "id": "P21",
+      "arm": "E2",
+      "scenario": "SS"
+    },
+    {
+      "id": "P22",
+      "arm": "W9",
+      "scenario": "SS",
+      "optional": true
+    }
+  ],
+  "phase2P": [
+    {
+      "id": "Q01",
+      "arm": "A0",
+      "scenario": "SS",
+      "persona": "feizao"
+    },
+    {
+      "id": "Q02",
+      "arm": "A0",
+      "scenario": "SS",
+      "persona": "wenyan"
+    },
+    {
+      "id": "Q03",
+      "arm": "A0",
+      "scenario": "SS",
+      "persona": "jiangxu"
+    },
+    {
+      "id": "Q04",
+      "arm": "A0",
+      "scenario": "SS",
+      "persona": "atang"
+    },
+    {
+      "id": "Q05",
+      "arm": "A0",
+      "scenario": "SS",
+      "persona": "hechuan"
+    }
+  ],
+  "phase2B": [
+    {
+      "id": "R01",
+      "arm": "A0",
+      "scenario": "S1"
+    },
+    {
+      "id": "R02",
+      "arm": "A0",
+      "scenario": "S2"
+    },
+    {
+      "id": "R03",
+      "arm": "TBD",
+      "scenario": "S1"
+    },
+    {
+      "id": "R04",
+      "arm": "TBD",
+      "scenario": "S2"
+    },
+    {
+      "id": "R05",
+      "arm": "TBD",
+      "scenario": "S1"
+    },
+    {
+      "id": "R06",
+      "arm": "TBD",
+      "scenario": "S2"
+    },
+    {
+      "id": "R07",
+      "arm": "TBD",
+      "scenario": "S1"
+    },
+    {
+      "id": "R08",
+      "arm": "TBD",
+      "scenario": "S2"
+    }
+  ],
+  "outer": [
+    {
+      "id": "R09",
+      "arm": "P1",
+      "scenario": "S1"
+    },
+    {
+      "id": "R10",
+      "arm": "F2",
+      "scenario": "S2"
+    },
+    {
+      "id": "R11",
+      "arm": "F1",
+      "scenario": "S1"
+    },
+    {
+      "id": "R12",
+      "arm": "D2",
+      "scenario": "S1"
+    },
+    {
+      "id": "R13",
+      "arm": "D3",
+      "scenario": "S1"
+    },
+    {
+      "id": "R14",
+      "arm": "A0",
+      "scenario": "S10"
+    }
+  ]
+}

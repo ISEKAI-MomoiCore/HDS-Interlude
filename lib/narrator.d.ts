@@ -1,4 +1,5 @@
 import { Context } from 'koishi';
+import type { InterludeLogSink } from './logging';
 import { type MainCaptureSink } from './capture';
 import { type ContractTier, type ModelFamily, type SpecialtyProfile } from './specialization';
 import { AlterAnalysisDecision, AlterAnalysisRequest, AlterSystemConfig, ChatActionCapabilities, CompactionDecision, CompactionRequest, NarrativeContractFeatures, NarrativeDecision, NarrativeProvider, OverlayCompactionDecision, OverlayCompactionRequest, EarlyNarrativeReply, LongArcGuidanceRequest, NarrativeCompactor, NarrativeEmbedder, NarrativeImage, NarrativeRequest, SchedulePreplanProposal, SchedulePreplanReviewRequest, ScriptEntry, StickerCatalogEntry, TimelinePlan, TimelinePlanRequest } from './types';
@@ -16,9 +17,8 @@ export type ZhipuReasoningEffort = 'low' | 'high' | 'max';
 export type DeepSeekThinkingMode = 'inherit' | 'disabled' | 'enabled';
 export type ProviderMode = 'openai-compatible' | 'zhipu-official' | 'openai-official' | 'deepseek-official' | 'moonshot-official' | 'dashscope-official' | 'siliconflow-official' | 'openrouter' | 'gemini-openai' | 'gemini-interactions';
 export declare const ZHIPU_FIRST_VISIBLE_TOKEN_TIMEOUT = 45000;
-/** 首 token 之后不再设总超时(长思考合法),但持续的流内静默判死:
- * 正常流式即使思考期也有 reasoning/心跳 chunk 不断续命,半开连接只会
- * 让 reader.read() 永久 pending——冻结整个回合且 failover 永远到不了下一家。 */
+/** 流内静默守卫独立于调用方的共享总时限：正常思考/心跳 chunk 续命，
+ * 半开连接持续静默时退出，让故障转移能够继续。 */
 export declare const ZHIPU_STREAM_IDLE_TIMEOUT = 120000;
 export interface StickerDescription {
     description: string;
@@ -232,6 +232,7 @@ export declare class OpenAICompatibleNarrator implements NarrativeProvider {
     private config;
     private onUsage?;
     private captureSink?;
+    private diagnostics?;
     /**
      * 主写作与压缩共用服务商选择、冷却和 OpenAI 兼容协议；二者的提示词和
      * token/temperature 配置不同，因此同一个实例可承担两个接口。
@@ -245,7 +246,8 @@ export declare class OpenAICompatibleNarrator implements NarrativeProvider {
     private resolveSpecialty;
     private readonly logger?;
     private readonly routing;
-    constructor(ctx: Context, config: ModelConfig, silentLogs?: boolean, onUsage?: (record: TokenUsageRecord) => void, routing?: ModelRoutingTable, captureSink?: MainCaptureSink);
+    constructor(ctx: Context, config: ModelConfig, silentLogs?: boolean, onUsage?: (record: TokenUsageRecord) => void, routing?: ModelRoutingTable, captureSink?: MainCaptureSink, diagnostics?: NarratorDiagnostics);
+    private previewInvalidJson;
     private assignedProviders;
     available(): boolean;
     visionAvailable(): boolean;
@@ -259,9 +261,8 @@ export declare class OpenAICompatibleNarrator implements NarrativeProvider {
     /** customSideTask 的多模态变体：user 内容 = 文本 + 单张图片（表情包采集
      * 判定必须看图）。请求链、宽容解析与去 max_tokens 重试全部复用 sideTaskJson。 */
     customSideTaskWithImage<T>(provider: ProviderConfig, task: string, timeout: number, temperature: number, maxTokens: number, system: string, userText: string, imageDataUri: string): Promise<T>;
-    /** 思考型网关把 reasoning 计入 completion 预算：带小 cap 的侧端 JSON 任务
-     * 会被推理挤到只剩残句（invalid JSON / Unterminated string at position N）。
-     * 首次解析失败时去掉 max_tokens 原样重试一次；成功路径不多发任何请求。
+    /** 侧端 JSON 任务仅在协议明确报告预算耗尽时移除上限恢复一次。
+     * 格式错误、空响应与传输失败独立分类；恢复共用原任务的总时限。
      * 非流式响应逐一尝试全部文本字段（content/reasoning_content 等），与
      * parseChatJsonResponse 的宽容度一致。 */
     private sideTaskJson;
@@ -283,14 +284,18 @@ export declare class OpenAICompatibleNarrator implements NarrativeProvider {
     private selectRouteProviders;
     private requestProvider;
 }
-export declare function createNarrator(ctx: Context, config: ModelConfig, silentLogs?: boolean, onUsage?: (record: TokenUsageRecord) => void, routing?: ModelRoutingTable, captureSink?: MainCaptureSink): NarrativeProvider;
-export declare function createStickerDescriber(ctx: Context, config: ModelConfig, silentLogs?: boolean, onUsage?: (record: TokenUsageRecord) => void, routing?: ModelRoutingTable): StickerDescriber;
-export declare function createVisionDescriber(ctx: Context, config: ModelConfig, silentLogs?: boolean, onUsage?: (record: TokenUsageRecord) => void, routing?: ModelRoutingTable): VisionDescriber;
+interface NarratorDiagnostics {
+    logger: InterludeLogSink;
+    previewLength?: () => number;
+}
+export declare function createNarrator(ctx: Context, config: ModelConfig, silentLogs?: boolean, onUsage?: (record: TokenUsageRecord) => void, routing?: ModelRoutingTable, captureSink?: MainCaptureSink, diagnostics?: NarratorDiagnostics): NarrativeProvider;
+export declare function createStickerDescriber(ctx: Context, config: ModelConfig, silentLogs?: boolean, onUsage?: (record: TokenUsageRecord) => void, routing?: ModelRoutingTable, diagnostics?: NarratorDiagnostics): StickerDescriber;
+export declare function createVisionDescriber(ctx: Context, config: ModelConfig, silentLogs?: boolean, onUsage?: (record: TokenUsageRecord) => void, routing?: ModelRoutingTable, diagnostics?: NarratorDiagnostics): VisionDescriber;
 /** A single enabled model preset is the natural main narrator. This keeps the
  * Console configuration linear while preserving explicit selection for
  * installations that deliberately configure several models. */
 export declare function withDeepSeekThinking(provider: ProviderConfig, requestBody: Record<string, unknown>): Record<string, unknown>;
-export declare function createCompactor(ctx: Context, config: ModelConfig, silentLogs?: boolean, onUsage?: (record: TokenUsageRecord) => void, routing?: ModelRoutingTable): NarrativeCompactor;
+export declare function createCompactor(ctx: Context, config: ModelConfig, silentLogs?: boolean, onUsage?: (record: TokenUsageRecord) => void, routing?: ModelRoutingTable, diagnostics?: NarratorDiagnostics): NarrativeCompactor;
 export declare function createEmbedder(ctx: Context, config: ModelConfig, routing?: ModelRoutingTable): NarrativeEmbedder;
 /** Returns the first complete transport object while the rest of the JSON is
  * still arriving. The contract asks for this field first, but scanning only
@@ -394,14 +399,9 @@ export declare function toPromptPayload(request: NarrativeRequest, options?: {
 /** Compact ownership tags for cache-first payloads: one short label replaces the
  * kind/actor/participantId triple. Distinctions the ownership label alone would
  * lose (group posting, platform actions) survive as suffixes. */
-export declare function compactScriptTag(kind: string, actor: string): "system" | "user" | "protagonist(group)" | "protagonist(action)" | "protagonist" | "protagonist-narration" | "group-member";
+export declare function compactScriptTag(kind: string, actor: string): "user" | "authored-prologue" | "protagonist(group)" | "protagonist(action)" | "protagonist" | "protagonist-narration" | "group-member" | "system";
 export declare function promptVisibleMessageContent(content: string, ownership: RecentScriptOwnership): string;
-export declare function compactPromptEntries(entries: NarrativeRequest['recentEntries'], characterBudget: number, protectedSince?: Date): ScriptEntry[];
-/** 压缩器输出的 lifeRhythm 五档归一化（narrator 侧轻校验；完整校验在 story-state）。 */
-export declare function normalizeLifeRhythmDraft(value: unknown): {
-    attention: string;
-    basis: string;
-} | undefined;
+export declare function compactPromptEntries(entries: NarrativeRequest['recentEntries'], characterBudget: number, protectedSince?: Date, protectPrologue?: boolean): ScriptEntry[];
 export declare function compactionPrompt(fixedPrompt: string, compactionMainPrompt?: string, compactionFixedPrompt?: string, compactionStylePrompt?: string, specialty?: {
     tier?: string;
 }): string;

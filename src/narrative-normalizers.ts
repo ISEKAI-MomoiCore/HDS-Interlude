@@ -111,10 +111,10 @@ function hasStructuredInteraction(value: unknown) {
 /** Compact JSON for diagnostic logs: never throws, bounded length. */
 
 /** Compact JSON for diagnostic logs: never throws, bounded length. */
-export function safeJsonPreview(value: unknown) {
+export function safeJsonPreview(value: unknown, limit = 300) {
   try {
     const text = value === undefined ? 'undefined' : JSON.stringify(value)
-    return String(text).slice(0, 300)
+    return String(text).slice(0, limit)
   } catch {
     return '(unserializable)'
   }
@@ -743,7 +743,9 @@ export function normalizeInteraction(value: unknown, now: Date, runtime: Runtime
   const seen = typeof value.seen === 'boolean' ? value.seen : true
   if (mode === 'none') return { seen, reply: { mode: 'none' } }
   if (!content) return { seen, reply: { mode: 'none' } }
-  if (mode === 'immediate') return { seen, reply: { mode: 'immediate', content } }
+  if (mode === 'immediate') return { seen, reply: { mode: 'immediate', content,
+    ...(Array.isArray(value.reply.bubbleDelaySeconds) ? { bubbleDelaySeconds: value.reply.bubbleDelaySeconds } : {}),
+  } }
   const delay = sendAt?.getTime() - now.getTime()
   if (!sendAt || delay < runtime.minimumDelayedReplySeconds * 1_000 || delay > runtime.maximumDelayedReplyMinutes * Time.minute) return { seen, reply: { mode: 'none' } }
   return { seen, reply: { mode: 'delayed', content, sendAt: sendAt.toISOString() } }

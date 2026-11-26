@@ -67,6 +67,11 @@ export interface WeatherSnapshot {
   feelsLike: number
   humidity: number
   windSpeed: number
+  /** Raw fields are for event attention only; legacy weather text is unchanged. */
+  windSpeedKmh?: number
+  weatherCode?: number
+  observedAt?: number
+  observationPoint?: string
   condition: string
   fetchedAt: number
   /** 注入文本:"环境：22°C 小毛毛雨。" */
@@ -138,7 +143,7 @@ export async function fetchWeatherSnapshot(
       params: {
         latitude: lat, longitude: lon,
         current: 'temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,wind_speed_10m',
-        timezone: 'auto',
+        timezone: 'auto', wind_speed_unit: 'kmh', timeformat: 'unixtime',
       },
       timeout: 10_000,
     }) as { current?: Record<string, number> }
@@ -151,6 +156,11 @@ export async function fetchWeatherSnapshot(
       feelsLike: Math.round(cur.apparent_temperature ?? cur.temperature_2m),
       humidity: Math.round(cur.relative_humidity_2m ?? 0),
       windSpeed: Math.round(cur.wind_speed_10m ?? 0),
+      weatherCode: weatherCode !== undefined && Number.isInteger(weatherCode) ? weatherCode : undefined,
+      windSpeedKmh: typeof cur.wind_speed_10m === 'number' && Number.isFinite(cur.wind_speed_10m) && cur.wind_speed_10m >= 0
+        ? cur.wind_speed_10m : undefined,
+      observedAt: Number.isSafeInteger(cur.time) && cur.time > 0 ? cur.time * 1_000 : undefined,
+      observationPoint: `${lat},${lon}`,
       condition,
       fetchedAt: Date.now(),
       text: `环境：${Math.round(cur.temperature_2m)}°C ${condition}。`,
@@ -158,6 +168,45 @@ export async function fetchWeatherSnapshot(
     snapshotCache.set(cacheKey, { snapshot, cachedAt: Date.now() })
     return snapshot
   } catch { return undefined }
+}
+
+const SEVERE_WEATHER_CODES = new Set([56, 57, 65, 66, 67, 75, 82, 86, 95, 96, 99])
+const RAIN_CODES = new Set([51, 53, 55, 56, 57, 61, 63, 65, 66, 67, 80, 81, 82, 95, 96, 99])
+const SNOW_CODES = new Set([71, 73, 75, 77, 85, 86])
+const FOG_CODES = new Set([45, 48])
+export const STRONG_WIND_KMH = 50
+
+function weatherKind(code: unknown) {
+  if (typeof code !== 'number' || !Object.hasOwn(WMO_CODES, code)) return undefined
+  if (RAIN_CODES.has(code)) return 'rain'
+  if (SNOW_CODES.has(code)) return 'snow'
+  if (FOG_CODES.has(code)) return 'fog'
+  return 'other'
+}
+
+export function weatherSampleTime(snapshot: WeatherSnapshot) {
+  return snapshot.observedAt ?? snapshot.fetchedAt
+}
+
+export function hasValidWeatherCode(snapshot: WeatherSnapshot) {
+  return weatherKind(snapshot.weatherCode) !== undefined
+}
+
+export function hasNotableWeatherChange(previous: WeatherSnapshot, next: WeatherSnapshot, cadenceMinutes: number) {
+  const elapsed = weatherSampleTime(next) - weatherSampleTime(previous)
+  if (!previous.observationPoint || previous.observationPoint !== next.observationPoint
+    || (previous.observedAt === undefined) !== (next.observedAt === undefined)
+    || !(elapsed > 0 && elapsed <= 2 * cadenceMinutes * 60_000)) return false
+  const oldKind = weatherKind(previous.weatherCode)
+  const newKind = weatherKind(next.weatherCode)
+  return oldKind !== undefined && newKind !== undefined && newKind !== 'other' && oldKind !== newKind
+}
+
+export function weatherAttentionOffset(data: { weatherCode?: unknown, windSpeedKmh?: unknown, weatherChanged?: unknown }): -2 | 0 | 1 {
+  const wind = data.windSpeedKmh
+  if ((typeof data.weatherCode === 'number' && SEVERE_WEATHER_CODES.has(data.weatherCode))
+    || (typeof wind === 'number' && Number.isFinite(wind) && wind >= STRONG_WIND_KMH)) return -2
+  return data.weatherChanged === true ? 0 : 1
 }
 
 /** 架空世界判定(手动开关语义下与 weatherSweep 共用的唯一权威拷贝)：

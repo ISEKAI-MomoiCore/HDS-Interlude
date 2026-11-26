@@ -5,7 +5,8 @@ import { messageEventReference } from '../script/contract'
 import { platformActionReference } from '../script/delivery-ledger'
 import { formatBufferedUserMessages, narrativeCursor } from '../narrative-normalizers'
 import { isContextDisposedError } from '../narrator'
-import type { IndexedQuotedMessageContext, NarrativeAudio, NarrativeInteraction, OutgoingMessageDraft, ScriptEntry } from '../types'
+import type { IndexedQuotedMessageContext, NarrativeAudio, NarrativeInteraction, NarrativeIntent, OutgoingMessageDraft, ScriptEntry } from '../types'
+import type { BufferedUserMessage } from '../turn-engine'
 import type { ScriptCommitDraft } from '../script/contract'
 
 /** D3a（解耦设计 §6）：私聊回合叙事编排——自 service.ts 迁出（行为不变，
@@ -28,7 +29,7 @@ export async function executePrivateNarrativeTurn(svc: any, key: string, revisio
     if (!turn) return
     const requestId = revision
     turn.inFlightRequestId = requestId
-    const batch = turn.messages.splice(0)
+    const batch: BufferedUserMessage[] = turn.messages.splice(0)
     // issue #5（死锁加固）：try 原先从快照阶段才开始——splice 与 try 之间的
     // 任何异常（日志/簿记）会让 endFlush 永不执行，turn 永久 in-flight 且批次
     // 已被消费：后续消息持续入队但永不进入模型调度，直到重启。try 提前到
@@ -101,7 +102,13 @@ export async function executePrivateNarrativeTurn(svc: any, key: string, revisio
         turn.messages.unshift(...batch)
         return
       }
-      const superseded = batch.flatMap((message: any) => message.supersededIntents)
+      const superseded = batch.flatMap((message, index) => message.supersededIntents.map((intent: NarrativeIntent) => {
+        const interruption = intent.payload?.privateBubbleInterruption
+        return interruption && typeof interruption === 'object'
+          ? { ...intent, payload: { privateBubbleInterruption: { ...interruption, triggerMessageIndex: index + 1 } } }
+          : intent
+      }))
+      const timedPrivateReply = svc.usesPrivateBubbleDelay?.('user-message', snapshot.participant) === true
       const early = {
         delivered: false,
         interaction: undefined as NarrativeInteraction | undefined,
@@ -111,7 +118,7 @@ export async function executePrivateNarrativeTurn(svc: any, key: string, revisio
       const requestStartedAt = new Date()
       const narrative = await svc.tryDecide(
         snapshot.story, snapshot.participant, 'user-message', snapshot.from, snapshot.now, userMessage, snapshot.due, superseded, undefined, images, audio, chatCapabilities, quotedMessages, stickerCatalog, turnQueryEmbedding, visualObservations,
-        async (reply: any) => {
+        timedPrivateReply ? undefined : async (reply: any) => {
           if (early.delivered) return false
           const deliveryEntry = await svc.platformPort?.deliverEarlyReply(snapshot.story, snapshot.participant, turn.latestHandle, turn, requestId, reply, requestStartedAt)
           if (deliveryEntry) {
@@ -182,7 +189,12 @@ export async function executePrivateNarrativeTurn(svc: any, key: string, revisio
           ...decision,
           localMedia: sticker ? decision.localMedia : undefined,
           nativeFace: nativeFace ? decision.nativeFace : undefined,
-        }, snapshot.from, effectiveNow, true, 'user-message', [], early.delivered)
+        }, snapshot.from, effectiveNow, true, 'user-message', [], early.delivered, undefined, timedPrivateReply ? {
+          startedAt: requestStartedAt,
+          handle: turn.latestHandle,
+          sourceEndpointId: batch.at(-1)?.endpointId,
+          onCommitted: () => { turn.firstMessageCommittedRequestId = requestId },
+        } : undefined)
         // committed 标志在持久化成功后才置位——提前置位会让
         // catch 守卫（!== requestId）误判“已提交”，模型成功但落库抛错的回合
         // 既无投递也无重试。
@@ -214,7 +226,7 @@ export async function executePrivateNarrativeTurn(svc: any, key: string, revisio
           await svc.scheduleNarrativeRetry(current.id, currentParticipant.id, now)
         }
         if (succeeded) await svc.scheduleConversationFollowUpsAfterTurn(current.id, effectiveNow, decision.interaction, currentParticipant.id)
-        svc.reportOperation('diagnostic', 'debug', current, 'user-message', '写作回合统计 参与者=%s 合并消息=%d 成功=%s 可见消息=%d', currentParticipant.id, batch.length, succeeded, persisted.messages.length)
+        svc.reportOperation('diagnostic', 'debug', current, 'user-message', '写作回合统计 参与者=%s 合并消息=%d 输出通过=%s 待交投递管线的消息=%d', currentParticipant.id, batch.length, succeeded, persisted.messages.length)
         return { obsolete: false, requeue: false, messages: persisted.messages, commit: persisted.commit, scriptEntry: persisted.scriptEntry }
       })
 
@@ -572,7 +584,8 @@ export async function executeGroupNarrativeTurn(svc: any, key: string, turn: any
         : false
       if (task.contentCurrent() && (groupDelivery.deliveredSegments.length || completedReactions || stickerDelivered || nativeFaceDelivered)) {
         const rhythm = decodeStoryState(story.state).lifeRhythm
-        svc.groupWillingness.set(key, consumeWillingnessGate(svc.groupWillingness.get(key), turn.rule.willingnessPreset, turn.rule.willingnessAuto, rhythm, turn.rule.willingness, Date.now(), rhythm?.attention, Math.random, turn.rule.skipJitter !== false))
+        const now = Date.now()
+        svc.groupWillingness.set(key, consumeWillingnessGate(svc.groupWillingness.get(key), turn.rule.willingnessPreset, turn.rule.willingnessAuto, rhythm, turn.rule.willingness, now, rhythm?.attention, Math.random, turn.rule.skipJitter !== false))
       }
       // Other conversations use the same delivery ledger as private turns.
       if (task.taskCurrent() && result.messages.length) await svc.platformPort?.deliverOutgoing(snapshot.story, result.messages)

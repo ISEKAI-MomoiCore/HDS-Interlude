@@ -14,6 +14,13 @@ const DANGEROUS_FIELDS: Record<string, string[]> = {
 }
 
 const query = ref('')
+const SECTION_STORAGE_KEY = 'hdsi.config-center.section'
+function rememberedSection(): string {
+  try { return window.sessionStorage.getItem(SECTION_STORAGE_KEY) ?? '' } catch { return '' }
+}
+function rememberSection(id: string) {
+  try { window.sessionStorage.setItem(SECTION_STORAGE_KEY, id) } catch { /* Browser storage is optional. */ }
+}
 
 const menu = ref<ConfigCenterGroupMeta[]>([])
 const currentId = ref('')
@@ -46,7 +53,16 @@ onBeforeRouteUpdate((to, from) => to.path === from.path || confirmLeave())
 async function selectSection(id: string) {
   if (id === currentId.value || saving.value) return
   if (dirty.value && !window.confirm('本节有尚未保存的修改。切换配置节将重新读取，继续切换？')) return
-  await loadSection(id)
+  if (id) await loadSection(id)
+  else {
+    readRequest++
+    currentId.value = loadedId.value = ''
+    meta.value = null
+    sectionSchema.value = null
+    loading.value = false
+    notice.value = ''
+    rememberSection('')
+  }
 }
 async function reloadSection() {
   if (loading.value || saving.value || !currentId.value) return
@@ -81,8 +97,8 @@ async function loadMenu() {
     if (disposed) return
     if (!result?.ok || !Array.isArray(result.menu)) throw new Error(result?.error ?? '菜单读取失败')
     menu.value = result.menu
-    const first = openSections.value.find(section => section.id === 'runtime') ?? openSections.value[0]
-    if (first) await loadSection(first.id)
+    const remembered = rememberedSection()
+    if (openSections.value.some(section => section.id === remembered)) await loadSection(remembered)
   } catch (error: any) {
     if (!disposed) {
       menuFailed.value = true
@@ -100,6 +116,7 @@ async function loadSection(id: string, silent = false) {
   const request = ++readRequest
   const current = () => !disposed && request === readRequest && currentId.value === id
   currentId.value = id
+  rememberSection(id)
   meta.value = target
   loadedId.value = ''
   sectionSchema.value = null
@@ -111,7 +128,7 @@ async function loadSection(id: string, silent = false) {
   try {
     const result = await store.readConfigCenter(id)
     if (!current()) return
-    if (!result.ok) throw new Error(result.error ?? '读取失败')
+    if (!result?.ok) throw new Error(result.error ?? '读取失败')
     if (!result.schema) throw new Error('配置结构读取失败')
     // {uid, refs} JSON → schemastery Schema 实例，交由宿主同源组件渲染。
     sectionSchema.value = new (Schema as any)(result.schema)
@@ -152,12 +169,15 @@ async function saveSection(reload = false) {
   try {
     const result = await store.saveConfigCenter(id, values, { reload, unset: removedPaths(initial.value, values) })
     if (!current()) return
-    if (!result.ok) throw new Error(result.error ?? '未知错误')
+    if (!result?.ok) throw new Error(result.error ?? '未知错误')
     notice.value = reload ? '已保存，并已请求重载 HDSI。' : '已保存到 koishi.yml；配置更新已提交，插件将按需自动重载。'
     noticeKind.value = 'ok'
     if (JSON.stringify(model.value) === serialized) {
-      // 同一视图仍展示提交值时，重读服务端规范化结果。
-      await loadSection(id, true)
+      // The save response includes the normalized, masked view, even during a plugin restart.
+      const saved = result.values ?? JSON.parse(serialized)
+      model.value = saved
+      initial.value = JSON.parse(JSON.stringify(saved))
+      maskedFields.value = result.maskedFields ?? maskedFields.value
     } else {
       // 保存期间的新编辑继续留在表单，基准更新为刚确认的提交快照。
       initial.value = JSON.parse(serialized)
@@ -192,6 +212,7 @@ onMounted(loadMenu)
       <aside class="menu" aria-label="配置分类">
         <label class="search"><span>查找配置</span><input v-model="query" type="search" placeholder="名称或字段，如 runtime" aria-label="查找配置节" /></label>
         <div v-if="menu.length" class="menu-summary">{{ openSections.length }} 个配置节 · 全部可编辑</div>
+        <button v-if="menu.length" type="button" class="item" :class="{ on: !currentId }" :disabled="saving" @click="selectSection('')">配置总览</button>
         <template v-for="group in filteredMenu" :key="group.id">
           <div class="group">{{ group.label }}</div>
           <button v-for="section in group.sections" :key="section.id" type="button"
@@ -216,7 +237,19 @@ onMounted(loadMenu)
           </div>
         </template>
         <div v-else-if="!loading && currentId" class="hint">本节读取失败。<button class="secondary" @click="reloadSection">重新读取</button></div>
-        <div v-else-if="!loading && menu.length" class="hint">选择配置节以查看和编辑。</div>
+        <div v-else-if="!loading && menu.length" class="landing">
+          <div class="card intro">
+            <h3>配置总览</h3>
+            <p>从故事档案和模型接入开始，再按写作需要调整提示词、上下文和推进方式。</p>
+            <p>保存本节会写入配置并按需重载；保存并重载会主动重启插件。重载后保留本窗口正在编辑的配置节。</p>
+          </div>
+          <section v-for="group in filteredMenu" :key="group.id" class="card">
+            <h3>{{ group.label }}</h3>
+            <button v-for="section in group.sections" :key="section.id" class="section-link" type="button" @click="selectSection(section.id)">
+              <strong>{{ section.label }}</strong><span>{{ section.description }}</span>
+            </button>
+          </section>
+        </div>
       </main>
     </div>
   </div>
@@ -224,6 +257,13 @@ onMounted(loadMenu)
 
 <style scoped>
 .cc { min-width: 0; }
+.landing { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); gap: 12px; align-items: start; }
+.intro { grid-column: 1 / -1; }
+.intro p { font-size: 13px; line-height: 1.7; margin: 8px 0 0; }
+.section-link { display: grid; gap: 5px; width: 100%; text-align: left; color: inherit; background: transparent; border: 0; border-top: 1px solid var(--k-color-divider, #8883); padding: 12px 0; cursor: pointer; }
+.section-link:hover strong { color: var(--fg3, #3b82f6); }
+.section-link strong { font-size: 13px; }
+.section-link span { font-size: 12px; opacity: .7; line-height: 1.6; }
 .pg-head { margin-bottom: 1rem; }
 .pg-head h2 { font-size: 19px; font-weight: 700; display: flex; align-items: center; gap: 10px; }
 .pg-head h2::before { content: ""; width: 10px; height: 10px; background: var(--fg3, #3b82f6); transform: rotate(45deg); }

@@ -68,7 +68,8 @@ test('F2 K 截断 ≠ 全群覆盖：contentComplete=false，显著度按概况�
   assert.equal(coverage.watermarks['g'], 20, '水位推进到最新呈现 id（旧积压按概况级过期）')
   assert.equal(coverage.contentComplete['g'], false, '20 条只呈现 8 → 内容不完备')
   // 显著度：概况覆盖 ×0.5，不是整群删除。
-  const after = consumeSalience({ g: { score: 2, batchKeys: [], updatedAt: Date.now() } }, [{ groupId: 'g', contentCovered: false }], Date.now())
+  const consumedAt = Date.now()
+  const after = consumeSalience({ g: { score: 2, batchKeys: [], updatedAt: consumedAt } }, [{ groupId: 'g', contentCovered: false }], consumedAt)
   assert.equal(after.g?.score, 1, '截断群减半保留内容级资格')
   // 消费端把 contentComplete 传给显著度（源码钉：不再用 watermark 存在性判定）。
   const serviceSource = readFileSync('src/service.ts', 'utf8')

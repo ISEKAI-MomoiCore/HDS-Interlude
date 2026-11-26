@@ -400,33 +400,29 @@ export async function downscaleImageForVision(svc: any, image: { mimeType: strin
     if (!maxDimension || !shouldDownscaleImage(image.mimeType, image.dataUri)) return undefined
     const puppeteer = (svc.ctx as any).puppeteer
     if (!puppeteer?.page) return undefined
-    return svc.withBrowserSlot(async () => {
-      let page: any
-      try {
-        page = await puppeteer.page()
-        await page.setViewport({ width: maxDimension, height: maxDimension, deviceScaleFactor: 1 })
-        await page.setContent(`<img id="hdsi-vision" src="${image.dataUri}" style="display:block;max-width:${maxDimension}px;max-height:${maxDimension}px">`, { waitUntil: 'load', timeout: 10_000 })
-        await page.evaluate(() => new Promise<void>(resolve => {
+    try {
+      return await svc.withBrowserPage(15_000, async (page: any, step: <T>(operation: () => Promise<T>) => Promise<T>) => {
+        await step(() => page.setViewport({ width: maxDimension, height: maxDimension, deviceScaleFactor: 1 }))
+        await step(() => page.setContent(`<img id="hdsi-vision" src="${image.dataUri}" style="display:block;max-width:${maxDimension}px;max-height:${maxDimension}px">`, { waitUntil: 'load', timeout: 10_000 }))
+        await step(() => page.evaluate(() => new Promise<void>(resolve => {
           const imageElement = document.querySelector('#hdsi-vision') as HTMLImageElement | null
           if (!imageElement || imageElement.complete) return resolve()
           imageElement.addEventListener('load', () => resolve(), { once: true })
           imageElement.addEventListener('error', () => resolve(), { once: true })
-        }))
-        const element = await page.$('#hdsi-vision')
+        })))
+        const element = await step<any>(() => page.$('#hdsi-vision'))
         if (!element) return undefined
-        const buffer = Buffer.from(await element.screenshot({ type: 'jpeg', quality: 85 }))
+        const buffer = Buffer.from(await step<Uint8Array>(() => element.screenshot({ type: 'jpeg', quality: 85 })))
         if (!buffer.length) return undefined
         const originalBytes = Buffer.from(image.dataUri.split(',')[1] ?? '', 'base64').length
         if (buffer.length >= originalBytes) return undefined
         svc.reportStandaloneOperation('diagnostic', 'debug', '视觉图片已降采样 原始=%dB 降采样后=%dB 上限=%dpx', originalBytes, buffer.length, maxDimension)
         return { mimeType: 'image/jpeg', dataUri: `data:image/jpeg;base64,${buffer.toString('base64')}` }
-      } catch (error) {
-        svc.reportStandalone('debug', '视觉图片降采样失败，已透传原图：%s', error)
-        return undefined
-      } finally {
-        if (page) await page.close().catch((): undefined => undefined)
-      }
-    })
+      })
+    } catch (error) {
+      svc.reportStandalone('debug', '视觉图片降采样失败，已透传原图：%s', error)
+      return undefined
+    }
   }
 
 
@@ -434,28 +430,24 @@ export async function downscaleImageForVision(svc: any, image: { mimeType: strin
 export async function renderAnimatedImageFrame(svc: any, dataUri: string) {
     const puppeteer = (svc.ctx as any).puppeteer
     if (!puppeteer?.page) return undefined
-    return svc.withBrowserSlot(async () => {
-      let page: any
-      try {
-        page = await puppeteer.page()
-        await page.setContent(`<img id="hdsi-image" src="${dataUri}" style="display:block;max-width:4096px;max-height:4096px">`, { waitUntil: 'load', timeout: 10_000 })
-        await page.evaluate(() => new Promise<void>(resolve => {
+    try {
+      return await svc.withBrowserPage(15_000, async (page: any, step: <T>(operation: () => Promise<T>) => Promise<T>) => {
+        await step(() => page.setContent(`<img id="hdsi-image" src="${dataUri}" style="display:block;max-width:4096px;max-height:4096px">`, { waitUntil: 'load', timeout: 10_000 }))
+        await step(() => page.evaluate(() => new Promise<void>(resolve => {
           const image = document.querySelector('#hdsi-image') as HTMLImageElement | null
           if (!image || image.complete) return resolve()
           image.addEventListener('load', () => resolve(), { once: true })
           image.addEventListener('error', () => resolve(), { once: true })
-        }))
-        const element = await page.$('#hdsi-image')
+        })))
+        const element = await step<any>(() => page.$('#hdsi-image'))
         if (!element) return undefined
-        const buffer = Buffer.from(await element.screenshot({ type: 'png' }))
+        const buffer = Buffer.from(await step<Uint8Array>(() => element.screenshot({ type: 'png' })))
         if (!buffer.length || buffer.length > 4 * 1024 * 1024) return undefined
         return { mimeType: 'image/png', dataUri: `data:image/png;base64,${buffer.toString('base64')}` }
-      } catch (error) {
-        svc.reportStandalone('debug', '动态图片抽帧失败：%s', error)
-        return undefined
-      } finally {
-        if (page) await page.close().catch((): undefined => undefined)
-      }
-    })
+      })
+    } catch (error) {
+      svc.reportStandalone('debug', '动态图片抽帧失败：%s', error)
+      return undefined
+    }
   }
 

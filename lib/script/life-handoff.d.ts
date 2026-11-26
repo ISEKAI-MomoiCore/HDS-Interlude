@@ -1,9 +1,11 @@
 import type { ScriptEntry } from '../types';
+import { type FocusDraft } from '../life-rhythm';
 export interface QuotedLifeValue {
     value: string;
     quote: string;
 }
 export interface LifeHandoff {
+    focus?: FocusDraft;
     place?: QuotedLifeValue;
     activity?: QuotedLifeValue;
     /** Complete local roster, including an explicitly evidenced empty roster. */

@@ -18,4 +18,4 @@ export declare function describeFetchFailure(error: unknown): string;
  * still attached, so `error.message` alone turns a useful 400 into just
  * "Bad Request". Keep the body bounded because gateways sometimes echo large
  * validation payloads (or request fragments). */
-export declare function describeHttpError(error: unknown): string;
+export declare function describeHttpError(error: unknown, includeResponseBody?: boolean): string;

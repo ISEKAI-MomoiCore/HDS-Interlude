@@ -1,5 +1,5 @@
 import { normalizeIntentUpdates } from './narrative-normalizers';
-import type { NarrativeIntent, InterludeStory, IntentDraft, BrowserIntentDraft, WebObservation, FollowUpCommitmentDraft, FollowUpResolutionDraft, NarrativeInteraction } from './types';
+import type { NarrativeIntent, InterludeStory, IntentDraft, BrowserIntentDraft, FollowUpCommitmentDraft, FollowUpResolutionDraft, NarrativeInteraction } from './types';
 /** Emit only after the plan write succeeds; observation never changes its lifecycle. */
 export declare function reportContactPlanUpdate(svc: any, intent: Pick<NarrativeIntent, 'storyId' | 'type' | 'participantId' | 'payload'> & {
     id?: number;
@@ -24,7 +24,7 @@ export declare function executeResearchIntent(svc: any, story: InterludeStory, i
 /** P7 自 service.ts 意图簿记区迁出（2026-10-29），行为不变；宿主经 service 同名委托传入。 */
 export declare function researchStatusLines(svc: any): string[];
 /** P7 自 service.ts 意图簿记区迁出（2026-10-29），行为不变；宿主经 service 同名委托传入。 */
-export declare function executeDeferredBrowserIntent(svc: any, story: InterludeStory, intent: NarrativeIntent, now: Date): Promise<WebObservation>;
+export declare function executeDeferredBrowserIntent(svc: any, story: InterludeStory, intent: NarrativeIntent, now: Date): Promise<any>;
 /** P7 自 service.ts 意图簿记区迁出（2026-10-29），行为不变；宿主经 service 同名委托传入。 */
 export declare function dueIntents(svc: any, storyId: string, now: Date): Promise<any>;
 /** P7 自 service.ts 意图簿记区迁出（2026-10-29），行为不变；宿主经 service 同名委托传入。 */
@@ -39,9 +39,9 @@ export declare function reconcileTerminalSplitIntent(svc: any, storyId: string, 
 export declare function pendingSplitSegments(svc: any, storyId: string): Promise<NarrativeIntent[]>;
 /** P7 自 service.ts 意图簿记区迁出（2026-10-29），行为不变；宿主经 service 同名委托传入。 */
 export declare function deferDueIntentsBehindPendingSplits(svc: any, story: InterludeStory, due: NarrativeIntent[], splits: NarrativeIntent[], now: Date): Promise<NarrativeIntent[]>;
-/** P7 自 service.ts 意图簿记区迁出（2026-10-29），行为不变；宿主经 service 同名委托传入。 */
-export declare function scheduleNextPendingWake(svc: any, storyId: string): Promise<void>;
-/** P7 自 service.ts 意图簿记区迁出（2026-10-29），行为不变；宿主经 service 同名委托传入。 */
+/** Restore the earliest timer. Cancellation can leave an already-due survivor. */
+export declare function scheduleNextPendingWake(svc: any, storyId: string, includeDue?: boolean): Promise<void>;
+/** Wake legacy segments and validated private bubble groups through their respective delivery paths. */
 export declare function deliverDueSplitSegments(svc: any, storyId: string): Promise<void>;
 /** P7 自 service.ts 意图簿记区迁出（2026-10-29），行为不变；宿主经 service 同名委托传入。 */
 export declare function pendingFollowUpCommitments(svc: any, storyId: string, participantId: string, now?: Date): Promise<NarrativeIntent[]>;

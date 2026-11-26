@@ -1,4 +1,5 @@
 import type { DialogueBurstState, SceneFrame } from '../types'
+import { EVENT_ATTENTION_GUIDE } from './event-attention'
 
 export interface CompiledNarrativeContext {
   storyIdentity: Record<string, unknown>
@@ -28,6 +29,9 @@ export function compileNarrativeContext(
     },
     relevantEstablishedEpisodes: compactObject({
       recentScript: payload.recentScript,
+      prologueReading: payload.recentScript?.some((entry: { narrativeAuthority?: string }) => entry.narrativeAuthority === 'administrator-authored-past')
+        ? 'Use the administrator-authored prologue as established pre-opening life and a sample of voice. Continue the latest supported scene from the incoming event. Use actual platform records to establish exchanged messages and commitments.'
+        : undefined,
       sceneContext: payload.sceneContext,
       continuitySnapshot: payload.continuitySnapshot,
       continuitySnapshotAgeMinutes: payload.continuitySnapshotAgeMinutes,
@@ -42,6 +46,7 @@ export function compileNarrativeContext(
       recentExchange: payload.recentExchange,
       // I-6a 背景通道：advance 的有界群视图（概况 + 每群 K 条），历史背景
       // 归既往事料段。此前 payload 有字段但编译器未映射，被静默丢弃。
+      groupBackgroundAttention: payload.groupBackgroundAttention,
       groupBackground: payload.groupBackground,
     }),
     currentSceneEvidence: projectSceneEvidence(
@@ -95,6 +100,9 @@ export function compileNarrativeContext(
       outputRecovery: payload.outputRecovery,
       emotionalOffset: payload.emotionalOffset,
       agencyWindow: payload.agencyWindow,
+      eventAttentionGuide: payload.currentEvent?.eventAttention || payload.groupBackgroundAttention
+        || payload.recentScript?.some((entry: { eventAttention?: string }) => entry.eventAttention)
+        ? EVENT_ATTENTION_GUIDE : undefined,
     }),
   }
 }

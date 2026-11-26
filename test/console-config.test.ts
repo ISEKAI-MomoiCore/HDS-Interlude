@@ -19,7 +19,7 @@ function host(overrides: Record<string, unknown> = {}) {
   return { target, calls }
 }
 
-const story = { id: 'story-1', setting: { character: { name: '小夜', traits: ['安静', '爱看书'] }, world: '海边小镇', timezone: 'Asia/Shanghai' } }
+const story = { id: 'story-1', setting: { character: { name: '小夜', traits: ['安静', '爱看书'] }, world: '海边小镇', defaultRelationship: '旧街相识的同学', timezone: 'Asia/Shanghai' } }
 
 test('consoleReadConfig: runtime 节回填默认值', async () => {
   const { target } = host()
@@ -36,6 +36,7 @@ test('consoleReadConfig: story 节把 traits 数组渲染为换行文本', async
   assert.equal(result.ok, true)
   assert.equal(result.values['character.name'], '小夜')
   assert.equal(result.values['character.traits'], '安静\n爱看书')
+  assert.equal(result.values.defaultRelationship, '旧街相识的同学')
   assert.equal(result.values.timezone, 'Asia/Shanghai')
 })
 
@@ -69,13 +70,15 @@ test('consoleSaveConfig: story 节经 updateSetting 落库，traits 文本转数
     'character.name': '小昼',
     'character.traits': '开朗\n\n夜行\n',
     'world': '山间小镇',
+    'defaultRelationship': '从社团活动开始熟悉',
     'not.in.whitelist': 'x',
   })
-  assert.deepEqual(result, { ok: true, applied: 3 })
+  assert.deepEqual(result, { ok: true, applied: 4 })
   assert.equal(calls.length, 1)
   assert.equal(calls[0].patch.character.name, '小昼')
   assert.deepEqual(calls[0].patch.character.traits, ['开朗', '夜行'])
   assert.equal(calls[0].patch.world, '山间小镇')
+  assert.equal(calls[0].patch.defaultRelationship, '从社团活动开始熟悉')
   assert.equal(calls[0].patch.not, undefined)
 })
 
